@@ -1,0 +1,25 @@
+{
+  "name": "@miguelarios/card-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "card-mcp": "dist/bin/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/bin/cli.js"
+  },
+  "dependencies": {
+    "@miguelarios/pim-core": "*",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "tsdav": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@miguelarios/email-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "echo 'stub - not yet implemented'"
+  }
+}
