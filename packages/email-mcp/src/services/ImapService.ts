@@ -99,9 +99,10 @@ export class ImapService {
 			try {
 				const searchCriteria =
 					Object.keys(query).length > 0 ? query : { all: true };
-				const uids = await client.search(searchCriteria as any, {
+				const searchResult = await client.search(searchCriteria as any, {
 					uid: true,
 				});
+				const uids = searchResult || [];
 
 				if (uids.length === 0) return [];
 
@@ -118,21 +119,22 @@ export class ImapService {
 					bodyStructure: true,
 					uid: true,
 				})) {
+					const envelope = msg.envelope!;
 					summaries.push({
 						uid: msg.uid,
-						messageId: msg.envelope.messageId || "",
-						subject: msg.envelope.subject || "",
-						from: msg.envelope.from?.[0]
+						messageId: envelope.messageId || "",
+						subject: envelope.subject || "",
+						from: envelope.from?.[0]
 							? {
-									name: msg.envelope.from[0].name,
-									address: msg.envelope.from[0].address || "",
+									name: envelope.from[0].name,
+									address: envelope.from[0].address || "",
 								}
 							: { address: "unknown" },
-						to: (msg.envelope.to || []).map((a: any) => ({
+						to: (envelope.to || []).map((a: any) => ({
 							name: a.name,
 							address: a.address || "",
 						})),
-						date: msg.envelope.date?.toISOString() || "",
+						date: envelope.date?.toISOString() || "",
 						flags: [...(msg.flags || [])],
 						hasAttachments: hasAttachmentParts(msg.bodyStructure),
 					});
@@ -156,12 +158,12 @@ export class ImapService {
 			await client.connect();
 			const lock = await client.getMailboxLock(folder);
 			try {
-				const message = await client.fetchOne(
+				const fetchResult = await client.fetchOne(
 					String(uid),
 					{ source: true },
 					{ uid: true },
 				);
-				if (!message?.source) {
+				if (!fetchResult || !fetchResult.source) {
 					throw new EmailError(
 						`Email UID ${uid} not found`,
 						ErrorCode.EMAIL_NOT_FOUND,
@@ -169,7 +171,7 @@ export class ImapService {
 					);
 				}
 
-				const parsed = await simpleParser(message.source);
+				const parsed = await simpleParser(fetchResult.source);
 				return {
 					uid,
 					messageId: parsed.messageId || "",
@@ -180,14 +182,12 @@ export class ImapService {
 								address: parsed.from.value[0].address || "",
 							}
 						: { address: "unknown" },
-					to: (parsed.to?.value || []).map((a) => ({
-						name: a.name,
-						address: a.address || "",
-					})),
-					cc: parsed.cc?.value?.map((a) => ({
-						name: a.name,
-						address: a.address || "",
-					})),
+					to: (Array.isArray(parsed.to) ? parsed.to : parsed.to ? [parsed.to] : [])
+						.flatMap((addr) => addr.value)
+						.map((a: any) => ({ name: a.name, address: a.address || "" })),
+					cc: (Array.isArray(parsed.cc) ? parsed.cc : parsed.cc ? [parsed.cc] : [])
+						.flatMap((addr) => addr.value)
+						.map((a: any) => ({ name: a.name, address: a.address || "" })) || undefined,
 					date: parsed.date?.toISOString() || "",
 					flags: [],
 					hasAttachments: (parsed.attachments?.length || 0) > 0,
@@ -219,19 +219,19 @@ export class ImapService {
 			await client.connect();
 			const lock = await client.getMailboxLock(folder);
 			try {
-				const message = await client.fetchOne(
+				const fetchResult = await client.fetchOne(
 					String(uid),
 					{ source: true },
 					{ uid: true },
 				);
-				if (!message?.source) {
+				if (!fetchResult || !fetchResult.source) {
 					throw new EmailError(
 						`Email UID ${uid} not found`,
 						ErrorCode.EMAIL_NOT_FOUND,
 						uid,
 					);
 				}
-				return message.source.toString();
+				return fetchResult.source.toString();
 			} finally {
 				lock.release();
 			}
