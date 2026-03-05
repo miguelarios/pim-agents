@@ -47,7 +47,7 @@ export class CardDavService {
     try {
       const books = await client.fetchAddressBooks();
       return books.map((book) => ({
-        displayName: book.displayName ?? "",
+        displayName: (typeof book.displayName === "string" ? book.displayName : "") ?? "",
         url: book.url,
         ctag: book.ctag,
       }));
