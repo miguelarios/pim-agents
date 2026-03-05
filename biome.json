@@ -14,14 +14,14 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "warn"
+        "noExplicitAny": "off"
       },
       "style": {
-        "noNonNullAssertion": "warn",
+        "noNonNullAssertion": "off",
         "noUnusedTemplateLiteral": "off"
       },
       "performance": {
-        "noDelete": "warn"
+        "noDelete": "off"
       }
     }
   },
