@@ -141,6 +141,38 @@ export class CardDavService {
     }
   }
 
+  async searchContacts(addressBookUrl: string, query: string): Promise<Contact[]> {
+    const contacts = await this.fetchContacts(addressBookUrl);
+    const q = query.toLowerCase();
+    return contacts.filter((c) => {
+      const searchable = [
+        c.fullName,
+        c.firstName,
+        c.lastName,
+        c.organization,
+        ...c.emails,
+        ...c.phones,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchable.includes(q);
+    });
+  }
+
+  async resolveContact(
+    addressBookUrl: string,
+    name: string
+  ): Promise<{ fullName: string; email: string } | null> {
+    const matches = await this.searchContacts(addressBookUrl, name);
+    for (const contact of matches) {
+      if (contact.emails.length > 0) {
+        return { fullName: contact.fullName, email: contact.emails[0] };
+      }
+    }
+    return null;
+  }
+
   async disconnect(): Promise<void> {
     this.client = null;
   }

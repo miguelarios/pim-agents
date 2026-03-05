@@ -167,4 +167,76 @@ describe("CardDavService", () => {
       ).rejects.toThrow("not found");
     });
   });
+
+  describe("searchContacts", () => {
+    it("filters contacts by query matching name, email, phone, or org", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        {
+          url: "/dav/contacts/1.vcf",
+          etag: '"e1"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:1\nFN:John Doe\nEMAIL:john@test.com\nORG:ACME\nEND:VCARD",
+        },
+        {
+          url: "/dav/contacts/2.vcf",
+          etag: '"e2"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:2\nFN:Jane Smith\nEMAIL:jane@other.com\nEND:VCARD",
+        },
+        {
+          url: "/dav/contacts/3.vcf",
+          etag: '"e3"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:3\nFN:Bob Acme\nEND:VCARD",
+        },
+      ]);
+
+      await service.connect();
+      const results = await service.searchContacts("/dav/addressbooks/users/miguel/contacts/", "acme");
+      expect(results).toHaveLength(2);
+      expect(results.map((c) => c.uid).sort()).toEqual(["1", "3"]);
+    });
+  });
+
+  describe("resolveContact", () => {
+    it("returns the first email for a name match", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        {
+          url: "/dav/contacts/1.vcf",
+          etag: '"e1"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:1\nFN:John Doe\nEMAIL:john@test.com\nEMAIL:john2@test.com\nEND:VCARD",
+        },
+      ]);
+
+      await service.connect();
+      const result = await service.resolveContact("/dav/addressbooks/users/miguel/contacts/", "John");
+      expect(result).toEqual({
+        fullName: "John Doe",
+        email: "john@test.com",
+      });
+    });
+
+    it("returns null when no match found", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([]);
+
+      await service.connect();
+      const result = await service.resolveContact("/dav/addressbooks/users/miguel/contacts/", "Nobody");
+      expect(result).toBeNull();
+    });
+
+    it("returns null when match has no email", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        {
+          url: "/dav/contacts/1.vcf",
+          etag: '"e1"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:1\nFN:John Doe\nEND:VCARD",
+        },
+      ]);
+
+      await service.connect();
+      const result = await service.resolveContact("/dav/addressbooks/users/miguel/contacts/", "John");
+      expect(result).toBeNull();
+    });
+  });
 });
