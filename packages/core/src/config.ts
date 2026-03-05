@@ -8,9 +8,18 @@ export interface CardDavConfig {
 }
 
 const CardDavEnvSchema = v.object({
-  CARDDAV_URL: v.pipe(v.string("CARDDAV_URL is required"), v.url("CARDDAV_URL must be a valid URL")),
-  CARDDAV_USER: v.pipe(v.string("CARDDAV_USER is required"), v.minLength(1, "CARDDAV_USER cannot be empty")),
-  CARDDAV_PASS: v.pipe(v.string("CARDDAV_PASS is required"), v.minLength(1, "CARDDAV_PASS cannot be empty")),
+  CARDDAV_URL: v.pipe(
+    v.string("CARDDAV_URL is required"),
+    v.url("CARDDAV_URL must be a valid URL"),
+  ),
+  CARDDAV_USER: v.pipe(
+    v.string("CARDDAV_USER is required"),
+    v.minLength(1, "CARDDAV_USER cannot be empty"),
+  ),
+  CARDDAV_PASS: v.pipe(
+    v.string("CARDDAV_PASS is required"),
+    v.minLength(1, "CARDDAV_PASS cannot be empty"),
+  ),
 });
 
 export function loadCardDavConfig(): CardDavConfig {

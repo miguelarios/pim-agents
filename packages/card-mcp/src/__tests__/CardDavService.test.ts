@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CardDavService } from "../services/CardDavService.js";
 
 // Mock tsdav
@@ -69,7 +69,7 @@ describe("CardDavService", () => {
 
   describe("fetchContacts", () => {
     it("fetches and parses vCards from an address book", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([
         {
           url: "/dav/contacts/john.vcf",
@@ -89,7 +89,7 @@ describe("CardDavService", () => {
 
   describe("createContact", () => {
     it("creates a vCard on the server", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       await service.connect();
       await service.createContact("/dav/addressbooks/users/miguel/contacts/", {
         uid: "new-1",
@@ -101,14 +101,14 @@ describe("CardDavService", () => {
       expect(__mockClient.createVCard).toHaveBeenCalledWith(
         expect.objectContaining({
           filename: "new-1.vcf",
-        })
+        }),
       );
     });
   });
 
   describe("updateContact", () => {
     it("updates an existing vCard with merge semantics", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([
         {
           url: "/dav/contacts/uid-1.vcf",
@@ -129,14 +129,14 @@ describe("CardDavService", () => {
             url: "/dav/contacts/uid-1.vcf",
             etag: '"etag1"',
           }),
-        })
+        }),
       );
     });
   });
 
   describe("deleteContact", () => {
     it("deletes a vCard by UID", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([
         {
           url: "/dav/contacts/uid-1.vcf",
@@ -153,24 +153,24 @@ describe("CardDavService", () => {
           vCard: expect.objectContaining({
             url: "/dav/contacts/uid-1.vcf",
           }),
-        })
+        }),
       );
     });
 
     it("throws ContactError when contact not found", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([]);
 
       await service.connect();
       await expect(
-        service.deleteContact("/dav/addressbooks/users/miguel/contacts/", "nonexistent")
+        service.deleteContact("/dav/addressbooks/users/miguel/contacts/", "nonexistent"),
       ).rejects.toThrow("not found");
     });
   });
 
   describe("searchContacts", () => {
     it("filters contacts by query matching name, email, phone, or org", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([
         {
           url: "/dav/contacts/1.vcf",
@@ -190,7 +190,10 @@ describe("CardDavService", () => {
       ]);
 
       await service.connect();
-      const results = await service.searchContacts("/dav/addressbooks/users/miguel/contacts/", "acme");
+      const results = await service.searchContacts(
+        "/dav/addressbooks/users/miguel/contacts/",
+        "acme",
+      );
       expect(results).toHaveLength(2);
       expect(results.map((c) => c.uid).sort()).toEqual(["1", "3"]);
     });
@@ -198,7 +201,7 @@ describe("CardDavService", () => {
 
   describe("resolveContact", () => {
     it("returns the first email for a name match", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([
         {
           url: "/dav/contacts/1.vcf",
@@ -208,7 +211,10 @@ describe("CardDavService", () => {
       ]);
 
       await service.connect();
-      const result = await service.resolveContact("/dav/addressbooks/users/miguel/contacts/", "John");
+      const result = await service.resolveContact(
+        "/dav/addressbooks/users/miguel/contacts/",
+        "John",
+      );
       expect(result).toEqual({
         fullName: "John Doe",
         email: "john@test.com",
@@ -216,16 +222,19 @@ describe("CardDavService", () => {
     });
 
     it("returns null when no match found", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([]);
 
       await service.connect();
-      const result = await service.resolveContact("/dav/addressbooks/users/miguel/contacts/", "Nobody");
+      const result = await service.resolveContact(
+        "/dav/addressbooks/users/miguel/contacts/",
+        "Nobody",
+      );
       expect(result).toBeNull();
     });
 
     it("returns null when match has no email", async () => {
-      const { __mockClient } = await import("tsdav") as any;
+      const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.fetchVCards.mockResolvedValueOnce([
         {
           url: "/dav/contacts/1.vcf",
@@ -235,7 +244,10 @@ describe("CardDavService", () => {
       ]);
 
       await service.connect();
-      const result = await service.resolveContact("/dav/addressbooks/users/miguel/contacts/", "John");
+      const result = await service.resolveContact(
+        "/dav/addressbooks/users/miguel/contacts/",
+        "John",
+      );
       expect(result).toBeNull();
     });
   });

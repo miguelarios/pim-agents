@@ -67,7 +67,10 @@ export function buildVCard(contact: Contact): string {
 
 /** Unfold continuation lines per RFC 6350 */
 function unfoldLines(data: string): string[] {
-  return data.replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, "").split(/\r?\n/);
+  return data
+    .replace(/\r\n[ \t]/g, "")
+    .replace(/\n[ \t]/g, "")
+    .split(/\r?\n/);
 }
 
 /** Extract first matching property value (ignoring parameters like ;TYPE=HOME) */

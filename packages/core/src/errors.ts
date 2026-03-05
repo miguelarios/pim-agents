@@ -83,21 +83,13 @@ export function isRetryableError(error: Error): boolean {
     return error.isRetryable;
   }
   const msg = error.message;
-  return (
-    msg.includes("ECONNRESET") ||
-    msg.includes("ENOTFOUND") ||
-    msg.includes("ETIMEDOUT")
-  );
+  return msg.includes("ECONNRESET") || msg.includes("ENOTFOUND") || msg.includes("ETIMEDOUT");
 }
 
 export function toPimError(error: Error): PimError {
   if (error instanceof PimError) return error;
   const msg = error.message.toLowerCase();
-  if (
-    msg.includes("auth") ||
-    msg.includes("login") ||
-    msg.includes("credential")
-  ) {
+  if (msg.includes("auth") || msg.includes("login") || msg.includes("credential")) {
     return new AuthenticationError(error.message);
   }
   if (

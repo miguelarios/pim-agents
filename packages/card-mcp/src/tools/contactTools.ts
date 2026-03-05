@@ -1,7 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { type Contact, ContactError, ErrorCode, toPimError } from "@miguelarios/pim-core";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { CardDavService } from "../services/CardDavService.js";
-import { type Contact, ContactError, ErrorCode, toPimError } from "@miguelarios/pim-core";
-import { randomUUID } from "node:crypto";
 
 export const CONTACT_TOOLS: Tool[] = [
   {
@@ -13,7 +13,8 @@ export const CONTACT_TOOLS: Tool[] = [
       properties: {
         query: {
           type: "string",
-          description: "Optional search query to filter contacts by name, email, phone, or organization",
+          description:
+            "Optional search query to filter contacts by name, email, phone, or organization",
         },
         addressBook: {
           type: "string",
@@ -141,10 +142,13 @@ export const CONTACT_TOOLS: Tool[] = [
 export async function handleContactTool(
   name: string,
   args: Record<string, unknown>,
-  service: CardDavService
+  service: CardDavService,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   try {
-    const addressBookUrl = await resolveAddressBook(args.addressBook as string | undefined, service);
+    const addressBookUrl = await resolveAddressBook(
+      args.addressBook as string | undefined,
+      service,
+    );
 
     switch (name) {
       case "list_contacts": {
@@ -178,7 +182,9 @@ export async function handleContactTool(
           note: args.note as string | undefined,
         };
         await service.createContact(addressBookUrl, contact);
-        return ok(JSON.stringify({ status: "created", uid: contact.uid, fullName: contact.fullName }));
+        return ok(
+          JSON.stringify({ status: "created", uid: contact.uid, fullName: contact.fullName }),
+        );
       }
 
       case "update_contact": {
@@ -208,7 +214,10 @@ export async function handleContactTool(
         const result = await service.resolveContact(addressBookUrl, name);
         if (!result) {
           return ok(
-            JSON.stringify({ status: "not_found", message: `No contact with email found matching "${name}"` })
+            JSON.stringify({
+              status: "not_found",
+              message: `No contact with email found matching "${name}"`,
+            }),
           );
         }
         return ok(JSON.stringify(result));
@@ -219,15 +228,13 @@ export async function handleContactTool(
     }
   } catch (err) {
     const pimError = toPimError(err instanceof Error ? err : new Error(String(err)));
-    return error(
-      `${pimError.message}${pimError.isRetryable ? " (retryable)" : ""}`
-    );
+    return error(`${pimError.message}${pimError.isRetryable ? " (retryable)" : ""}`);
   }
 }
 
 async function resolveAddressBook(
   explicit: string | undefined,
-  service: CardDavService
+  service: CardDavService,
 ): Promise<string> {
   if (explicit) return explicit;
   const books = await service.listAddressBooks();

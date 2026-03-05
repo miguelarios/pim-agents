@@ -1,4 +1,13 @@
-import { type CardDavConfig, type Contact, ConnectionError, ContactError, ErrorCode, buildVCard, parseVCard, toPimError } from "@miguelarios/pim-core";
+import {
+  type CardDavConfig,
+  ConnectionError,
+  type Contact,
+  ContactError,
+  ErrorCode,
+  buildVCard,
+  parseVCard,
+  toPimError,
+} from "@miguelarios/pim-core";
 import { DAVClient } from "tsdav";
 
 export interface AddressBook {
@@ -62,9 +71,7 @@ export class CardDavService {
       const vcards = await client.fetchVCards({
         addressBook: { url: addressBookUrl } as any,
       });
-      return vcards
-        .filter((v) => v.data)
-        .map((v) => parseVCard(v.data!));
+      return vcards.filter((v) => v.data).map((v) => parseVCard(v.data!));
     } catch (error) {
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
@@ -80,7 +87,9 @@ export class CardDavService {
         filename: `${contact.uid}.vcf`,
       });
       if (response && !(response as any).ok) {
-        throw new Error(`Failed to create contact: ${(response as any).statusText ?? "unknown error"}`);
+        throw new Error(
+          `Failed to create contact: ${(response as any).statusText ?? "unknown error"}`,
+        );
       }
     } catch (error) {
       if (error instanceof ContactError) throw error;
@@ -91,7 +100,7 @@ export class CardDavService {
   async updateContact(
     addressBookUrl: string,
     uid: string,
-    updates: Partial<Omit<Contact, "uid">>
+    updates: Partial<Omit<Contact, "uid">>,
   ): Promise<void> {
     const client = await this.ensureConnected();
     const existing = await this.findVCard(addressBookUrl, uid);
@@ -162,7 +171,7 @@ export class CardDavService {
 
   async resolveContact(
     addressBookUrl: string,
-    name: string
+    name: string,
   ): Promise<{ fullName: string; email: string } | null> {
     const matches = await this.searchContacts(addressBookUrl, name);
     for (const contact of matches) {
@@ -179,7 +188,7 @@ export class CardDavService {
 
   private async findVCard(
     addressBookUrl: string,
-    uid: string
+    uid: string,
   ): Promise<{ url: string; etag?: string; data?: string } | undefined> {
     const client = await this.ensureConnected();
     const vcards = await client.fetchVCards({

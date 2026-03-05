@@ -7,7 +7,10 @@ describe("loadCardDavConfig", () => {
   });
 
   it("loads valid CardDAV config from env vars", () => {
-    vi.stubEnv("CARDDAV_URL", "https://cloud.example.com/remote.php/dav/addressbooks/users/miguel/");
+    vi.stubEnv(
+      "CARDDAV_URL",
+      "https://cloud.example.com/remote.php/dav/addressbooks/users/miguel/",
+    );
     vi.stubEnv("CARDDAV_USER", "miguel");
     vi.stubEnv("CARDDAV_PASS", "secret-app-password");
 

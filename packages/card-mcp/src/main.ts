@@ -1,10 +1,7 @@
+import { loadCardDavConfig, toPimError } from "@miguelarios/pim-core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { loadCardDavConfig, toPimError } from "@miguelarios/pim-core";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { CardDavService } from "./services/CardDavService.js";
 import { CONTACT_TOOLS, handleContactTool } from "./tools/contactTools.js";
 
@@ -14,7 +11,7 @@ export async function createServer(): Promise<Server> {
 
   const server = new Server(
     { name: "@miguelarios/card-mcp", version: "0.1.0" },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({

@@ -41,11 +41,7 @@ describe("PimError hierarchy", () => {
   });
 
   it("ContactError stores contactId", () => {
-    const err = new ContactError(
-      "not found",
-      ErrorCode.CONTACT_NOT_FOUND,
-      "abc-123"
-    );
+    const err = new ContactError("not found", ErrorCode.CONTACT_NOT_FOUND, "abc-123");
     expect(err.code).toBe(ErrorCode.CONTACT_NOT_FOUND);
     expect(err.contactId).toBe("abc-123");
     expect(err.isRetryable).toBe(false);
