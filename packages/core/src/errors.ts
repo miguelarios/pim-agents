@@ -11,6 +11,10 @@ export enum ErrorCode {
   CONTACT_NOT_FOUND = "CONTACT_NOT_FOUND",
   ADDRESSBOOK_NOT_FOUND = "ADDRESSBOOK_NOT_FOUND",
   CONTACT_CONFLICT = "CONTACT_CONFLICT",
+  EMAIL_NOT_FOUND = "EMAIL_NOT_FOUND",
+  FOLDER_NOT_FOUND = "FOLDER_NOT_FOUND",
+  SEND_FAILED = "SEND_FAILED",
+  ATTACHMENT_NOT_FOUND = "ATTACHMENT_NOT_FOUND",
   INTERNAL_ERROR = "INTERNAL_ERROR",
   OPERATION_FAILED = "OPERATION_FAILED",
 }
@@ -76,6 +80,14 @@ export class ContactError extends PimError {
     super(message, code, false);
     this.contactId = contactId;
   }
+}
+
+export class EmailError extends PimError {
+	public readonly emailUid?: number;
+	constructor(message: string, code: ErrorCode, emailUid?: number) {
+		super(message, code, false);
+		this.emailUid = emailUid;
+	}
 }
 
 export function isRetryableError(error: Error): boolean {

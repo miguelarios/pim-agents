@@ -1,6 +1,8 @@
 export {
   type CardDavConfig,
   loadCardDavConfig,
+  type EmailConfig,
+  loadEmailConfig,
 } from "./config.js";
 
 export {
@@ -8,6 +10,7 @@ export {
   ConfigurationError,
   ConnectionError,
   ContactError,
+  EmailError,
   ErrorCode,
   PimError,
   ValidationError,
