@@ -66,4 +66,105 @@ describe("CardDavService", () => {
       expect(books).toHaveLength(2);
     });
   });
+
+  describe("fetchContacts", () => {
+    it("fetches and parses vCards from an address book", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        {
+          url: "/dav/contacts/john.vcf",
+          etag: '"etag1"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:uid-1\nFN:John Doe\nEMAIL:john@test.com\nEND:VCARD",
+        },
+      ]);
+
+      await service.connect();
+      const contacts = await service.fetchContacts("/dav/addressbooks/users/miguel/contacts/");
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0].uid).toBe("uid-1");
+      expect(contacts[0].fullName).toBe("John Doe");
+      expect(contacts[0].emails).toEqual(["john@test.com"]);
+    });
+  });
+
+  describe("createContact", () => {
+    it("creates a vCard on the server", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      await service.connect();
+      await service.createContact("/dav/addressbooks/users/miguel/contacts/", {
+        uid: "new-1",
+        fullName: "New Person",
+        emails: ["new@test.com"],
+        phones: [],
+      });
+
+      expect(__mockClient.createVCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filename: "new-1.vcf",
+        })
+      );
+    });
+  });
+
+  describe("updateContact", () => {
+    it("updates an existing vCard with merge semantics", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        {
+          url: "/dav/contacts/uid-1.vcf",
+          etag: '"etag1"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:uid-1\nFN:Old Name\nEND:VCARD",
+        },
+      ]);
+
+      await service.connect();
+      await service.updateContact("/dav/addressbooks/users/miguel/contacts/", "uid-1", {
+        fullName: "New Name",
+        emails: ["new@test.com"],
+      });
+
+      expect(__mockClient.updateVCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vCard: expect.objectContaining({
+            url: "/dav/contacts/uid-1.vcf",
+            etag: '"etag1"',
+          }),
+        })
+      );
+    });
+  });
+
+  describe("deleteContact", () => {
+    it("deletes a vCard by UID", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        {
+          url: "/dav/contacts/uid-1.vcf",
+          etag: '"etag1"',
+          data: "BEGIN:VCARD\nVERSION:3.0\nUID:uid-1\nFN:John Doe\nEND:VCARD",
+        },
+      ]);
+
+      await service.connect();
+      await service.deleteContact("/dav/addressbooks/users/miguel/contacts/", "uid-1");
+
+      expect(__mockClient.deleteVCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vCard: expect.objectContaining({
+            url: "/dav/contacts/uid-1.vcf",
+          }),
+        })
+      );
+    });
+
+    it("throws ContactError when contact not found", async () => {
+      const { __mockClient } = await import("tsdav") as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([]);
+
+      await service.connect();
+      await expect(
+        service.deleteContact("/dav/addressbooks/users/miguel/contacts/", "nonexistent")
+      ).rejects.toThrow("not found");
+    });
+  });
 });
