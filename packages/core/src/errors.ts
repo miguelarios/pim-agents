@@ -83,11 +83,11 @@ export class ContactError extends PimError {
 }
 
 export class EmailError extends PimError {
-	public readonly emailUid?: number;
-	constructor(message: string, code: ErrorCode, emailUid?: number) {
-		super(message, code, false);
-		this.emailUid = emailUid;
-	}
+  public readonly emailUid?: number;
+  constructor(message: string, code: ErrorCode, emailUid?: number) {
+    super(message, code, false);
+    this.emailUid = emailUid;
+  }
 }
 
 export function isRetryableError(error: Error): boolean {
