@@ -15,6 +15,9 @@ export enum ErrorCode {
   FOLDER_NOT_FOUND = "FOLDER_NOT_FOUND",
   SEND_FAILED = "SEND_FAILED",
   ATTACHMENT_NOT_FOUND = "ATTACHMENT_NOT_FOUND",
+  CALENDAR_NOT_FOUND = "CALENDAR_NOT_FOUND",
+  EVENT_NOT_FOUND = "EVENT_NOT_FOUND",
+  INVALID_ICS = "INVALID_ICS",
   INTERNAL_ERROR = "INTERNAL_ERROR",
   OPERATION_FAILED = "OPERATION_FAILED",
 }
@@ -87,6 +90,14 @@ export class EmailError extends PimError {
   constructor(message: string, code: ErrorCode, emailUid?: number) {
     super(message, code, false);
     this.emailUid = emailUid;
+  }
+}
+
+export class CalendarError extends PimError {
+  public readonly eventUid?: string;
+  constructor(message: string, code: ErrorCode, eventUid?: string) {
+    super(message, code, false);
+    this.eventUid = eventUid;
   }
 }
 

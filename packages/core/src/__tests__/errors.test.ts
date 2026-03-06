@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AuthenticationError,
+  CalendarError,
   ConfigurationError,
   ConnectionError,
   ContactError,
@@ -61,6 +62,14 @@ describe("PimError hierarchy", () => {
     expect(isRetryableError(new AuthenticationError("fail"))).toBe(false);
     expect(isRetryableError(new Error("ECONNRESET"))).toBe(true);
     expect(isRetryableError(new Error("something else"))).toBe(false);
+  });
+
+  it("creates CalendarError with event UID", () => {
+    const error = new CalendarError("Event not found", ErrorCode.EVENT_NOT_FOUND, "evt-123");
+    expect(error.message).toBe("Event not found");
+    expect(error.code).toBe(ErrorCode.EVENT_NOT_FOUND);
+    expect(error.eventUid).toBe("evt-123");
+    expect(error.isRetryable).toBe(false);
   });
 
   it("toPimError wraps plain errors intelligently", () => {

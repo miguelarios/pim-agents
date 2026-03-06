@@ -1,4 +1,7 @@
 export {
+  type CalDavAccount,
+  type CalDavConfig,
+  loadCalDavConfig,
   type CardDavConfig,
   loadCardDavConfig,
   type EmailConfig,
@@ -7,6 +10,7 @@ export {
 
 export {
   AuthenticationError,
+  CalendarError,
   ConfigurationError,
   ConnectionError,
   ContactError,
