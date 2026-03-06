@@ -1,8 +1,10 @@
 # Phase 2: Email (IMAP/SMTP) MVP Design
 
 **Date:** March 4, 2026
-**Status:** Approved
+**Status:** Complete
 **Scope:** `@miguelarios/email-mcp` — IMAP read/search/manage + SMTP send against Mailbox.org
+
+---
 
 ---
 
