@@ -101,4 +101,53 @@ describe("CalDavService", () => {
       );
     });
   });
+
+  describe("listEvents", () => {
+    it("fetches events with time range and returns EventSummary array", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("../ical.js");
+      (parseIcsEvents as any).mockReturnValue([
+        {
+          uid: "evt-1",
+          summary: "Team Meeting",
+          start: "2026-03-10T14:00:00.000Z",
+          end: "2026-03-10T15:00:00.000Z",
+          location: "Office",
+          status: "CONFIRMED",
+          recurrenceRule: undefined,
+        },
+      ]);
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "BEGIN:VCALENDAR...END:VCALENDAR", url: "/cal/evt-1.ics", etag: '"e1"' },
+      ]);
+
+      const events = await service.listEvents(
+        "mailbox/Work",
+        "2026-03-10T00:00:00Z",
+        "2026-03-10T23:59:59Z",
+      );
+
+      expect(events).toHaveLength(1);
+      expect(events[0].uid).toBe("evt-1");
+      expect(events[0].calendarId).toBe("mailbox/Work");
+      expect(events[0].summary).toBe("Team Meeting");
+      expect(events[0].isRecurring).toBe(false);
+
+      expect(__mockClient.fetchCalendarObjects).toHaveBeenCalledWith(
+        expect.objectContaining({
+          timeRange: {
+            start: "2026-03-10T00:00:00Z",
+            end: "2026-03-10T23:59:59Z",
+          },
+          expand: true,
+        }),
+      );
+    });
+
+    it("throws CalendarError for unknown provider", async () => {
+      await expect(
+        service.listEvents("unknown/cal", "2026-03-10T00:00:00Z", "2026-03-10T23:59:59Z"),
+      ).rejects.toThrow("Unknown provider");
+    });
+  });
 });

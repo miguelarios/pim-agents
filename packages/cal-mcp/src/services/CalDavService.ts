@@ -107,4 +107,52 @@ export class CalDavService {
 
     return allCalendars;
   }
+
+  async listEvents(calendarId: string, start: string, end: string): Promise<EventSummary[]> {
+    const { account, calendarName } = this.resolveAccount(calendarId);
+    const client = this.createClient(account);
+
+    try {
+      await client.login();
+      const calendars = await client.fetchCalendars();
+      const calendar = calendars.find(
+        (c) => (typeof c.displayName === "string" ? c.displayName : "") === calendarName,
+      );
+      if (!calendar) {
+        throw new CalendarError(
+          `Calendar "${calendarName}" not found on provider "${account.id}"`,
+          ErrorCode.CALENDAR_NOT_FOUND,
+        );
+      }
+
+      const objects = await client.fetchCalendarObjects({
+        calendar,
+        timeRange: { start, end },
+        expand: true,
+      });
+
+      const summaries: EventSummary[] = [];
+      for (const obj of objects) {
+        if (!obj.data) continue;
+        const parsed = parseIcsEvents(obj.data);
+        for (const event of parsed) {
+          summaries.push({
+            uid: event.uid,
+            calendarId,
+            summary: event.summary,
+            start: event.start,
+            end: event.end,
+            location: event.location,
+            status: event.status,
+            isRecurring: !!event.recurrenceRule,
+          });
+        }
+      }
+
+      return summaries;
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
 }
