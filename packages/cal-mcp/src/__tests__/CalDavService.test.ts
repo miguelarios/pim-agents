@@ -150,4 +150,118 @@ describe("CalDavService", () => {
       ).rejects.toThrow("Unknown provider");
     });
   });
+
+  describe("getEvent", () => {
+    it("fetches a single event by UID and returns full details", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("../ical.js");
+      (parseIcsEvents as any).mockReturnValue([
+        {
+          uid: "evt-1",
+          summary: "Team Meeting",
+          start: "2026-03-10T14:00:00.000Z",
+          end: "2026-03-10T15:00:00.000Z",
+          location: "Office",
+          description: "Weekly standup",
+          status: "CONFIRMED",
+          transparency: "OPAQUE",
+          attendees: [{ email: "bob@example.com", name: "Bob" }],
+          organizer: { email: "miguel@example.com", name: "Miguel" },
+          recurrenceRule: undefined,
+        },
+      ]);
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "BEGIN:VCALENDAR...END:VCALENDAR", url: "/cal/evt-1.ics", etag: '"e1"' },
+      ]);
+
+      const event = await service.getEvent("mailbox/Work", "evt-1");
+
+      expect(event.uid).toBe("evt-1");
+      expect(event.calendarId).toBe("mailbox/Work");
+      expect(event.description).toBe("Weekly standup");
+      expect(event.attendees).toHaveLength(1);
+      expect(event.organizer?.email).toBe("miguel@example.com");
+    });
+
+    it("throws CalendarError when event not found", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("../ical.js");
+      (parseIcsEvents as any).mockReturnValue([{ uid: "other-event", summary: "Other" }]);
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "...", url: "/cal/other.ics", etag: '"e1"' },
+      ]);
+
+      await expect(service.getEvent("mailbox/Work", "evt-missing")).rejects.toThrow("not found");
+    });
+  });
+
+  describe("createEvent", () => {
+    it("creates a calendar object with generated iCal string", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+
+      await service.createEvent("mailbox/Work", "BEGIN:VCALENDAR\nEND:VCALENDAR");
+
+      expect(__mockClient.createCalendarObject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          iCalString: "BEGIN:VCALENDAR\nEND:VCALENDAR",
+        }),
+      );
+    });
+  });
+
+  describe("updateEvent", () => {
+    it("updates an existing calendar object by UID", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("../ical.js");
+      (parseIcsEvents as any).mockReturnValue([{ uid: "evt-1" }]);
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "...", url: "/cal/evt-1.ics", etag: '"e1"' },
+      ]);
+
+      await service.updateEvent("mailbox/Work", "evt-1", "BEGIN:VCALENDAR\nUPDATED\nEND:VCALENDAR");
+
+      expect(__mockClient.updateCalendarObject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          calendarObject: expect.objectContaining({
+            url: "/cal/evt-1.ics",
+            etag: '"e1"',
+            data: "BEGIN:VCALENDAR\nUPDATED\nEND:VCALENDAR",
+          }),
+        }),
+      );
+    });
+
+    it("throws CalendarError when event to update is not found", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("../ical.js");
+      (parseIcsEvents as any).mockReturnValue([]);
+      __mockClient.fetchCalendarObjects.mockResolvedValue([]);
+
+      await expect(service.updateEvent("mailbox/Work", "missing", "...")).rejects.toThrow(
+        "not found",
+      );
+    });
+  });
+
+  describe("deleteEvent", () => {
+    it("deletes a calendar object by UID", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("../ical.js");
+      (parseIcsEvents as any).mockReturnValue([{ uid: "evt-1" }]);
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "...", url: "/cal/evt-1.ics", etag: '"e1"' },
+      ]);
+
+      await service.deleteEvent("mailbox/Work", "evt-1");
+
+      expect(__mockClient.deleteCalendarObject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          calendarObject: expect.objectContaining({
+            url: "/cal/evt-1.ics",
+            etag: '"e1"',
+          }),
+        }),
+      );
+    });
+  });
 });
