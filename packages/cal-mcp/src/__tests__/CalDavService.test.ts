@@ -264,4 +264,162 @@ describe("CalDavService", () => {
       );
     });
   });
+
+  describe("findFreeSlots", () => {
+    it("finds free slots between events", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("../ical.js")) as any;
+
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "ics-0", url: "/cal/evt-0.ics", etag: '"e0"' },
+        { data: "ics-1", url: "/cal/evt-1.ics", etag: '"e1"' },
+      ]);
+      // Each object parsed returns one event
+      parseIcsEvents
+        .mockReturnValueOnce([
+          {
+            uid: "evt-0",
+            summary: "Morning",
+            start: "2026-03-10T09:00:00.000Z",
+            end: "2026-03-10T10:00:00.000Z",
+            status: "CONFIRMED",
+            transparency: "OPAQUE",
+          },
+        ])
+        .mockReturnValueOnce([
+          {
+            uid: "evt-1",
+            summary: "Afternoon",
+            start: "2026-03-10T14:00:00.000Z",
+            end: "2026-03-10T15:00:00.000Z",
+            status: "CONFIRMED",
+            transparency: "OPAQUE",
+          },
+        ]);
+
+      const slots = await service.findFreeSlots(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+        30,
+      );
+
+      // Free: 08:00-09:00, 10:00-14:00, 15:00-17:00 — all >= 30 min
+      expect(slots.length).toBeGreaterThanOrEqual(3);
+      expect(slots[0].duration).toBeGreaterThanOrEqual(30);
+    });
+
+    it("ignores transparent events (TRANSP:TRANSPARENT)", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("../ical.js")) as any;
+
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "ics-0", url: "/cal/evt-0.ics", etag: '"e0"' },
+      ]);
+      parseIcsEvents.mockReturnValue([
+        {
+          uid: "evt-0",
+          summary: "All Day Free",
+          start: "2026-03-10T08:00:00.000Z",
+          end: "2026-03-10T17:00:00.000Z",
+          status: "CONFIRMED",
+          transparency: "TRANSPARENT",
+        },
+      ]);
+
+      const slots = await service.findFreeSlots(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+        30,
+      );
+
+      // Transparent event doesn't block — entire range is free
+      expect(slots.length).toBe(1);
+      expect(slots[0].duration).toBe(540); // 9 hours
+    });
+
+    it("treats tentative as busy by default", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("../ical.js")) as any;
+
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "ics-0", url: "/cal/evt-0.ics", etag: '"e0"' },
+      ]);
+      parseIcsEvents.mockReturnValue([
+        {
+          uid: "evt-0",
+          summary: "Maybe Meeting",
+          start: "2026-03-10T09:00:00.000Z",
+          end: "2026-03-10T17:00:00.000Z",
+          status: "TENTATIVE",
+          transparency: "OPAQUE",
+        },
+      ]);
+
+      const slots = await service.findFreeSlots(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+        30,
+      );
+
+      // Tentative blocks by default — only 08:00-09:00 is free
+      expect(slots).toHaveLength(1);
+      expect(slots[0].duration).toBe(60);
+    });
+
+    it("ignores tentative events when ignore_tentative is true", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("../ical.js")) as any;
+
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "ics-0", url: "/cal/evt-0.ics", etag: '"e0"' },
+      ]);
+      parseIcsEvents.mockReturnValue([
+        {
+          uid: "evt-0",
+          summary: "Maybe Meeting",
+          start: "2026-03-10T09:00:00.000Z",
+          end: "2026-03-10T17:00:00.000Z",
+          status: "TENTATIVE",
+          transparency: "OPAQUE",
+        },
+      ]);
+
+      const slots = await service.findFreeSlots(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+        30,
+        { ignoreTentative: true },
+      );
+
+      // Tentative ignored — entire range is free
+      expect(slots).toHaveLength(1);
+      expect(slots[0].duration).toBe(540);
+    });
+
+    it("sorts preferred-hours slots first", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("../ical.js")) as any;
+
+      __mockClient.fetchCalendarObjects.mockResolvedValue([]);
+      parseIcsEvents.mockReturnValue([]);
+
+      const slots = await service.findFreeSlots(
+        ["mailbox/Work"],
+        "2026-03-10T06:00:00Z",
+        "2026-03-10T20:00:00Z",
+        30,
+        { preferredStart: "09:00", preferredEnd: "17:00" },
+      );
+
+      // Should have slots, with preferred-hours slots first
+      expect(slots.length).toBeGreaterThanOrEqual(1);
+      // First slot should start at or after 09:00
+      const firstSlotHour = new Date(slots[0].start).getUTCHours();
+      expect(firstSlotHour).toBeGreaterThanOrEqual(9);
+    });
+  });
 });
