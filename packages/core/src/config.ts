@@ -48,6 +48,57 @@ export function loadCardDavConfig(): CardDavConfig {
   }
 }
 
+export interface CalDavAccount {
+  id: string;
+  url: string;
+  username: string;
+  password: string;
+}
+
+export interface CalDavConfig {
+  accounts: CalDavAccount[];
+}
+
+const CalDavAccountSchema = v.object({
+  id: v.pipe(v.string(), v.minLength(1, "Account id cannot be empty")),
+  url: v.pipe(v.string(), v.url("Account url must be a valid URL")),
+  username: v.pipe(v.string(), v.minLength(1, "Account username cannot be empty")),
+  password: v.pipe(v.string(), v.minLength(1, "Account password cannot be empty")),
+});
+
+const CalDavAccountsSchema = v.pipe(
+  v.array(CalDavAccountSchema),
+  v.minLength(1, "At least one CalDAV account is required"),
+);
+
+export function loadCalDavConfig(): CalDavConfig {
+  const raw = process.env.CALDAV_ACCOUNTS;
+  if (!raw) {
+    throw new ConfigurationError("CALDAV_ACCOUNTS environment variable is required");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new ConfigurationError("CALDAV_ACCOUNTS must be valid JSON");
+  }
+
+  try {
+    const accounts = v.parse(CalDavAccountsSchema, parsed);
+    return { accounts };
+  } catch (error) {
+    if (v.isValiError(error)) {
+      const messages = error.issues.map((issue) => {
+        const path = issue.path?.map((p) => p.key).join(".") ?? "unknown";
+        return `${path}: ${issue.message}`;
+      });
+      throw new ConfigurationError(`Config validation failed: ${messages.join("; ")}`);
+    }
+    throw error;
+  }
+}
+
 export interface EmailConfig {
   imap: {
     host: string;

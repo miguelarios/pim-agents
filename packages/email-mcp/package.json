@@ -10,6 +10,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "lint": "biome check .",
     "start": "node dist/bin/cli.js"
   },
   "dependencies": {
