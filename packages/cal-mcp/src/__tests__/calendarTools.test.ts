@@ -52,6 +52,59 @@ describe("calendarTools", () => {
     expect(props.icsContent).toBeUndefined();
   });
 
+  it("import_ics PUTs one object per UID and reports unique-UID count", async () => {
+    const MULTI = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//test//EN",
+      "BEGIN:VTIMEZONE",
+      "TZID:America/Chicago",
+      "BEGIN:STANDARD",
+      "DTSTART:20261101T020000",
+      "TZOFFSETFROM:-0500",
+      "TZOFFSETTO:-0600",
+      "END:STANDARD",
+      "END:VTIMEZONE",
+      "BEGIN:VEVENT",
+      "UID:a-1",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260302T150000Z",
+      "DTEND:20260302T153000Z",
+      "SUMMARY:Event A",
+      "RRULE:FREQ=WEEKLY",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:a-1",
+      "RECURRENCE-ID:20260309T150000Z",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260309T160000Z",
+      "DTEND:20260309T163000Z",
+      "SUMMARY:Event A moved",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:b-2",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260401T150000Z",
+      "DTEND:20260401T153000Z",
+      "SUMMARY:Event B",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    mockService.createEvent.mockResolvedValue({ uid: "x" });
+    mockService.getEvent.mockResolvedValue({ uid: "x" });
+
+    const result = await handleCalendarTool(
+      "import_ics",
+      { calendar: "mailbox/PIM-Test", ics_content: MULTI },
+      mockService as any,
+    );
+
+    expect(mockService.createEvent).toHaveBeenCalledTimes(2); // a-1 and b-2, not 1
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.imported).toBe(2); // unique UIDs, not 3 ParsedEvents
+  });
+
   it("find_free_slots schema has new params", () => {
     const tool = CALENDAR_TOOLS.find((t) => t.name === "find_free_slots")!;
     const props = (tool.inputSchema as any).properties;
