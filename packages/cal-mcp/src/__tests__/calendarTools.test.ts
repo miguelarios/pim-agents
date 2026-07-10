@@ -221,6 +221,22 @@ describe("calendarTools", () => {
         },
         meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
       });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:evt-1",
+          "DTSTAMP:20260301T000000Z",
+          "DTSTART:20260310T140000Z",
+          "DTEND:20260310T150000Z",
+          "SUMMARY:Meeting",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+        url: "/cal/evt-1.ics",
+        etag: '"e1"',
+      });
       mockService.updateEvent.mockResolvedValue({
         uid: "evt-1",
         title: "Updated Meeting",
@@ -282,6 +298,28 @@ describe("calendarTools", () => {
           categories: ["Meeting"],
         },
         meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:evt-1",
+          "DTSTAMP:20260301T000000Z",
+          "DTSTART:20260310T140000Z",
+          "DTEND:20260310T150000Z",
+          "SUMMARY:Meeting",
+          "CATEGORIES:Meeting",
+          "BEGIN:VALARM",
+          "ACTION:DISPLAY",
+          "DESCRIPTION:Reminder",
+          "TRIGGER:-PT15M",
+          "END:VALARM",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+        url: "/cal/evt-1.ics",
+        etag: '"e1"',
       });
       mockService.updateEvent.mockResolvedValue({
         uid: "evt-1",
@@ -728,6 +766,22 @@ describe("calendarTools", () => {
         },
         meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
       });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:evt-1",
+          "DTSTAMP:20260301T000000Z",
+          "DTSTART:20260310T140000Z",
+          "DTEND:20260310T150000Z",
+          "SUMMARY:Meeting",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+        url: "/cal/evt-1.ics",
+        etag: '"e1"',
+      });
       mockService.updateEvent.mockResolvedValue({ uid: "evt-1" });
 
       await handleCalendarTool(
@@ -764,6 +818,24 @@ describe("calendarTools", () => {
           availability: null,
         },
         meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:evt-1",
+          "DTSTAMP:20260301T000000Z",
+          "DTSTART:20260310T140000Z",
+          "DTEND:20260310T150000Z",
+          "SUMMARY:Meeting",
+          "ORGANIZER;CN=Alice:mailto:alice@example.com",
+          "ATTENDEE:mailto:bob@example.com",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+        url: "/cal/evt-1.ics",
+        etag: '"e1"',
       });
       mockService.updateEvent.mockResolvedValue({ uid: "evt-1" });
 
@@ -833,6 +905,23 @@ describe("calendarTools", () => {
         },
         meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
       });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:evt-1",
+          "DTSTAMP:20260301T000000Z",
+          "DTSTART:20260310T140000Z",
+          "DTEND:20260310T150000Z",
+          "SUMMARY:Focus",
+          "TRANSP:TRANSPARENT",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+        url: "/cal/evt-1.ics",
+        etag: '"e1"',
+      });
       mockService.updateEvent.mockResolvedValue({ uid: "evt-1" });
 
       await handleCalendarTool(
@@ -865,6 +954,23 @@ describe("calendarTools", () => {
         },
         meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
       });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "BEGIN:VEVENT",
+          "UID:evt-1",
+          "DTSTAMP:20260301T000000Z",
+          "DTSTART:20260310T140000Z",
+          "DTEND:20260310T150000Z",
+          "SUMMARY:Meeting",
+          "TRANSP:OPAQUE",
+          "END:VEVENT",
+          "END:VCALENDAR",
+        ].join("\r\n"),
+        url: "/cal/evt-1.ics",
+        etag: '"e1"',
+      });
       mockService.updateEvent.mockResolvedValue({ uid: "evt-1" });
 
       await handleCalendarTool(
@@ -875,6 +981,79 @@ describe("calendarTools", () => {
 
       const icsArg = mockService.updateEvent.mock.calls[0][2];
       expect(icsArg).toContain("TRANSP:TRANSPARENT");
+    });
+  });
+
+  describe("update_event span=all on recurring event (master mutation)", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("update_event span=all on a recurring event preserves RRULE, EXDATE, overrides, PARTSTAT, STATUS", async () => {
+      const MASTER = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//test//EN",
+        "BEGIN:VEVENT",
+        "UID:weekly-9",
+        "DTSTAMP:20260301T000000Z",
+        "DTSTART:20260302T150000Z",
+        "DTEND:20260302T153000Z",
+        "SUMMARY:Weekly sync",
+        "STATUS:TENTATIVE",
+        "SEQUENCE:1",
+        "RRULE:FREQ=WEEKLY;BYDAY=MO",
+        "EXDATE:20260316T150000Z",
+        "ORGANIZER;CN=alice:mailto:alice@example.com",
+        "ATTENDEE;PARTSTAT=ACCEPTED:mailto:bob@example.com",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:weekly-9",
+        "RECURRENCE-ID:20260309T150000Z",
+        "DTSTAMP:20260301T000000Z",
+        "DTSTART:20260309T160000Z",
+        "DTEND:20260309T163000Z",
+        "SUMMARY:Weekly sync (moved)",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n");
+
+      mockService.getEventWithMeta.mockResolvedValueOnce({
+        event: {
+          uid: "weekly-9",
+          calendar_id: "mailbox/Calendar",
+          title: "Weekly sync",
+          start: "2026-03-02T15:00:00.000Z",
+          end: "2026-03-02T15:30:00.000Z",
+          all_day: false,
+          is_recurring: true,
+          recurrence_rule: "FREQ=WEEKLY;BYDAY=MO",
+          organizer: { email: "alice@example.com", name: "alice" },
+          attendees: [{ email: "bob@example.com" }],
+        },
+        meta: { url: "https://dav.example.com/cal/weekly-9.ics", etag: '"e9"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValueOnce({
+        data: MASTER,
+        url: "https://dav.example.com/cal/weekly-9.ics",
+        etag: '"e9"',
+      });
+      mockService.updateEvent.mockResolvedValueOnce({ uid: "weekly-9" });
+
+      const result = await handleCalendarTool(
+        "update_event",
+        { calendar: "mailbox/Calendar", uid: "weekly-9", span: "all", title: "Weekly sync v2" },
+        mockService as any,
+      );
+
+      expect(result.isError).toBeFalsy();
+      const sentIcs = mockService.updateEvent.mock.calls[0][2] as string;
+      expect(sentIcs).toContain("SUMMARY:Weekly sync v2");
+      expect(sentIcs).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO");
+      expect(sentIcs).toContain("EXDATE:20260316T150000Z");
+      expect(sentIcs).toContain("RECURRENCE-ID:20260309T150000Z");
+      expect(sentIcs).toContain("PARTSTAT=ACCEPTED");
+      expect(sentIcs).toContain("STATUS:TENTATIVE");
     });
   });
 });

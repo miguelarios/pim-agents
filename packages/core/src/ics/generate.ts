@@ -6,7 +6,7 @@ import { IcsGenerateError } from "./errors.js";
 import { normalizeRecurrenceRule } from "./rrule.js";
 import type { EventCreateProps } from "./types.js";
 
-function toIcalTime(iso: string, allDay: boolean, tzid?: string): ICAL.Time {
+export function toIcalTime(iso: string, allDay: boolean, tzid?: string): ICAL.Time {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     throw new IcsGenerateError(`Invalid ISO date: ${iso}`, null);

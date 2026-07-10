@@ -2,6 +2,7 @@ import ICAL from "ical.js";
 import "./_tz-init.js";
 import { parseAttendees, parseCategories, parseOrganizer } from "./_shared.js";
 import { IcsParseError } from "./errors.js";
+import { toIcalTime } from "./generate.js";
 
 export interface ExceptionOverrides {
   title?: string;
@@ -15,6 +16,21 @@ export interface ExceptionOverrides {
   categories?: string[];
   organizer?: { email: string; name?: string | null };
   availability?: "busy" | "free";
+}
+
+export interface MasterEventUpdates {
+  title?: string;
+  start?: string; // ISO 8601
+  end?: string;
+  all_day?: boolean;
+  location?: string; // "" removes the property
+  description?: string; // "" removes the property
+  attendees?: Array<{ email: string }>; // replaces the list (participation state of replaced attendees is reset — inherent)
+  alarms?: Array<{ type: "relative" | "absolute"; trigger: number | string }>;
+  categories?: string[];
+  organizer?: { email: string; name?: string | null };
+  availability?: "busy" | "free";
+  timezone?: string; // TZID for rewritten DTSTART/DTEND
 }
 
 function parseRoot(ics: string): ICAL.Component {
@@ -212,5 +228,103 @@ export function addExdateToIcs(
 
   const exProp = master.addPropertyWithValue("exdate", newDate);
   if (allDay) exProp.setParameter("value", "DATE");
+  return root.toString();
+}
+
+export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates): string {
+  const root = parseRoot(rawIcs);
+  const master = root
+    .getAllSubcomponents("vevent")
+    .find((c) => !c.getFirstProperty("recurrence-id"));
+  if (!master) throw new IcsParseError("No master VEVENT found in ICS", null);
+
+  const currentDtstart = master.getFirstPropertyValue("dtstart");
+  const currentAllDay = currentDtstart instanceof ICAL.Time ? currentDtstart.isDate : false;
+  const allDay = updates.all_day ?? currentAllDay;
+
+  if (updates.title !== undefined) master.updatePropertyWithValue("summary", updates.title);
+
+  const setTime = (propName: "dtstart" | "dtend", iso: string) => {
+    const existing = master.getFirstProperty(propName);
+    const existingTzid = existing?.getParameter("tzid");
+    const effectiveTz =
+      updates.timezone ?? (typeof existingTzid === "string" ? existingTzid : undefined);
+    const t = toIcalTime(iso, allDay, effectiveTz);
+    const prop = master.updatePropertyWithValue(propName, t);
+    prop.removeParameter("tzid");
+    prop.removeParameter("value");
+    if (allDay) prop.setParameter("value", "DATE");
+    else if (effectiveTz && ICAL.TimezoneService.get(effectiveTz)) {
+      prop.setParameter("tzid", effectiveTz);
+    }
+  };
+  if (updates.start !== undefined) setTime("dtstart", updates.start);
+  if (updates.end !== undefined) setTime("dtend", updates.end);
+
+  const setOrRemove = (propName: string, value: string | undefined) => {
+    if (value === undefined) return;
+    if (value === "") master.removeAllProperties(propName);
+    else master.updatePropertyWithValue(propName, value);
+  };
+  setOrRemove("location", updates.location);
+  setOrRemove("description", updates.description);
+
+  if (updates.organizer) {
+    const name =
+      updates.organizer.name && updates.organizer.name.trim().length > 0
+        ? updates.organizer.name
+        : updates.organizer.email.split("@")[0];
+    const orgProp = master.updatePropertyWithValue(
+      "organizer",
+      `mailto:${updates.organizer.email}`,
+    );
+    orgProp.setParameter("cn", name);
+  }
+
+  if (updates.attendees !== undefined) {
+    master.removeAllProperties("attendee");
+    for (const att of updates.attendees) {
+      master.addPropertyWithValue("attendee", `mailto:${att.email}`);
+    }
+  }
+
+  if (updates.categories !== undefined) {
+    master.removeAllProperties("categories");
+    if (updates.categories.length > 0) {
+      master.addPropertyWithValue("categories", updates.categories.join(","));
+    }
+  }
+
+  if (updates.availability === "free") master.updatePropertyWithValue("transp", "TRANSPARENT");
+  else if (updates.availability === "busy") master.updatePropertyWithValue("transp", "OPAQUE");
+
+  if (updates.alarms !== undefined) {
+    for (const valarm of master.getAllSubcomponents("valarm")) {
+      master.removeSubcomponent(valarm);
+    }
+    for (const alarm of updates.alarms) {
+      const valarm = new ICAL.Component("valarm");
+      valarm.updatePropertyWithValue("action", "DISPLAY");
+      const summary = master.getFirstPropertyValue("summary");
+      valarm.updatePropertyWithValue(
+        "description",
+        typeof summary === "string" ? summary : "Reminder",
+      );
+      if (alarm.type === "relative" && typeof alarm.trigger === "number") {
+        valarm.updatePropertyWithValue("trigger", ICAL.Duration.fromSeconds(alarm.trigger));
+      } else if (alarm.type === "absolute" && typeof alarm.trigger === "string") {
+        valarm.updatePropertyWithValue(
+          "trigger",
+          ICAL.Time.fromJSDate(new Date(alarm.trigger), true),
+        );
+      }
+      master.addSubcomponent(valarm);
+    }
+  }
+
+  const seq = master.getFirstPropertyValue("sequence");
+  master.updatePropertyWithValue("sequence", (typeof seq === "number" ? seq : 0) + 1);
+  master.updatePropertyWithValue("dtstamp", ICAL.Time.now());
+
   return root.toString();
 }

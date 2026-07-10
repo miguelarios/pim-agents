@@ -19,10 +19,11 @@ export { normalizeRecurrenceRule } from "./rrule.js";
 export { parseIcsEvents } from "./parse-events.js";
 export { parseIcsTodos } from "./parse-todos.js";
 export { parseIcsJournals } from "./parse-journals.js";
-export { generateEventIcs } from "./generate.js";
+export { generateEventIcs, toIcalTime } from "./generate.js";
 export {
   createExceptionComponent,
   combineIcsComponents,
   addExdateToIcs,
+  updateMasterEventIcs,
 } from "./components.js";
-export type { ExceptionOverrides } from "./components.js";
+export type { ExceptionOverrides, MasterEventUpdates } from "./components.js";

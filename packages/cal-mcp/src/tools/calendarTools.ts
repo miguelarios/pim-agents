@@ -1,10 +1,12 @@
 import { getTimezone, toPimError } from "@miguelarios/pim-core";
 import {
+  type MasterEventUpdates,
   addExdateToIcs,
   combineIcsComponents,
   createExceptionComponent,
   generateEventIcs,
   parseIcsEvents,
+  updateMasterEventIcs,
 } from "@miguelarios/pim-core/ics";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -628,7 +630,7 @@ export async function handleCalendarTool(
 
       case "update_event": {
         const span = (args.span as string) ?? "this";
-        const { event: existing, meta } = await service.getEventWithMeta(
+        const { event: existing } = await service.getEventWithMeta(
           args.calendar as string,
           args.uid as string,
         );
@@ -720,54 +722,48 @@ export async function handleCalendarTool(
           return ok({ event: responseEvent });
         }
 
-        const effectiveAttendees =
-          (args.attendees as Array<{ email: string }> | undefined) ??
-          existing.attendees?.map((a: { email: string; name?: string | null }) => ({
-            email: a.email,
-            name: a.name ?? undefined,
-          }));
+        // Non-exception path (span "all", or non-recurring event): mutate the
+        // existing object in place — preserves RRULE/EXDATE/RDATE, exception
+        // overrides, attendee participation state, STATUS, and unknown props.
+        const rawObj = await service.fetchRawCalendarObject(
+          args.calendar as string,
+          args.uid as string,
+        );
 
-        // Preserve existing ORGANIZER if present; otherwise inject account-owner
-        // when the resulting event has attendees. Without this, CalDAV servers
-        // (SOGo/mailbox.org) reject the PUT with 412 because ATTENDEE requires
-        // ORGANIZER per RFC 5545 §3.6.1 / RFC 6638 scheduling preconditions.
-        let organizer: { email: string; name?: string | null } | undefined;
-        if (existing.organizer) {
-          organizer = { email: existing.organizer.email, name: existing.organizer.name };
-        } else if (effectiveAttendees && effectiveAttendees.length > 0) {
-          organizer = { email: service.getAccountEmail(args.calendar as string) };
+        const updates: MasterEventUpdates = { timezone: getTimezone() };
+        if (args.title !== undefined) updates.title = args.title as string;
+        if (args.start !== undefined) updates.start = args.start as string;
+        if (args.end !== undefined) updates.end = args.end as string;
+        if (args.all_day !== undefined) updates.all_day = args.all_day as boolean;
+        if (args.location !== undefined) updates.location = args.location as string;
+        if (args.description !== undefined) updates.description = args.description as string;
+        if (args.attendees !== undefined)
+          updates.attendees = args.attendees as Array<{ email: string }>;
+        if (args.alarms !== undefined)
+          updates.alarms = args.alarms as Array<{
+            type: "relative" | "absolute";
+            trigger: number | string;
+          }>;
+        if (args.categories !== undefined) updates.categories = args.categories as string[];
+        if (args.availability !== undefined)
+          updates.availability = args.availability as "busy" | "free";
+
+        // Inject ORGANIZER only when the event will have attendees but has none
+        // (CalDAV scheduling servers reject ATTENDEE-without-ORGANIZER, RFC 6638).
+        const effectiveAttendees = updates.attendees ?? existing.attendees;
+        if (effectiveAttendees && effectiveAttendees.length > 0 && !existing.organizer) {
+          updates.organizer = { email: service.getAccountEmail(args.calendar as string) };
         }
 
-        const effectiveAvailability =
-          (args.availability as "busy" | "free" | undefined) ??
-          (existing.availability === "free" || existing.availability === "busy"
-            ? existing.availability
-            : undefined);
-
-        const icsString = generateEventIcs({
-          uid: args.uid as string,
-          title: (args.title as string) ?? existing.title,
-          start: (args.start as string) ?? existing.start,
-          end: (args.end as string) ?? existing.end,
-          all_day: (args.all_day as boolean) ?? existing.all_day,
-          location: (args.location as string) ?? existing.location ?? undefined,
-          description: (args.description as string) ?? existing.description ?? undefined,
-          attendees: effectiveAttendees,
-          alarms:
-            (args.alarms as
-              | Array<{ type: "relative" | "absolute"; trigger: number | string }>
-              | undefined) ??
-            existing.alarms?.map((a: any) => ({ type: a.type, trigger: a.trigger })),
-          categories: (args.categories as string[] | undefined) ?? existing.categories,
-          organizer,
-          availability: effectiveAvailability,
-          timezone: getTimezone(),
-        });
+        const updatedIcs = updateMasterEventIcs(rawObj.data, updates);
         const event = await service.updateEvent(
           args.calendar as string,
           args.uid as string,
-          icsString,
-          meta,
+          updatedIcs,
+          {
+            url: rawObj.url,
+            etag: rawObj.etag,
+          },
         );
         return ok({ event });
       }

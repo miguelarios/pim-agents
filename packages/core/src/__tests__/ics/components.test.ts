@@ -5,6 +5,7 @@ import {
   combineIcsComponents,
   createExceptionComponent,
 } from "../../ics/components.js";
+import { updateMasterEventIcs } from "../../ics/components.js";
 import { IcsParseError } from "../../ics/errors.js";
 import { generateEventIcs } from "../../ics/generate.js";
 
@@ -108,5 +109,101 @@ describe("combineIcsComponents — defensive guards", () => {
   it("rejects a full VCALENDAR-wrapped exception component", () => {
     const wrapped = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\nUID:x@pim-core\r\nDTSTAMP:20260101T000000Z\r\nRECURRENCE-ID:20260511T130000Z\r\nDTSTART:20260511T140000Z\r\nDTEND:20260511T143000Z\r\nSUMMARY:Bad shape\r\nEND:VEVENT\r\nEND:VCALENDAR`;
     expect(() => combineIcsComponents(masterIcs, wrapped)).toThrow(IcsParseError);
+  });
+});
+
+const RECURRING_MASTER = [
+  "BEGIN:VCALENDAR",
+  "VERSION:2.0",
+  "PRODID:-//test//EN",
+  "BEGIN:VEVENT",
+  "UID:weekly-1",
+  "DTSTAMP:20260301T000000Z",
+  "DTSTART:20260302T150000Z",
+  "DTEND:20260302T153000Z",
+  "SUMMARY:Weekly sync",
+  "STATUS:TENTATIVE",
+  "SEQUENCE:2",
+  "RRULE:FREQ=WEEKLY;BYDAY=MO",
+  "EXDATE:20260316T150000Z",
+  "URL:https://example.com/meeting",
+  "ORGANIZER;CN=alice:mailto:alice@example.com",
+  "ATTENDEE;PARTSTAT=ACCEPTED;CN=Bob Jones:mailto:bob@example.com",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:weekly-1",
+  "RECURRENCE-ID:20260309T150000Z",
+  "DTSTAMP:20260301T000000Z",
+  "DTSTART:20260309T160000Z",
+  "DTEND:20260309T163000Z",
+  "SUMMARY:Weekly sync (moved)",
+  "END:VEVENT",
+  "END:VCALENDAR",
+].join("\r\n");
+
+describe("updateMasterEventIcs", () => {
+  it("changes only the requested field and preserves everything else", () => {
+    const out = updateMasterEventIcs(RECURRING_MASTER, { title: "Weekly sync v2" });
+    expect(out).toContain("SUMMARY:Weekly sync v2");
+    expect(out).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO");
+    expect(out).toContain("EXDATE:20260316T150000Z");
+    expect(out).toContain("RECURRENCE-ID:20260309T150000Z"); // exception override survives
+    expect(out).toContain("PARTSTAT=ACCEPTED"); // attendee state survives
+    expect(out).toContain("STATUS:TENTATIVE"); // status not rewritten
+    expect(out).toContain("URL:https://example.com/meeting"); // unknown props survive
+    expect(out).toContain("SEQUENCE:3"); // bumped from 2
+  });
+
+  it("replaces the attendee list only when attendees are provided", () => {
+    const out = updateMasterEventIcs(RECURRING_MASTER, {
+      attendees: [{ email: "carol@example.com" }],
+    });
+    expect(out).toContain("mailto:carol@example.com");
+    expect(out).not.toContain("mailto:bob@example.com");
+  });
+
+  it("rewrites DTSTART/DTEND when start/end provided, without touching RRULE", () => {
+    const out = updateMasterEventIcs(RECURRING_MASTER, {
+      start: "2026-03-02T16:00:00Z",
+      end: "2026-03-02T16:30:00Z",
+    });
+    expect(out).toContain("DTSTART:20260302T160000Z");
+    expect(out).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO");
+  });
+
+  const ZONED_MASTER = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//test//EN",
+    "BEGIN:VEVENT",
+    "UID:weekly-tz-1",
+    "DTSTAMP:20260301T000000Z",
+    "DTSTART;TZID=America/New_York:20260302T100000",
+    "DTEND;TZID=America/New_York:20260302T103000",
+    "SUMMARY:Weekly sync NY",
+    "SEQUENCE:0",
+    "RRULE:FREQ=WEEKLY;BYDAY=MO",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("preserves the existing TZID when start is updated without a timezone override", () => {
+    const out = updateMasterEventIcs(ZONED_MASTER, { start: "2026-03-02T11:00:00-05:00" });
+    // Updated DTSTART keeps its zone (not flattened to a UTC Z instant) so the
+    // RRULE keeps resolving 11:00 local across DST rather than drifting.
+    expect(out).toContain("DTSTART;TZID=America/New_York:20260302T110000");
+    expect(out).not.toMatch(/DTSTART[^\n]*:\d{8}T\d{6}Z/);
+    // The untouched DTEND is unchanged — still zoned, no mismatched pair.
+    expect(out).toContain("DTEND;TZID=America/New_York:20260302T103000");
+    expect(out).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO");
+  });
+
+  it("lets updates.timezone override the existing TZID", () => {
+    const out = updateMasterEventIcs(ZONED_MASTER, {
+      start: "2026-03-02T09:00:00-08:00",
+      timezone: "America/Los_Angeles",
+    });
+    expect(out).toContain("DTSTART;TZID=America/Los_Angeles:20260302T090000");
+    expect(out).not.toContain("DTSTART;TZID=America/New_York");
   });
 });
