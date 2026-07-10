@@ -328,3 +328,34 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
 
   return root.toString();
 }
+
+// Splits a multi-event ICS file into one VCALENDAR per unique UID. RFC 4791
+// §4.1 requires exactly one UID per calendar object; SabreDAV (Nextcloud)
+// rejects or corrupts PUTs that bundle multiple UIDs into a single object.
+// Each output group carries that UID's master event plus any RECURRENCE-ID
+// overrides for the same UID, and a copy of every VTIMEZONE subcomponent
+// from the source (so zoned DTSTART/DTEND still resolve after the split).
+export function splitIcsByUid(icsContent: string): Array<{ uid: string; ics: string }> {
+  const root = parseRoot(icsContent);
+  const timezones = root.getAllSubcomponents("vtimezone");
+  const byUid = new Map<string, ICAL.Component[]>();
+  for (const type of ["vevent", "vtodo"] as const) {
+    for (const comp of root.getAllSubcomponents(type)) {
+      const uid = comp.getFirstPropertyValue("uid");
+      if (typeof uid !== "string" || !uid) continue;
+      const list = byUid.get(uid) ?? [];
+      list.push(comp);
+      byUid.set(uid, list);
+    }
+  }
+  const results: Array<{ uid: string; ics: string }> = [];
+  for (const [uid, comps] of byUid) {
+    const cal = new ICAL.Component(["vcalendar", [], []]);
+    cal.updatePropertyWithValue("prodid", "-//pim-core//import-split//EN");
+    cal.updatePropertyWithValue("version", "2.0");
+    for (const tz of timezones) cal.addSubcomponent(ICAL.Component.fromString(tz.toString()));
+    for (const comp of comps) cal.addSubcomponent(ICAL.Component.fromString(comp.toString()));
+    results.push({ uid, ics: cal.toString() });
+  }
+  return results;
+}

@@ -4,6 +4,7 @@ import {
   addExdateToIcs,
   combineIcsComponents,
   createExceptionComponent,
+  splitIcsByUid,
 } from "../../ics/components.js";
 import { updateMasterEventIcs } from "../../ics/components.js";
 import { IcsParseError } from "../../ics/errors.js";
@@ -205,5 +206,56 @@ describe("updateMasterEventIcs", () => {
     });
     expect(out).toContain("DTSTART;TZID=America/Los_Angeles:20260302T090000");
     expect(out).not.toContain("DTSTART;TZID=America/New_York");
+  });
+});
+
+describe("splitIcsByUid", () => {
+  const MULTI = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//test//EN",
+    "BEGIN:VTIMEZONE",
+    "TZID:America/Chicago",
+    "BEGIN:STANDARD",
+    "DTSTART:20261101T020000",
+    "TZOFFSETFROM:-0500",
+    "TZOFFSETTO:-0600",
+    "END:STANDARD",
+    "END:VTIMEZONE",
+    "BEGIN:VEVENT",
+    "UID:a-1",
+    "DTSTAMP:20260301T000000Z",
+    "DTSTART:20260302T150000Z",
+    "DTEND:20260302T153000Z",
+    "SUMMARY:Event A",
+    "RRULE:FREQ=WEEKLY",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:a-1",
+    "RECURRENCE-ID:20260309T150000Z",
+    "DTSTAMP:20260301T000000Z",
+    "DTSTART:20260309T160000Z",
+    "DTEND:20260309T163000Z",
+    "SUMMARY:Event A moved",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:b-2",
+    "DTSTAMP:20260301T000000Z",
+    "DTSTART:20260401T150000Z",
+    "DTEND:20260401T153000Z",
+    "SUMMARY:Event B",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("groups master + overrides per UID and copies VTIMEZONE into each", () => {
+    const groups = splitIcsByUid(MULTI);
+    expect(groups.map((g) => g.uid).sort()).toEqual(["a-1", "b-2"]);
+    const a = groups.find((g) => g.uid === "a-1")!.ics;
+    expect(a.match(/BEGIN:VEVENT/g)).toHaveLength(2); // master + override
+    expect(a).toContain("TZID:America/Chicago");
+    const b = groups.find((g) => g.uid === "b-2")!.ics;
+    expect(b.match(/BEGIN:VEVENT/g)).toHaveLength(1);
+    expect(b).not.toContain("Event A");
   });
 });

@@ -25,5 +25,6 @@ export {
   combineIcsComponents,
   addExdateToIcs,
   updateMasterEventIcs,
+  splitIcsByUid,
 } from "./components.js";
 export type { ExceptionOverrides, MasterEventUpdates } from "./components.js";
