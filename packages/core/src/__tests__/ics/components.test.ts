@@ -4,6 +4,7 @@ import {
   addExdateToIcs,
   combineIcsComponents,
   createExceptionComponent,
+  removeExceptionFromIcs,
   splitIcsByUid,
 } from "../../ics/components.js";
 import { updateMasterEventIcs } from "../../ics/components.js";
@@ -257,5 +258,44 @@ describe("splitIcsByUid", () => {
     const b = groups.find((g) => g.uid === "b-2")!.ics;
     expect(b.match(/BEGIN:VEVENT/g)).toHaveLength(1);
     expect(b).not.toContain("Event A");
+  });
+});
+
+describe("removeExceptionFromIcs", () => {
+  it("removes a TZID-form override that the old regex missed", () => {
+    const ICS = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//test//EN",
+      "BEGIN:VTIMEZONE",
+      "TZID:America/Chicago",
+      "BEGIN:DAYLIGHT",
+      "DTSTART:20260308T030000",
+      "TZOFFSETFROM:-0600",
+      "TZOFFSETTO:-0500",
+      "END:DAYLIGHT",
+      "END:VTIMEZONE",
+      "BEGIN:VEVENT",
+      "UID:tz-1",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART;TZID=America/Chicago:20260302T100000",
+      "DTEND;TZID=America/Chicago:20260302T103000",
+      "SUMMARY:Standup",
+      "RRULE:FREQ=WEEKLY;BYDAY=MO",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:tz-1",
+      "RECURRENCE-ID;TZID=America/Chicago:20260309T100000",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART;TZID=America/Chicago:20260309T110000",
+      "DTEND;TZID=America/Chicago:20260309T113000",
+      "SUMMARY:Standup (moved)",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    // 2026-03-09 10:00 Chicago (CDT, UTC-5) = 15:00Z
+    const out = removeExceptionFromIcs(ICS, "2026-03-09T15:00:00.000Z", false);
+    expect(out).not.toContain("Standup (moved)");
+    expect(out).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO"); // master untouched
   });
 });

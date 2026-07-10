@@ -5,6 +5,7 @@ import {
   combineIcsComponents,
   createExceptionComponent,
   generateEventIcs,
+  removeExceptionFromIcs,
   splitIcsByUid,
   updateMasterEventIcs,
 } from "@miguelarios/pim-core/ics";
@@ -789,18 +790,10 @@ export async function handleCalendarTool(
 
             let updatedIcs = addExdateToIcs(rawObj.data, occurrenceDate, existing.all_day);
 
-            // Remove any existing exception VEVENT for this date
-            const recIdDate = new Date(occurrenceDate);
-            const formattedRecId = existing.all_day
-              ? recIdDate.toISOString().slice(0, 10).replace(/-/g, "")
-              : recIdDate
-                  .toISOString()
-                  .replace(/[-:]/g, "")
-                  .replace(/\.\d{3}/, "");
-            const exceptionRegex = new RegExp(
-              `BEGIN:VEVENT\\r?\\n(?:(?!BEGIN:VEVENT)[\\s\\S])*?RECURRENCE-ID[^:]*:${formattedRecId}[\\s\\S]*?END:VEVENT\\r?\\n?`,
-            );
-            updatedIcs = updatedIcs.replace(exceptionRegex, "");
+            // Remove any existing exception VEVENT/VTODO for this occurrence,
+            // matching by resolved instant (handles both UTC and TZID-form
+            // RECURRENCE-ID) rather than a literal-text regex.
+            updatedIcs = removeExceptionFromIcs(updatedIcs, occurrenceDate, existing.all_day);
 
             await service.updateEvent(args.calendar as string, args.uid as string, updatedIcs, {
               url: rawObj.url,

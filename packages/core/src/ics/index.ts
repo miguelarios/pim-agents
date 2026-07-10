@@ -24,6 +24,7 @@ export {
   createExceptionComponent,
   combineIcsComponents,
   addExdateToIcs,
+  removeExceptionFromIcs,
   updateMasterEventIcs,
   splitIcsByUid,
 } from "./components.js";
