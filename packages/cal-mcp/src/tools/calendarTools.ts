@@ -47,12 +47,14 @@ export const CALENDAR_TOOLS: Tool[] = [
     name: "list_calendars",
     description:
       "List all calendars across all configured CalDAV providers. Returns provider-prefixed IDs (e.g., mailbox/work).",
+    annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "list_events",
     description:
       "Query events in a date range. Recurring events are expanded into individual instances.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -81,6 +83,7 @@ export const CALENDAR_TOOLS: Tool[] = [
   {
     name: "get_today_events",
     description: "Get all events for today. Convenience wrapper over list_events.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -99,6 +102,7 @@ export const CALENDAR_TOOLS: Tool[] = [
   {
     name: "search_events",
     description: "Keyword search across event title, description, and location.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -130,6 +134,7 @@ export const CALENDAR_TOOLS: Tool[] = [
   {
     name: "get_event",
     description: "Get full details of a single event by calendar and UID.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -310,6 +315,7 @@ export const CALENDAR_TOOLS: Tool[] = [
   {
     name: "delete_event",
     description: "Delete a calendar event by UID.",
+    annotations: { destructiveHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -447,6 +453,7 @@ export const CALENDAR_TOOLS: Tool[] = [
     name: "find_free_slots",
     description:
       "Find available time slots across specified calendars. Returns free windows matching the requested duration.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {

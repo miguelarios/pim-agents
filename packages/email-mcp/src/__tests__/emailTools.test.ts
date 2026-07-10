@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMAIL_TOOLS, handleEmailTool } from "../tools/emailTools.js";
 
 // Mock ImapService
@@ -120,6 +121,22 @@ describe("EMAIL_TOOLS definitions", () => {
     const tool = EMAIL_TOOLS.find((t) => t.name === "download_attachment")!;
     expect(tool.inputSchema.required).toContain("uid");
     expect(tool.inputSchema.required).toContain("partId");
+  });
+
+  it("read-only tools carry readOnlyHint; destructive tools carry destructiveHint", () => {
+    const byName = Object.fromEntries(EMAIL_TOOLS.map((t) => [t.name, t as any]));
+    for (const name of [
+      "search_emails",
+      "get_email",
+      "list_folders",
+      "download_attachment",
+      "get_email_raw",
+      "get_folder_status",
+    ]) {
+      expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
+    }
+    expect(byName.delete_email.annotations?.destructiveHint).toBe(true);
+    expect(byName.send_email.annotations?.readOnlyHint).toBeFalsy();
   });
 });
 
@@ -483,6 +500,59 @@ describe("send_email handler", () => {
       fromName: "Test User",
       smtp: { user: "user@test.com" },
     };
+  });
+
+  describe("attachment path restriction", () => {
+    // realpathSync needs the allowed root to actually exist to exercise the
+    // real escape check (rather than incidentally failing on a missing
+    // root dir), so create/remove a real synthetic dir under /tmp.
+    const attachmentDir = "/tmp/attachments";
+
+    beforeEach(() => {
+      mkdirSync(attachmentDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      rmSync(attachmentDir, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    });
+
+    it("rejects path attachments when EMAIL_ATTACHMENT_DIR is unset", async () => {
+      vi.stubEnv("EMAIL_ATTACHMENT_DIR", "");
+
+      const result = await handleEmailTool(
+        "send_email",
+        {
+          to: ["r@test.com"],
+          subject: "Hi",
+          text: "Hello",
+          attachments: [{ filename: "a.txt", path: "/etc/passwd" }],
+        },
+        mockImapService,
+        mockSmtpService,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/EMAIL_ATTACHMENT_DIR/);
+    });
+
+    it("rejects paths that escape EMAIL_ATTACHMENT_DIR", async () => {
+      vi.stubEnv("EMAIL_ATTACHMENT_DIR", attachmentDir);
+
+      const result = await handleEmailTool(
+        "send_email",
+        {
+          to: ["r@test.com"],
+          subject: "Hi",
+          text: "Hello",
+          attachments: [{ filename: "a.txt", path: `${attachmentDir}/../../etc/passwd` }],
+        },
+        mockImapService,
+        mockSmtpService,
+      );
+
+      expect(result.isError).toBe(true);
+    });
   });
 });
 

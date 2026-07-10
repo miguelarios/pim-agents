@@ -2,7 +2,35 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanUrl, disposeUrlCleaner, htmlToMarkdown } from "../htmlToMarkdown.js";
+import { cleanUrl, disposeUrlCleaner, htmlToMarkdown, isBlockedUrl } from "../htmlToMarkdown.js";
+
+describe("isBlockedUrl", () => {
+  it.each([
+    "http://192.168.1.10/admin",
+    "http://10.0.0.5/",
+    "http://172.16.0.5/admin",
+    "http://127.0.0.1:8080/",
+    "http://169.254.169.254/latest/meta-data",
+    "http://localhost/x",
+    "http://nas.local/x",
+    "http://intranet/x",
+    "ftp://example.com/x",
+    "http://[::1]/x",
+    // IPv4-mapped IPv6 literals must not bypass the private-IPv4 guard
+    "http://[::ffff:169.254.169.254]/x",
+    "http://[::ffff:127.0.0.1]/x",
+    "http://[::ffff:192.168.1.1]/x",
+    // Link-local is fe80::/10 (fe80::–febf::), not just literal fe80:
+    "http://[fe80::1]/x",
+    "http://[febf::1]/x",
+  ])("blocks %s", (url) => {
+    expect(isBlockedUrl(url)).toBe(true);
+  });
+
+  it.each(["https://example.com/a", "http://news.example.org/b?c=1"])("allows %s", (url) => {
+    expect(isBlockedUrl(url)).toBe(false);
+  });
+});
 
 describe("cleanUrl", () => {
   it("strips utm params", async () => {
@@ -458,6 +486,76 @@ describe("htmlToMarkdown", () => {
       "https://tracker.example.com/click",
       expect.objectContaining({ method: "GET" }),
     );
+  });
+
+  describe("SSRF guard on link resolution", () => {
+    it("does not fetch private-range link targets and leaves them as-is", async () => {
+      const result = await htmlToMarkdown('<a href="http://192.168.1.10/admin">Router</a>');
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toContain("[Router](http://192.168.1.10/admin)");
+    });
+
+    it("does not fetch localhost/.local/.internal link targets", async () => {
+      const result = await htmlToMarkdown(
+        '<a href="http://nas.local/share">NAS</a> <a href="http://localhost:8080/x">Local</a>',
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toContain("[NAS](http://nas.local/share)");
+      expect(result).toContain("[Local](http://localhost:8080/x)");
+    });
+
+    it("still fetches normal public URLs alongside blocked ones", async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        if (url === "https://redirect.example.com/abc") {
+          return { url: "https://real.example.com/page" };
+        }
+        return { url };
+      });
+
+      const result = await htmlToMarkdown(
+        '<a href="http://192.168.1.10/admin">Router</a> <a href="https://redirect.example.com/abc">Click</a>',
+      );
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith("https://redirect.example.com/abc", expect.anything());
+      expect(result).toContain("[Router](http://192.168.1.10/admin)");
+      expect(result).toContain("[Click](https://real.example.com/page)");
+    });
+  });
+
+  describe("URL_RESOLVE_DISABLE kill switch", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("skips network resolution when URL_RESOLVE_DISABLE=1 but still converts markdown", async () => {
+      vi.stubEnv("URL_RESOLVE_DISABLE", "1");
+      const result = await htmlToMarkdown(
+        '<a href="https://redirect.example.com/abc">Click here</a>',
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toContain("[Click here](https://redirect.example.com/abc)");
+    });
+
+    it("skips network resolution when URL_RESOLVE_DISABLE=true", async () => {
+      vi.stubEnv("URL_RESOLVE_DISABLE", "true");
+      const result = await htmlToMarkdown('<a href="https://redirect.example.com/abc">Link</a>');
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toContain("[Link](https://redirect.example.com/abc)");
+    });
+
+    it("resolves normally when URL_RESOLVE_DISABLE is unset", async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        if (url === "https://redirect.example.com/abc") {
+          return { url: "https://real.example.com/page" };
+        }
+        return { url };
+      });
+      const result = await htmlToMarkdown(
+        '<a href="https://redirect.example.com/abc">Click here</a>',
+      );
+      expect(mockFetch).toHaveBeenCalled();
+      expect(result).toContain("[Click here](https://real.example.com/page)");
+    });
   });
 
   it("dramatically reduces NYT newsletter size", async () => {

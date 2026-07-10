@@ -155,7 +155,9 @@ export async function htmlToMarkdown(html: string): Promise<string> {
   const urlPattern = /\]\((https?:\/\/[^)]+)\)/g;
   const urlMatches = [...markdown.matchAll(urlPattern)];
   if (urlMatches.length > 0) {
-    const urls = [...new Set(urlMatches.map((m) => m[1]))];
+    // Filter out SSRF-risky targets (private IPs, localhost, reserved hostnames)
+    // before they enter the resolve pool — they stay in the markdown as-is.
+    const urls = [...new Set(urlMatches.map((m) => m[1]))].filter((u) => !isBlockedUrl(u));
     const resolved = await resolveUrls(urls);
     for (const [original, final] of resolved) {
       if (original !== final) {
@@ -192,6 +194,66 @@ type FetchResult =
 const POOL_SIZE = 10;
 const MAX_ATTEMPTS = 3;
 const DEFAULT_TIMEOUT = 10000;
+
+const BLOCKED_HOST_SUFFIXES = [".local", ".internal", ".lan", ".home", ".arpa"];
+
+function isPrivateIpv4(host: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  return false;
+}
+
+/**
+ * Guard against SSRF via email-embedded links. Checks the *initial* URL only —
+ * redirect hops and DNS rebinding are not inspected (accepted residual risk;
+ * set URL_RESOLVE_DISABLE=1 to turn off resolution entirely).
+ */
+export function isBlockedUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return true;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return true;
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || !host.includes(".")) return true;
+  if (BLOCKED_HOST_SUFFIXES.some((s) => host.endsWith(s))) return true;
+  if (isPrivateIpv4(host)) return true;
+  if (host.includes(":")) {
+    // IPv6 literal (brackets already stripped). Any dot-free host is already
+    // blocked above by the single-label check, but these explicit rules also
+    // catch dotted forms — e.g. ::ffff:169.254.169.254 — that some runtimes
+    // preserve instead of normalizing to hex (::ffff:a9fe:a9fe).
+    if (host === "::1") return true; // loopback
+    if (/^fe[89ab][0-9a-f]:/i.test(host)) return true; // link-local fe80::/10
+    if (/^f[cd][0-9a-f]{2}:/i.test(host)) return true; // unique-local fc00::/7
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d or ::ffff:hhhh:hhhh) — unwrap and re-check.
+    const mapped = /^::ffff:(.+)$/i.exec(host);
+    if (mapped) {
+      const tail = mapped[1];
+      let ipv4: string | undefined;
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(tail)) {
+        ipv4 = tail;
+      } else {
+        const hx = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(tail);
+        if (hx) {
+          const hi = Number.parseInt(hx[1], 16);
+          const lo = Number.parseInt(hx[2], 16);
+          ipv4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+        }
+      }
+      if (ipv4 && isPrivateIpv4(ipv4)) return true;
+    }
+  }
+  return false;
+}
 
 async function fetchOne(
   url: string,
@@ -278,6 +340,12 @@ async function pooledResolve(
 }
 
 async function resolveUrls(urls: string[]): Promise<Map<string, string>> {
+  if (process.env.URL_RESOLVE_DISABLE === "1" || process.env.URL_RESOLVE_DISABLE === "true") {
+    // Kill switch: skip all network resolution entirely (no fetches at all).
+    // Markdown conversion still proceeds; links stay as their original URLs.
+    return new Map();
+  }
+
   const debug = process.env.DEBUG_URL_RESOLVE === "1";
   const timeoutMs = debug
     ? Number.parseInt(process.env.URL_RESOLVE_TIMEOUT || String(DEFAULT_TIMEOUT), 10)

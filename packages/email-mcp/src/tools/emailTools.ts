@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import { toPimError } from "@miguelarios/pim-core";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { simpleParser } from "mailparser";
@@ -6,11 +8,26 @@ import type { SearchParams } from "../search.js";
 import type { ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 
+function assertAttachmentPathAllowed(p: string): void {
+  const allowedRoot = process.env.EMAIL_ATTACHMENT_DIR;
+  if (!allowedRoot) {
+    throw new Error(
+      "attachments[].path is disabled — set EMAIL_ATTACHMENT_DIR to a directory to allow file attachments, or pass content instead",
+    );
+  }
+  const root = realpathSync(resolve(allowedRoot));
+  const target = realpathSync(resolve(p));
+  if (target !== root && !target.startsWith(root + sep)) {
+    throw new Error(`attachment path is outside EMAIL_ATTACHMENT_DIR: ${p}`);
+  }
+}
+
 export const EMAIL_TOOLS: Tool[] = [
   {
     name: "search_emails",
     description:
       "Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (subject, from, to, etc.) for most searches. Note: for result sets >1000, non-date sort fields are approximate (sorted within page only).",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -99,6 +116,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "get_email",
     description:
       "Fetch a full email by UID including headers, body, and attachment metadata. Returns body as markdown by default for token efficiency. Use format='html' or format='text' for raw content.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -163,7 +181,8 @@ export const EMAIL_TOOLS: Tool[] = [
               filename: { type: "string" },
               path: {
                 type: "string",
-                description: "File path to attach.",
+                description:
+                  "File path to attach. Disabled unless the server has EMAIL_ATTACHMENT_DIR set to an allowed directory; the resolved path must be inside it. Use content instead if unavailable.",
               },
               content: {
                 type: "string",
@@ -250,6 +269,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "delete_email",
     description:
       "Delete one or more emails. Moves to Trash by default, or permanently deletes if specified.",
+    annotations: { destructiveHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -274,6 +294,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "list_folders",
     description:
       "List all IMAP folders with their paths and special-use flags (Inbox, Sent, Trash, etc.).",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {},
@@ -297,6 +318,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "download_attachment",
     description:
       "Download a specific attachment from an email. Returns the attachment content as base64.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -319,6 +341,7 @@ export const EMAIL_TOOLS: Tool[] = [
   {
     name: "get_email_raw",
     description: "Export an email as raw .eml (RFC 822 source). Useful for archival or forwarding.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -338,6 +361,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "get_folder_status",
     description:
       "Get total and unread message counts for a folder via IMAP STATUS (single round-trip, no payload).",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -454,6 +478,9 @@ export async function handleEmailTool(
         const text = args.text as string | undefined;
         const html = args.html as string | undefined;
         const attachments = args.attachments as any[] | undefined;
+        for (const att of attachments ?? []) {
+          if (att.path) assertAttachmentPathAllowed(att.path);
+        }
         const replyToUid = args.replyToUid as number | undefined;
         const replyToFolder = (args.replyToFolder as string) || "INBOX";
         const saveToDrafts = (args.saveToDrafts as boolean) || false;

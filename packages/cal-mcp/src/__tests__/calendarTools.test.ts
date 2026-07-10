@@ -36,6 +36,22 @@ describe("calendarTools", () => {
     expect(names).toContain("find_free_slots");
   });
 
+  it("read-only tools carry readOnlyHint; destructive tools carry destructiveHint", () => {
+    const byName = Object.fromEntries(CALENDAR_TOOLS.map((t) => [t.name, t as any]));
+    for (const name of [
+      "list_calendars",
+      "list_events",
+      "get_today_events",
+      "search_events",
+      "get_event",
+      "find_free_slots",
+    ]) {
+      expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
+    }
+    expect(byName.delete_event.annotations?.destructiveHint).toBe(true);
+    expect(byName.create_event.annotations?.readOnlyHint).toBeFalsy();
+  });
+
   it("create_event schema uses title not summary", () => {
     const tool = CALENDAR_TOOLS.find((t) => t.name === "create_event")!;
     const props = (tool.inputSchema as any).properties;
