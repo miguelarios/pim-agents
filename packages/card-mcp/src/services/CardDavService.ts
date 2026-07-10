@@ -39,7 +39,7 @@ export class CardDavService {
 
   async connect(): Promise<void> {
     try {
-      this.client = new DAVClient({
+      const client = new DAVClient({
         serverUrl: this.config.url,
         credentials: {
           username: this.config.username,
@@ -48,10 +48,32 @@ export class CardDavService {
         authMethod: "Basic",
         defaultAccountType: "carddav",
       });
-      await this.client.login();
+      await client.login();
+      this.client = client;
     } catch (error) {
+      this.client = null;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
+  }
+
+  private checkDavResponse(response: unknown, action: string, uid: string): void {
+    const res = response as { ok?: boolean; status?: number; statusText?: string } | null;
+    if (!res || res.ok !== false) return;
+    if (res.status === 412) {
+      throw new ContactError(
+        `Contact ${uid} changed on the server since it was read (etag conflict) — re-read and retry`,
+        ErrorCode.CONTACT_CONFLICT,
+        uid,
+      );
+    }
+    if (res.status === 404) {
+      throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
+    }
+    throw new ContactError(
+      `Failed to ${action} contact ${uid}: HTTP ${res.status} ${res.statusText ?? ""}`.trim(),
+      ErrorCode.INTERNAL_ERROR,
+      uid,
+    );
   }
 
   private async ensureConnected(): Promise<DAVClient> {
@@ -154,14 +176,16 @@ export class CardDavService {
     };
 
     try {
-      await client.updateVCard({
+      const response = await client.updateVCard({
         vCard: {
           url: existing.url,
           etag: existing.etag,
           data: buildVCard(merged),
         },
       });
+      this.checkDavResponse(response, "update", uid);
     } catch (error) {
+      if (error instanceof ContactError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
   }
@@ -174,10 +198,12 @@ export class CardDavService {
     }
 
     try {
-      await client.deleteVCard({
+      const response = await client.deleteVCard({
         vCard: { url: existing.url, etag: existing.etag },
       });
+      this.checkDavResponse(response, "delete", uid);
     } catch (error) {
+      if (error instanceof ContactError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
   }
