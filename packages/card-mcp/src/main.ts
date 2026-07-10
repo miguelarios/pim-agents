@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { loadCardDavConfig, toPimError } from "@miguelarios/pim-core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -5,12 +6,15 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { CardDavService } from "./services/CardDavService.js";
 import { CONTACT_TOOLS, handleContactTool } from "./tools/contactTools.js";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
+
 export async function createServer(): Promise<Server> {
   const config = loadCardDavConfig();
   const service = new CardDavService(config);
 
   const server = new Server(
-    { name: "@miguelarios/card-mcp", version: "0.1.0" },
+    { name: "@miguelarios/card-mcp", version },
     { capabilities: { tools: {} } },
   );
 

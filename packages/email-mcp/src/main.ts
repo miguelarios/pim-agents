@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { loadEmailConfig } from "@miguelarios/pim-core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -7,13 +8,16 @@ import { ImapService } from "./services/ImapService.js";
 import { SmtpService } from "./services/SmtpService.js";
 import { EMAIL_TOOLS, handleEmailTool } from "./tools/emailTools.js";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
+
 export async function createServer(): Promise<Server> {
   const config = loadEmailConfig();
   const imapService = new ImapService(config);
   const smtpService = new SmtpService(config);
 
   const server = new Server(
-    { name: "@miguelarios/email-mcp", version: "0.1.0" },
+    { name: "@miguelarios/email-mcp", version },
     { capabilities: { tools: {} } },
   );
 
