@@ -313,6 +313,51 @@ describe("CardDavService", () => {
     });
   });
 
+  describe("HTTP error surfacing", () => {
+    const CARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:h-1\r\nFN:Alice Smith\r\nEND:VCARD";
+
+    it("updateContact throws CONTACT_CONFLICT on 412", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([{ url: "u", etag: '"e1"', data: CARD }]);
+      __mockClient.updateVCard.mockResolvedValueOnce({
+        ok: false,
+        status: 412,
+        statusText: "Precondition Failed",
+      });
+
+      await service.connect();
+      await expect(service.updateContact("book", "h-1", { title: "x" })).rejects.toMatchObject({
+        code: "CONTACT_CONFLICT",
+      });
+    });
+
+    it("deleteContact throws on 403 instead of reporting success", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchVCards.mockResolvedValueOnce([{ url: "u", etag: '"e1"', data: CARD }]);
+      __mockClient.deleteVCard.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+      });
+
+      await service.connect();
+      await expect(service.deleteContact("book", "h-1")).rejects.toThrow(/403/);
+    });
+
+    it("failed login does not leave a half-connected client", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.login.mockClear();
+      __mockClient.login.mockRejectedValueOnce(new Error("bad credentials"));
+      await expect(service.connect()).rejects.toThrow();
+
+      // second attempt must try login again, not silently reuse a dead client
+      __mockClient.login.mockResolvedValueOnce(undefined);
+      __mockClient.fetchAddressBooks.mockResolvedValueOnce([]);
+      await service.listAddressBooks();
+      expect(__mockClient.login).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("multi-term search", () => {
     it("supports multi-term tokenized search with AND semantics", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
