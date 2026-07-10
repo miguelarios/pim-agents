@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import { toPimError } from "@miguelarios/pim-core";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { simpleParser } from "mailparser";
@@ -5,6 +7,20 @@ import { htmlToMarkdown } from "../htmlToMarkdown.js";
 import type { SearchParams } from "../search.js";
 import type { ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
+
+function assertAttachmentPathAllowed(p: string): void {
+  const allowedRoot = process.env.EMAIL_ATTACHMENT_DIR;
+  if (!allowedRoot) {
+    throw new Error(
+      "attachments[].path is disabled — set EMAIL_ATTACHMENT_DIR to a directory to allow file attachments, or pass content instead",
+    );
+  }
+  const root = realpathSync(resolve(allowedRoot));
+  const target = realpathSync(resolve(p));
+  if (target !== root && !target.startsWith(root + sep)) {
+    throw new Error(`attachment path is outside EMAIL_ATTACHMENT_DIR: ${p}`);
+  }
+}
 
 export const EMAIL_TOOLS: Tool[] = [
   {
@@ -163,7 +179,8 @@ export const EMAIL_TOOLS: Tool[] = [
               filename: { type: "string" },
               path: {
                 type: "string",
-                description: "File path to attach.",
+                description:
+                  "File path to attach. Disabled unless the server has EMAIL_ATTACHMENT_DIR set to an allowed directory; the resolved path must be inside it. Use content instead if unavailable.",
               },
               content: {
                 type: "string",
@@ -454,6 +471,9 @@ export async function handleEmailTool(
         const text = args.text as string | undefined;
         const html = args.html as string | undefined;
         const attachments = args.attachments as any[] | undefined;
+        for (const att of attachments ?? []) {
+          if (att.path) assertAttachmentPathAllowed(att.path);
+        }
         const replyToUid = args.replyToUid as number | undefined;
         const replyToFolder = (args.replyToFolder as string) || "INBOX";
         const saveToDrafts = (args.saveToDrafts as boolean) || false;
