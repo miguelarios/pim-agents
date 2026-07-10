@@ -1,4 +1,4 @@
-import { getTimezone, toPimError } from "@miguelarios/pim-core";
+import { getLocalDateParts, getTimezone, toPimError, zonedTimeToUtc } from "@miguelarios/pim-core";
 import {
   type MasterEventUpdates,
   addExdateToIcs,
@@ -550,16 +550,11 @@ export async function handleCalendarTool(
       case "get_today_events": {
         const calendar = args.calendar as string | undefined;
         const detailLevel = (args.detail_level as string) ?? "summary";
+        const tz = getTimezone();
         const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-        const todayEnd = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate(),
-          23,
-          59,
-          59,
-        ).toISOString();
+        const { year, month, day } = getLocalDateParts(now, tz);
+        const todayStart = zonedTimeToUtc(year, month, day, 0, 0, tz).toISOString();
+        const todayEnd = zonedTimeToUtc(year, month, day + 1, 0, 0, tz).toISOString();
         const events = await fetchEvents(service, calendar, todayStart, todayEnd, detailLevel);
         return ok({ events });
       }

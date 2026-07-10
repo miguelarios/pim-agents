@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatInTimezone, getTimezone, parseTimestamp } from "../timezone.js";
+import {
+  formatInTimezone,
+  getLocalDateParts,
+  getTimezone,
+  parseTimestamp,
+  zonedTimeToUtc,
+} from "../timezone.js";
 
 describe("getTimezone", () => {
   afterEach(() => {
@@ -64,5 +70,32 @@ describe("parseTimestamp", () => {
     const result = parseTimestamp("2026-03-14T10:00:00");
     expect(result.isUTC).toBe(false);
     expect(result.hasExplicitTimezone).toBe(false);
+  });
+});
+
+describe("zonedTimeToUtc", () => {
+  it("converts Chicago local time to the correct UTC instant (CST, UTC-6)", () => {
+    expect(zonedTimeToUtc(2026, 1, 15, 9, 0, "America/Chicago").toISOString()).toBe(
+      "2026-01-15T15:00:00.000Z",
+    );
+  });
+  it("handles the spring-forward DST transition (CDT, UTC-5)", () => {
+    expect(zonedTimeToUtc(2026, 3, 9, 9, 0, "America/Chicago").toISOString()).toBe(
+      "2026-03-09T14:00:00.000Z",
+    );
+  });
+  it("rolls over month boundaries via day overflow", () => {
+    expect(zonedTimeToUtc(2026, 1, 32, 0, 0, "UTC").toISOString()).toBe("2026-02-01T00:00:00.000Z");
+  });
+});
+
+describe("getLocalDateParts", () => {
+  it("returns the calendar date in the target zone, not the host zone", () => {
+    // 2026-07-10T03:00Z is still 2026-07-09 in Chicago (UTC-5)
+    expect(getLocalDateParts(new Date("2026-07-10T03:00:00Z"), "America/Chicago")).toEqual({
+      year: 2026,
+      month: 7,
+      day: 9,
+    });
   });
 });

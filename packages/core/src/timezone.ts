@@ -36,6 +36,63 @@ export function formatInTimezone(isoUtcString: string, timezone: string): string
   return `${year}-${month}-${day}T${hour}:${minute}:${second}${offset}`;
 }
 
+function tzOffsetMs(date: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts: Record<string, string> = {};
+  for (const p of dtf.formatToParts(date)) parts[p.type] = p.value;
+  const hour = parts.hour === "24" ? 0 : Number(parts.hour);
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    hour,
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return asUtc - date.getTime();
+}
+
+/** Calendar date of `date` as seen in `timeZone`. */
+export function getLocalDateParts(
+  date: Date,
+  timeZone: string,
+): { year: number; month: number; day: number } {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts: Record<string, string> = {};
+  for (const p of dtf.formatToParts(date)) parts[p.type] = p.value;
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+}
+
+/** UTC instant of wall-clock (y, m, d, hh, mm) in `timeZone`. Month is 1-based; day may overflow. */
+export function zonedTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+): Date {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  // Two-pass correction converges across DST transitions.
+  let offset = tzOffsetMs(new Date(utcGuess), timeZone);
+  offset = tzOffsetMs(new Date(utcGuess - offset), timeZone);
+  return new Date(utcGuess - offset);
+}
+
 export interface ParsedTimestamp {
   date: Date;
   isUTC: boolean;
