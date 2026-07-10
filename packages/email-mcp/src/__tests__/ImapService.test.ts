@@ -657,6 +657,19 @@ describe("ImapService", () => {
     it("fetches a full email by UID", async () => {
       mockFetchOne.mockResolvedValueOnce({
         source: Buffer.from("raw email source"),
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "application/pdf",
+              part: "2",
+              size: 1024,
+              disposition: "attachment",
+              dispositionParameters: { filename: "doc.pdf" },
+            },
+          ],
+        },
       });
 
       const email = await service.fetchEmail("INBOX", 12345);
@@ -701,6 +714,43 @@ describe("ImapService", () => {
       const email = await service.fetchEmail("INBOX", 10);
       expect(email.inReplyTo).toBeNull();
       expect(email.references).toEqual([]);
+    });
+  });
+
+  describe("fetchEmail attachment part IDs", () => {
+    it("reports bodystructure part paths, not array indices", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        flags: new Set(["\\Seen", "\\Flagged"]),
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            {
+              type: "multipart/alternative",
+              part: "1",
+              childNodes: [
+                { type: "text/plain", part: "1.1", size: 20 },
+                { type: "text/html", part: "1.2", size: 40 },
+              ],
+            },
+            {
+              type: "application/pdf",
+              part: "2",
+              size: 1024,
+              disposition: "attachment",
+              dispositionParameters: { filename: "doc.pdf" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.attachments).toEqual([
+        { filename: "doc.pdf", contentType: "application/pdf", size: 1024, partId: "2" },
+      ]);
+      expect(email.flags).toEqual(expect.arrayContaining(["\\Seen", "\\Flagged"]));
+      expect(email.hasAttachments).toBe(true);
     });
   });
 

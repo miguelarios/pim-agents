@@ -199,12 +199,17 @@ export class ImapService {
       await client.connect();
       const lock = await client.getMailboxLock(folder);
       try {
-        const fetchResult = await client.fetchOne(String(uid), { source: true }, { uid: true });
+        const fetchResult = await client.fetchOne(
+          String(uid),
+          { source: true, bodyStructure: true, flags: true },
+          { uid: true },
+        );
         if (!fetchResult || !fetchResult.source) {
           throw new EmailError(`Email UID ${uid} not found`, ErrorCode.EMAIL_NOT_FOUND, uid);
         }
 
         const parsed = await simpleParser(fetchResult.source);
+        const attachmentParts = collectAttachmentParts(fetchResult.bodyStructure);
         return {
           uid,
           messageId: parsed.messageId || "",
@@ -229,15 +234,15 @@ export class ImapService {
               .flatMap((addr) => addr.value)
               .map((a: any) => ({ name: a.name, address: a.address || "" })) || undefined,
           date: parsed.date ? formatInTimezone(parsed.date.toISOString(), this.timezone) : "",
-          flags: [],
-          hasAttachments: (parsed.attachments?.length || 0) > 0,
+          flags: [...(fetchResult.flags ?? [])],
+          hasAttachments: attachmentParts.length > 0,
           textBody: parsed.text || undefined,
           htmlBody: parsed.html || undefined,
-          attachments: (parsed.attachments || []).map((att, index) => ({
+          attachments: attachmentParts.map((att, index) => ({
             filename: att.filename || `attachment-${index}`,
-            contentType: att.contentType || "application/octet-stream",
-            size: att.size || 0,
-            partId: String(index + 1),
+            contentType: att.contentType,
+            size: att.size,
+            partId: att.part,
           })),
         };
       } finally {
@@ -509,10 +514,37 @@ function compareSummaries(
 }
 
 function hasAttachmentParts(bodyStructure: any): boolean {
-  if (!bodyStructure) return false;
-  if (bodyStructure.type?.toLowerCase().includes("multipart/mixed")) return true;
-  if (bodyStructure.childNodes) {
-    return bodyStructure.childNodes.some((node: any) => hasAttachmentParts(node));
+  return collectAttachmentParts(bodyStructure).length > 0;
+}
+
+interface BodyStructureAttachment {
+  part: string;
+  filename?: string;
+  contentType: string;
+  size: number;
+}
+
+function collectAttachmentParts(
+  node: any,
+  out: BodyStructureAttachment[] = [],
+): BodyStructureAttachment[] {
+  if (!node) return out;
+  if (node.childNodes?.length) {
+    for (const child of node.childNodes) collectAttachmentParts(child, out);
+    return out;
   }
-  return false;
+  const disposition = String(node.disposition ?? "").toLowerCase();
+  const filename: string | undefined =
+    node.dispositionParameters?.filename ?? node.parameters?.name;
+  const type = String(node.type ?? "").toLowerCase();
+  if (type.startsWith("multipart/")) return out;
+  if (disposition === "attachment" || (filename && disposition !== "inline")) {
+    out.push({
+      part: String(node.part ?? "1"),
+      filename,
+      contentType: node.type || "application/octet-stream",
+      size: node.size ?? 0,
+    });
+  }
+  return out;
 }
