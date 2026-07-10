@@ -565,7 +565,7 @@ describe("parseVCard iOS golden (Patrick-shaped)", () => {
         { type: "twitter", handle: "testhandle", url: "http://twitter.com/testhandle" },
       ],
     });
-    expect(contact.note).toContain("TI Intern");
+    expect(contact.note).toBe("TI Intern\nGoing out friend\nDallas\nFriends\n");
     const op = contact.otherProperties.join("|");
     expect(op).not.toContain("PRODID");
     expect(op).not.toContain("REV:");
@@ -574,5 +574,86 @@ describe("parseVCard iOS golden (Patrick-shaped)", () => {
     expect(op).not.toContain("X-IMAGEHASH");
     expect(op).not.toContain("X-SHARED-PHOTO-DISPLAY-PREF");
     expect(op).not.toContain("X-ABADR");
+  });
+});
+
+describe("vCard value escaping", () => {
+  it("escapes newline, semicolon, comma, backslash in built NOTE", () => {
+    const built = buildVCard({
+      uid: "esc-1",
+      fullName: "Alice Smith",
+      emails: [],
+      phones: [],
+      addresses: [],
+      urls: [],
+      note: "line1\nline2; with, punctuation\\slash",
+      otherProperties: [],
+    });
+    expect(built).toContain("NOTE:line1\\nline2\\; with\\, punctuation\\\\slash");
+    // no raw newline may appear inside the NOTE line
+    const noteLine = built.split("\r\n").find((l) => l.startsWith("NOTE:"))!;
+    expect(noteLine).not.toContain("\n");
+  });
+
+  it("a note containing END:VCARD cannot terminate the card", () => {
+    const built = buildVCard({
+      uid: "esc-2",
+      fullName: "Alice Smith",
+      emails: [],
+      phones: [],
+      addresses: [],
+      urls: [],
+      note: "END:VCARD\nBEGIN:VCARD\nFN:Injected",
+      otherProperties: [],
+    });
+    expect(built.match(/^END:VCARD$/gm)).toHaveLength(1);
+    expect(built.match(/^BEGIN:VCARD$/gm)).toHaveLength(1);
+  });
+
+  it("unescapes on parse and round-trips", () => {
+    const original = {
+      uid: "esc-3",
+      fullName: "Smith; Alice, Jr.",
+      emails: [],
+      phones: [],
+      addresses: [{ street: "123 Main St; Apt 4", city: "Anytown", state: "ST" }],
+      urls: [],
+      categories: ["family, close", "book club"],
+      note: "line1\nline2",
+      otherProperties: [],
+    };
+    const parsed = parseVCard(buildVCard(original as any));
+    expect(parsed.fullName).toBe("Smith; Alice, Jr.");
+    expect(parsed.note).toBe("line1\nline2");
+    expect(parsed.addresses[0].street).toBe("123 Main St; Apt 4");
+    expect(parsed.categories).toEqual(["family, close", "book club"]);
+  });
+
+  it("round-trips an ORG name containing a comma without a stray backslash", () => {
+    const built = buildVCard({
+      uid: "esc-org-1",
+      fullName: "Alice Smith",
+      emails: [],
+      phones: [],
+      addresses: [],
+      urls: [],
+      organization: "Doe, Inc",
+      otherProperties: [],
+    });
+    expect(parseVCard(built).organization).toBe("Doe, Inc");
+  });
+
+  it("round-trips the first ORG component when the org name contains a semicolon", () => {
+    const built = buildVCard({
+      uid: "esc-org-2",
+      fullName: "Alice Smith",
+      emails: [],
+      phones: [],
+      addresses: [],
+      urls: [],
+      organization: "Acme; Holdings",
+      otherProperties: [],
+    });
+    expect(parseVCard(built).organization).toBe("Acme; Holdings");
   });
 });
