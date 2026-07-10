@@ -23,11 +23,15 @@ export interface Contact {
   fullName: string;
   firstName?: string;
   lastName?: string;
+  middleName?: string;
+  namePrefix?: string;
+  nameSuffix?: string;
   emails: TypedValue[];
   phones: TypedValue[];
   addresses: PostalAddress[];
   urls: TypedValue[];
   organization?: string;
+  orgUnits?: string[];
   title?: string;
   role?: string;
   nickname?: string;
@@ -35,6 +39,7 @@ export interface Contact {
   categories?: string[];
   note?: string;
   socialProfiles?: SocialProfile[];
+  photo?: string;
   otherProperties: string[];
 }
 
@@ -78,7 +83,6 @@ const TYPE_NOISE_TOKENS = new Set(["internet", "voice", "pref"]);
 const APPLE_INTERNAL_PROPS = new Set([
   "PRODID",
   "REV",
-  "PHOTO",
   "X-IMAGETYPE",
   "X-IMAGEHASH",
   "X-SHARED-PHOTO-DISPLAY-PREF",
@@ -157,9 +161,12 @@ export function parseVCard(data: string): Contact {
   const phones = extractTypedAll(lines, "TEL", abLabels);
   const urls = extractTypedAll(lines, "URL", abLabels);
   const orgRaw = extractFirst(lines, "ORG");
-  const organization = orgRaw
-    ? unescapeVCardValue(splitUnescaped(orgRaw, ";")[0]).trim() || undefined
-    : undefined;
+  const orgParts = orgRaw
+    ? splitUnescaped(orgRaw, ";").map((p) => unescapeVCardValue(p).trim())
+    : [];
+  const organization = orgParts[0] || undefined;
+  const orgUnitsParsed = orgParts.slice(1).filter(Boolean);
+  const orgUnits: string[] | undefined = orgUnitsParsed.length > 0 ? orgUnitsParsed : undefined;
   const titleRaw = extractFirst(lines, "TITLE");
   const title = titleRaw !== undefined ? unescapeVCardValue(titleRaw) : undefined;
   const noteRaw = extractFirst(lines, "NOTE");
@@ -174,6 +181,15 @@ export function parseVCard(data: string): Contact {
     ? splitUnescaped(categoriesRaw, ",").map((c) => unescapeVCardValue(c.trim()))
     : undefined;
   const socialProfiles = extractSocialProfiles(lines);
+
+  let photo: string | undefined;
+  for (const rawLine of lines) {
+    const { canonical } = stripItemPrefix(rawLine);
+    if (/^PHOTO[;:]/i.test(canonical)) {
+      photo = canonical;
+      break;
+    }
+  }
 
   const KNOWN = new Set([
     "BEGIN",
@@ -195,6 +211,7 @@ export function parseVCard(data: string): Contact {
     "ROLE",
     "X-ABLABEL",
     "X-SOCIALPROFILE",
+    "PHOTO",
   ]);
   const otherProperties: string[] = [];
   for (const rawLine of lines) {
@@ -208,10 +225,16 @@ export function parseVCard(data: string): Contact {
 
   let firstName: string | undefined;
   let lastName: string | undefined;
+  let middleName: string | undefined;
+  let namePrefix: string | undefined;
+  let nameSuffix: string | undefined;
   if (n) {
     const parts = splitUnescaped(n, ";").map(unescapeVCardValue);
     lastName = parts[0] || undefined;
     firstName = parts[1] || undefined;
+    middleName = parts[2] || undefined;
+    namePrefix = parts[3] || undefined;
+    nameSuffix = parts[4] || undefined;
   }
 
   return {
@@ -219,17 +242,22 @@ export function parseVCard(data: string): Contact {
     fullName,
     firstName,
     lastName,
+    middleName,
+    namePrefix,
+    nameSuffix,
     emails,
     phones,
     addresses: extractAddresses(lines, abLabels),
     urls,
     organization,
+    orgUnits,
     title,
     role,
     nickname,
     birthday,
     categories,
     note,
+    photo,
     socialProfiles: socialProfiles.length > 0 ? socialProfiles : undefined,
     otherProperties,
   };
@@ -243,10 +271,23 @@ export function buildVCard(contact: Contact): string {
     `FN:${escapeVCardValue(contact.fullName)}`,
   ];
 
-  if (contact.lastName || contact.firstName) {
-    lines.push(
-      `N:${escapeVCardValue(contact.lastName ?? "")};${escapeVCardValue(contact.firstName ?? "")};;;`,
-    );
+  if (
+    contact.lastName ||
+    contact.firstName ||
+    contact.middleName ||
+    contact.namePrefix ||
+    contact.nameSuffix
+  ) {
+    const n = [
+      contact.lastName,
+      contact.firstName,
+      contact.middleName,
+      contact.namePrefix,
+      contact.nameSuffix,
+    ]
+      .map((p) => escapeVCardValue(p ?? ""))
+      .join(";");
+    lines.push(`N:${n}`);
   }
 
   for (const email of contact.emails) {
@@ -275,7 +316,10 @@ export function buildVCard(contact: Contact): string {
     lines.push(line);
   }
   if (contact.organization) {
-    lines.push(`ORG:${escapeVCardValue(contact.organization)}`);
+    const orgLine = [contact.organization, ...(contact.orgUnits ?? [])]
+      .map((p) => escapeVCardValue(p ?? ""))
+      .join(";");
+    lines.push(`ORG:${orgLine}`);
   }
   if (contact.title) {
     lines.push(`TITLE:${escapeVCardValue(contact.title)}`);
@@ -304,6 +348,9 @@ export function buildVCard(contact: Contact): string {
       const value = escapeVCardValue(rawValue);
       lines.push(`X-SOCIALPROFILE;${params}:${value}`);
     }
+  }
+  if (contact.photo) {
+    lines.push(contact.photo);
   }
   for (const raw of contact.otherProperties) {
     lines.push(raw);

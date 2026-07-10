@@ -24,11 +24,9 @@ export type ResolveContactResult =
   | { status: "not_found"; message: string };
 
 function applyDetailLevel(contact: Contact, level: DetailLevel): Contact {
-  if (level === "full") return contact;
-  return {
-    ...contact,
-    otherProperties: [],
-  };
+  const { photo: _photo, ...rest } = contact;
+  if (level === "full") return rest;
+  return { ...rest, otherProperties: [] };
 }
 
 export class CardDavService {
@@ -135,17 +133,23 @@ export class CardDavService {
       fullName: updates.fullName ?? current.fullName,
       firstName: updates.firstName ?? current.firstName,
       lastName: updates.lastName ?? current.lastName,
+      middleName: updates.middleName ?? current.middleName,
+      namePrefix: updates.namePrefix ?? current.namePrefix,
+      nameSuffix: updates.nameSuffix ?? current.nameSuffix,
       emails: updates.emails ?? current.emails,
       phones: updates.phones ?? current.phones,
       addresses: updates.addresses ?? current.addresses,
       urls: updates.urls ?? current.urls,
       organization: updates.organization ?? current.organization,
+      orgUnits: updates.orgUnits ?? current.orgUnits,
       title: updates.title ?? current.title,
       role: updates.role ?? current.role,
       nickname: updates.nickname ?? current.nickname,
       birthday: updates.birthday ?? current.birthday,
       categories: updates.categories ?? current.categories,
       note: updates.note ?? current.note,
+      socialProfiles: updates.socialProfiles ?? current.socialProfiles,
+      photo: current.photo,
       otherProperties: current.otherProperties,
     };
 
