@@ -485,7 +485,7 @@ export async function handleEmailTool(
           ? `"${smtpService.config.fromName}" <${smtpService.config.smtp.user}>`
           : smtpService.config.smtp.user;
 
-        const rawMessage = await smtpService.composeRawMessage({
+        const messageOptions = {
           from,
           to,
           cc,
@@ -496,10 +496,15 @@ export async function handleEmailTool(
           attachments,
           inReplyTo,
           references,
-        });
+        };
 
         if (saveToDrafts) {
-          // Draft mode: APPEND to Drafts folder
+          // Draft mode: keep Bcc in the saved message so a later send_draft
+          // can still deliver to it — the header is stripped at send time.
+          const rawMessage = await smtpService.composeRawMessage(messageOptions, {
+            keepBcc: true,
+          });
+          // APPEND to Drafts folder
           const draftsFolder = await imapService.getSpecialUseFolder("\\Drafts");
           const appendResult = await imapService.appendMessage(draftsFolder, rawMessage, [
             "\\Draft",
@@ -510,7 +515,8 @@ export async function handleEmailTool(
           );
         }
 
-        // Send mode: SMTP send + APPEND to Sent
+        // Send mode: SMTP send + APPEND to Sent (Bcc stripped per RFC 2822 default)
+        const rawMessage = await smtpService.composeRawMessage(messageOptions);
         const envelope = {
           from: smtpService.config.smtp.user,
           to: [...to, ...(cc || []), ...(bcc || [])],
@@ -538,6 +544,9 @@ export async function handleEmailTool(
 
       case "move_email": {
         const uids = args.uids as number[];
+        if (!Array.isArray(uids) || uids.length === 0) {
+          return error("uids must be a non-empty array of message UIDs");
+        }
         const destination = args.destination as string;
         await imapService.moveEmails(folder, uids, destination);
         return ok(JSON.stringify({ status: "moved", uids, destination }));
@@ -545,6 +554,9 @@ export async function handleEmailTool(
 
       case "mark_email": {
         const uids = args.uids as number[];
+        if (!Array.isArray(uids) || uids.length === 0) {
+          return error("uids must be a non-empty array of message UIDs");
+        }
         const flags = args.flags as string[];
         const action = (args.action as "add" | "remove") || "add";
         await imapService.markEmails(folder, uids, flags, action);
@@ -553,6 +565,9 @@ export async function handleEmailTool(
 
       case "delete_email": {
         const uids = args.uids as number[];
+        if (!Array.isArray(uids) || uids.length === 0) {
+          return error("uids must be a non-empty array of message UIDs");
+        }
         const permanent = (args.permanent as boolean) || false;
         await imapService.deleteEmails(folder, uids, permanent);
         return ok(
@@ -627,12 +642,16 @@ export async function handleEmailTool(
           return error("Draft has no recipients — cannot send");
         }
 
-        // Send via SMTP
+        // Send via SMTP. The envelope still carries bccAddrs (via
+        // allRecipients) so the MTA delivers to them, but the Bcc header
+        // itself must not go out on the wire — strip it from the
+        // transmitted copy while keeping rawSource intact for the Sent
+        // folder append below (so the sender keeps a record of who was bcc'd).
         const envelope = {
           from: smtpService.config.smtp.user,
           to: allRecipients,
         };
-        const sendResult = await smtpService.sendRawMessage(rawSource, envelope);
+        const sendResult = await smtpService.sendRawMessage(stripBccHeader(rawSource), envelope);
 
         // Copy to Sent
         let sentFolderPath = "Sent";
@@ -672,4 +691,12 @@ function ok(text: string) {
 
 function error(text: string) {
   return { content: [{ type: "text" as const, text }], isError: true };
+}
+
+function stripBccHeader(raw: Buffer): Buffer {
+  const str = raw.toString("latin1");
+  const sep = str.indexOf("\r\n\r\n");
+  if (sep === -1) return raw;
+  const headers = str.slice(0, sep + 2).replace(/^bcc:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*\r\n/gim, "");
+  return Buffer.from(headers + str.slice(sep + 2), "latin1");
 }

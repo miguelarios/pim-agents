@@ -183,6 +183,14 @@ describe("SmtpService", () => {
       // it is envelope-only and must not appear in the composed body.
       expect(content).not.toContain("Bcc:");
     });
+
+    it("keeps the Bcc header when keepBcc is set", async () => {
+      const raw = await service.composeRawMessage(
+        { from: "alice@example.com", to: ["bob@example.com"], bcc: ["carol@example.com"], subject: "s", text: "b" },
+        { keepBcc: true },
+      );
+      expect(raw.toString()).toMatch(/^bcc:.*carol@example\.com/im);
+    });
   });
 
   describe("sendRawMessage", () => {
