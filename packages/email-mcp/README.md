@@ -1,6 +1,6 @@
 # @miguelarios/email-mcp
 
-MCP server for email via IMAP/SMTP — read, search, send, and manage emails.
+MCP server for email via IMAP/SMTP — search, read, send, and manage emails and folders.
 
 ## Usage
 
@@ -8,36 +8,49 @@ MCP server for email via IMAP/SMTP — read, search, send, and manage emails.
 npx @miguelarios/email-mcp
 ```
 
-## Environment Variables
+## Configuration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `IMAP_HOST` | Yes | — | IMAP server hostname |
-| `IMAP_USER` | Yes | — | IMAP username |
-| `IMAP_PASS` | Yes | — | IMAP password |
-| `IMAP_PORT` | No | `993` | IMAP port |
-| `IMAP_SECURE` | No | `true` | Use TLS |
-| `SMTP_HOST` | Yes | — | SMTP server hostname |
-| `SMTP_USER` | Yes | — | SMTP username |
-| `SMTP_PASS` | Yes | — | SMTP password |
-| `SMTP_PORT` | No | `465` | SMTP port |
-| `SMTP_SECURE` | No | `true` | Use TLS |
-| `SMTP_FROM_NAME` | No | — | Display name for outgoing emails |
+Add the server to your MCP client config (Claude Desktop, Claude Code, etc.). Credentials are passed via environment variables.
 
-## Tools
+```json
+{
+  "mcpServers": {
+    "email": {
+      "command": "npx",
+      "args": ["-y", "@miguelarios/email-mcp"],
+      "env": {
+        "IMAP_HOST": "imap.example.com",
+        "IMAP_USER": "user@example.com",
+        "IMAP_PASS": "your-app-password",
+        "SMTP_HOST": "smtp.example.com",
+        "SMTP_USER": "user@example.com",
+        "SMTP_PASS": "your-app-password"
+      }
+    }
+  }
+}
+```
+
+Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`, `PIM_TIMEZONE`.
+
+## Tools (12)
+
+See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter and output details.
 
 | Tool | Description |
 |------|-------------|
-| `list_emails` | Search and filter emails by folder, sender, subject, date, flags |
+| `search_emails` | Search and filter emails by folder, sender, subject, date, flags |
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata |
-| `send_email` | Compose and send via SMTP with attachment support |
-| `move_email` | Move email between folders |
+| `send_email` | Compose and send via SMTP, reply with threading, or save as draft |
+| `send_draft` | Send an existing draft from the Drafts folder |
+| `move_email` | Move emails between folders |
 | `mark_email` | Set/unset flags (read, unread, flagged) |
 | `delete_email` | Move to trash or permanently delete |
-| `list_folders` | List all IMAP folders |
+| `list_folders` | List all IMAP folders with special-use flags |
 | `create_folder` | Create an IMAP folder |
-| `download_attachment` | Download attachment by email UID and filename |
-| `get_email_raw` | Export email as .eml |
+| `download_attachment` | Download attachment by email UID and part ID |
+| `get_email_raw` | Export email as raw .eml |
+| `get_folder_status` | Get total and unread message counts for a folder |
 
 ## License
 

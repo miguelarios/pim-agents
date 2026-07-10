@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { loadCalDavConfig } from "@miguelarios/pim-core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -5,12 +6,15 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { CalDavService } from "./services/CalDavService.js";
 import { CALENDAR_TOOLS, handleCalendarTool } from "./tools/calendarTools.js";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
+
 export async function createServer(): Promise<Server> {
   const config = loadCalDavConfig();
   const service = new CalDavService(config);
 
   const server = new Server(
-    { name: "@miguelarios/cal-mcp", version: "0.3.0" },
+    { name: "@miguelarios/cal-mcp", version },
     { capabilities: { tools: {} } },
   );
 

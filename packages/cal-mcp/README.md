@@ -1,6 +1,6 @@
 # @miguelarios/cal-mcp
 
-MCP server for calendars via CalDAV — CRUD events, free/busy, multi-provider.
+MCP server for calendars via CalDAV — query, create, and manage events across one or more providers, including recurrence, attendees, alarms, and free/busy lookups.
 
 ## Usage
 
@@ -8,40 +8,46 @@ MCP server for calendars via CalDAV — CRUD events, free/busy, multi-provider.
 npx @miguelarios/cal-mcp
 ```
 
-## Environment Variables
+## Configuration
 
-Configure one or more CalDAV accounts using prefixed env vars. The `<ID>` becomes the provider identifier.
+Add the server to your MCP client config (Claude Desktop, Claude Code, etc.). Credentials are passed via environment variables. Configure one or more CalDAV accounts using prefixed env vars — the `<ID>` becomes the provider identifier.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CALDAV_<ID>_URL` | Yes | CalDAV server URL |
-| `CALDAV_<ID>_USER` | Yes | CalDAV username |
-| `CALDAV_<ID>_PASS` | Yes | CalDAV password |
-
-### Example: two providers
-
-```bash
-CALDAV_MAILBOX_URL=https://dav.mailbox.org/caldav/
-CALDAV_MAILBOX_USER=user@mailbox.org
-CALDAV_MAILBOX_PASS=app-password
-
-CALDAV_NEXTCLOUD_URL=https://cloud.example.com/remote.php/dav/calendars/user/
-CALDAV_NEXTCLOUD_USER=user
-CALDAV_NEXTCLOUD_PASS=app-password
+```json
+{
+  "mcpServers": {
+    "calendar": {
+      "command": "npx",
+      "args": ["-y", "@miguelarios/cal-mcp"],
+      "env": {
+        "CALDAV_MAILBOX_URL": "https://dav.mailbox.org/caldav/",
+        "CALDAV_MAILBOX_USER": "user@mailbox.org",
+        "CALDAV_MAILBOX_PASS": "app-password"
+      }
+    }
+  }
+}
 ```
 
-## Tools
+Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_NEXTCLOUD_USER`, `CALDAV_NEXTCLOUD_PASS`, etc.
+
+Optional env vars: `PIM_TIMEZONE`.
+
+## Tools (11)
+
+See [docs/tools/cal-mcp.md](../../docs/tools/cal-mcp.md) for full parameter and output details.
 
 | Tool | Description |
 |------|-------------|
 | `list_calendars` | Discover calendars across all configured providers |
-| `list_events` | Query events by date range and calendar |
-| `get_event` | Get event details by UID |
-| `create_event` | Create event with title, start/end, location, attendees |
-| `update_event` | Update existing event by UID |
-| `delete_event` | Delete event by UID |
+| `list_events` | Query events by date range with recurrence expansion |
+| `get_today_events` | Get all events for today |
+| `search_events` | Keyword search across title, description, and location |
+| `get_event` | Get full event details by UID |
+| `create_event` | Create event with attendees, alarms, categories |
+| `update_event` | Update event by UID, including single recurrence instances |
+| `delete_event` | Delete event by UID or single recurrence instance |
 | `create_events_batch` | Create multiple events at once |
-| `import_ics` | Parse .ics content and create events |
+| `import_ics` | Import events from .ics content |
 | `find_free_slots` | Find available time slots across calendars |
 
 ## License
