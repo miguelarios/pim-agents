@@ -5,7 +5,8 @@ import {
   combineIcsComponents,
   createExceptionComponent,
   generateEventIcs,
-  parseIcsEvents,
+  removeExceptionFromIcs,
+  splitIcsByUid,
   updateMasterEventIcs,
 } from "@miguelarios/pim-core/ics";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -789,18 +790,10 @@ export async function handleCalendarTool(
 
             let updatedIcs = addExdateToIcs(rawObj.data, occurrenceDate, existing.all_day);
 
-            // Remove any existing exception VEVENT for this date
-            const recIdDate = new Date(occurrenceDate);
-            const formattedRecId = existing.all_day
-              ? recIdDate.toISOString().slice(0, 10).replace(/-/g, "")
-              : recIdDate
-                  .toISOString()
-                  .replace(/[-:]/g, "")
-                  .replace(/\.\d{3}/, "");
-            const exceptionRegex = new RegExp(
-              `BEGIN:VEVENT\\r?\\n(?:(?!BEGIN:VEVENT)[\\s\\S])*?RECURRENCE-ID[^:]*:${formattedRecId}[\\s\\S]*?END:VEVENT\\r?\\n?`,
-            );
-            updatedIcs = updatedIcs.replace(exceptionRegex, "");
+            // Remove any existing exception VEVENT/VTODO for this occurrence,
+            // matching by resolved instant (handles both UTC and TZID-form
+            // RECURRENCE-ID) rather than a literal-text regex.
+            updatedIcs = removeExceptionFromIcs(updatedIcs, occurrenceDate, existing.all_day);
 
             await service.updateEvent(args.calendar as string, args.uid as string, updatedIcs, {
               url: rawObj.url,
@@ -861,21 +854,32 @@ export async function handleCalendarTool(
 
       case "import_ics": {
         const icsContent = args.ics_content as string;
-        const parsed = parseIcsEvents(icsContent);
-        if (parsed.length === 0) {
+        const groups = splitIcsByUid(icsContent);
+        if (groups.length === 0) {
           return error("validation_error", "No events found in ICS content");
         }
-        await service.createEvent(args.calendar as string, icsContent, parsed[0].uid);
         const importedEvents = [];
-        for (const evt of parsed) {
+        const failed: Array<{ uid: string; message: string }> = [];
+        for (const group of groups) {
           try {
-            const event = await service.getEvent(args.calendar as string, evt.uid);
-            importedEvents.push(event);
-          } catch {
-            // Event may not be fetchable individually if multi-event ICS — skip
+            await service.createEvent(args.calendar as string, group.ics, group.uid);
+            try {
+              importedEvents.push(await service.getEvent(args.calendar as string, group.uid));
+            } catch {
+              importedEvents.push({ uid: group.uid });
+            }
+          } catch (err) {
+            failed.push({
+              uid: group.uid,
+              message: err instanceof Error ? err.message : String(err),
+            });
           }
         }
-        return ok({ imported: parsed.length, events: importedEvents });
+        return ok({
+          imported: importedEvents.length,
+          ...(failed.length > 0 ? { failed } : {}),
+          events: importedEvents,
+        });
       }
 
       case "find_free_slots": {
