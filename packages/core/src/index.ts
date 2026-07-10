@@ -29,6 +29,9 @@ export {
   type SocialProfile,
   buildVCard,
   parseVCard,
+  escapeVCardValue,
+  unescapeVCardValue,
+  splitUnescaped,
 } from "./vcard.js";
 
 export {
