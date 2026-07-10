@@ -779,6 +779,10 @@ describe("ImapService", () => {
 
   describe("deleteEmails", () => {
     it("moves to Trash by default", async () => {
+      mockList.mockResolvedValueOnce([
+        { path: "INBOX", specialUse: "\\Inbox", delimiter: "/" },
+        { path: "Trash", specialUse: "\\Trash", delimiter: "/" },
+      ]);
       mockMessageMove.mockResolvedValueOnce({ destination: "Trash" });
 
       await service.deleteEmails("INBOX", [101]);
@@ -792,6 +796,15 @@ describe("ImapService", () => {
       expect(mockMessageDelete).toHaveBeenCalledWith("101", {
         uid: true,
       });
+    });
+
+    it("deleteEmails (non-permanent) moves to the special-use trash folder, not hardcoded 'Trash'", async () => {
+      mockList.mockResolvedValueOnce([
+        { path: "INBOX", specialUse: "\\Inbox", delimiter: "/" },
+        { path: "Deleted Items", specialUse: "\\Trash", delimiter: "/" },
+      ]);
+      await service.deleteEmails("INBOX", [1, 2], false);
+      expect(mockMessageMove).toHaveBeenCalledWith("1,2", "Deleted Items", { uid: true });
     });
   });
 

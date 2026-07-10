@@ -383,6 +383,7 @@ describe("send_email handler", () => {
         subject: "Re: Original",
         inReplyTo: "<original@test.com>",
       }),
+      { keepBcc: true },
     );
   });
 
@@ -568,4 +569,41 @@ describe("send_draft handler", () => {
 
     expect(mockFetchRawSource).toHaveBeenCalledWith("My Drafts", 500);
   });
+
+  it("send_draft delivers to Bcc recipients but strips the Bcc header from the transmitted message", async () => {
+    const draftRaw = Buffer.from(
+      "From: alice@example.com\r\nTo: bob@example.com\r\nBcc: carol@example.com\r\nSubject: s\r\nMessage-ID: <d1@example.com>\r\n\r\nbody",
+    );
+    mockFetchRawSource.mockResolvedValueOnce(draftRaw);
+
+    await handleEmailTool("send_draft", { uid: 7 }, mockImapService, mockSmtpService);
+
+    const [sentRaw, envelope] = mockSendRawMessage.mock.calls[0];
+    expect(envelope.to).toContain("carol@example.com"); // envelope keeps bcc
+    expect(sentRaw.toString()).not.toMatch(/^bcc:/im); // header stripped from wire message
+  });
+});
+
+describe("uids guards", () => {
+  const mockMoveEmails = vi.fn();
+  const mockMarkEmails = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockImapService.moveEmails = mockMoveEmails;
+    mockImapService.markEmails = mockMarkEmails;
+  });
+
+  it.each(["move_email", "mark_email", "delete_email"])(
+    "%s rejects an empty uids array",
+    async (tool) => {
+      const args: Record<string, unknown> = { uids: [] };
+      if (tool === "move_email") args.destination = "Archive";
+      if (tool === "mark_email") args.flags = ["\\Seen"];
+
+      const result = await handleEmailTool(tool, args, mockImapService, mockSmtpService);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/uids must be a non-empty array/);
+    },
+  );
 });

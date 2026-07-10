@@ -89,7 +89,10 @@ export class SmtpService {
     }
   }
 
-  async composeRawMessage(options: ComposeOptions): Promise<Buffer> {
+  async composeRawMessage(
+    options: ComposeOptions,
+    opts: { keepBcc?: boolean } = {},
+  ): Promise<Buffer> {
     const composer = new MailComposer({
       from: options.from,
       to: options.to.join(", "),
@@ -103,10 +106,19 @@ export class SmtpService {
       references: options.references?.join(" "),
     });
 
+    // MailComposer doesn't forward a `keepBcc` mail option through to the
+    // underlying MimeNode constructor (it only threads `newline`), so the
+    // only way to keep Bcc in the generated headers is to set the flag
+    // directly on the compiled MimeNode before building.
+    const message = composer.compile();
+    if (opts.keepBcc === true) {
+      (message as unknown as { keepBcc: boolean }).keepBcc = true;
+    }
+
     return new Promise<Buffer>((resolve, reject) => {
-      composer.compile().build((err, message) => {
+      message.build((err, built) => {
         if (err) reject(err);
-        else resolve(message);
+        else resolve(built);
       });
     });
   }
