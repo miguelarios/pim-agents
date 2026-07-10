@@ -137,6 +137,38 @@ describe("CardDavService", () => {
     });
   });
 
+  describe("updateContact round-trip preservation", () => {
+    it("preserves photo, name parts, org units, and social profiles", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.updateVCard.mockClear();
+      const CARD = [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        "UID:rt-2",
+        "FN:Alice Smith",
+        "N:Smith;Alice;Beth;Dr.;Jr.",
+        "ORG:Acme Corp;Engineering",
+        "PHOTO;ENCODING=b;TYPE=JPEG:dGVzdA==",
+        "X-SOCIALPROFILE;type=twitter:https://twitter.com/example_user",
+        "END:VCARD",
+      ].join("\r\n");
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        { url: "https://dav.example.com/c/rt-2.vcf", etag: '"e1"', data: CARD },
+      ]);
+      __mockClient.updateVCard.mockResolvedValueOnce({ ok: true });
+
+      await service.connect();
+      await service.updateContact("https://dav.example.com/c/", "rt-2", { title: "Engineer" });
+
+      const sent = __mockClient.updateVCard.mock.calls[0][0].vCard.data as string;
+      expect(sent).toContain("PHOTO;ENCODING=b;TYPE=JPEG:dGVzdA==");
+      expect(sent).toContain("N:Smith;Alice;Beth;Dr.;Jr.");
+      expect(sent).toContain("ORG:Acme Corp;Engineering");
+      expect(sent).toContain("X-SOCIALPROFILE;type=twitter:https://twitter.com/example_user");
+      expect(sent).toContain("TITLE:Engineer");
+    });
+  });
+
   describe("deleteContact", () => {
     it("deletes a vCard by UID", async () => {
       const { __mockClient } = (await import("tsdav")) as any;

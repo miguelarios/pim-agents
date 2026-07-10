@@ -657,3 +657,37 @@ describe("vCard value escaping", () => {
     expect(parseVCard(built).organization).toBe("Acme; Holdings");
   });
 });
+
+describe("contact update round-trip preservation", () => {
+  const CARD = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    "UID:rt-1",
+    "FN:Dr. Alice Beth Smith Jr.",
+    "N:Smith;Alice;Beth;Dr.;Jr.",
+    "ORG:Acme Corp;Engineering;Platform",
+    "PHOTO;ENCODING=b;TYPE=JPEG:dGVzdC1waG90by1ieXRlcw==",
+    "X-SOCIALPROFILE;type=twitter:https://twitter.com/example_user",
+    "END:VCARD",
+  ].join("\r\n");
+
+  it("parses all N components, ORG units, and keeps raw PHOTO", () => {
+    const c = parseVCard(CARD);
+    expect(c.firstName).toBe("Alice");
+    expect(c.lastName).toBe("Smith");
+    expect(c.middleName).toBe("Beth");
+    expect(c.namePrefix).toBe("Dr.");
+    expect(c.nameSuffix).toBe("Jr.");
+    expect(c.organization).toBe("Acme Corp");
+    expect(c.orgUnits).toEqual(["Engineering", "Platform"]);
+    expect(c.photo).toBe("PHOTO;ENCODING=b;TYPE=JPEG:dGVzdC1waG90by1ieXRlcw==");
+  });
+
+  it("buildVCard(parseVCard(x)) preserves N, ORG, PHOTO, X-SOCIALPROFILE", () => {
+    const rebuilt = buildVCard(parseVCard(CARD));
+    expect(rebuilt).toContain("N:Smith;Alice;Beth;Dr.;Jr.");
+    expect(rebuilt).toContain("ORG:Acme Corp;Engineering;Platform");
+    expect(rebuilt).toContain("PHOTO;ENCODING=b;TYPE=JPEG:dGVzdC1waG90by1ieXRlcw==");
+    expect(rebuilt).toContain("X-SOCIALPROFILE;type=twitter:https://twitter.com/example_user");
+  });
+});
