@@ -467,6 +467,22 @@ describe("calendarTools", () => {
       expect(mockService.getEvent).not.toHaveBeenCalled();
     });
 
+    it("get_today_events computes day bounds in PIM_TIMEZONE, not host time", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-10T03:00:00Z")); // still July 9 in Chicago
+      mockService.listCalendars.mockResolvedValueOnce([{ calendar_id: "prov/Cal" }]);
+      mockService.listEvents.mockResolvedValueOnce([]);
+
+      await handleCalendarTool("get_today_events", {}, mockService as any);
+
+      const [, start, end] = mockService.listEvents.mock.calls[0];
+      expect(start).toBe("2026-07-09T05:00:00.000Z"); // Chicago midnight (CDT)
+      expect(end).toBe("2026-07-10T05:00:00.000Z"); // next midnight, exclusive
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    });
+
     it("search_events detail_level=full filters against description from full events", async () => {
       mockService.listCalendars.mockResolvedValueOnce([{ calendar_id: "prov/Cal" }]);
       mockService.listEventsFull.mockResolvedValueOnce([

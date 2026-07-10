@@ -1352,6 +1352,34 @@ describe("CalDavService", () => {
       const firstSlotHour = new Date(slots[0].start).getUTCHours();
       expect(firstSlotHour).toBeGreaterThanOrEqual(9);
     });
+
+    it("splits preferred hours in PIM_TIMEZONE, not UTC (9 AM Chicago, DST-safe)", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("@miguelarios/pim-core/ics")) as any;
+
+      __mockClient.fetchCalendarObjects.mockResolvedValue([]);
+      parseIcsEvents.mockReturnValue([]);
+
+      // Must stub the timezone BEFORE constructing the service — the service
+      // reads PIM_TIMEZONE once in its constructor via getTimezone().
+      vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+      const chicagoService = new CalDavService(TEST_CONFIG);
+
+      const slots = await chicagoService.findFreeSlots(
+        ["mailbox/Work"],
+        "2026-03-10T06:00:00Z",
+        "2026-03-10T20:00:00Z",
+        30,
+        { preferredStart: "09:00", preferredEnd: "17:00" },
+      );
+
+      // 2026-03-10 is CDT (UTC-5): 9 AM Chicago is 14:00 UTC, not 09:00 UTC.
+      expect(slots.length).toBeGreaterThanOrEqual(1);
+      expect(new Date(slots[0].start).toISOString()).toBe("2026-03-10T14:00:00.000Z");
+
+      // Restore for subsequent tests in this file, which assume UTC.
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
+    });
   });
 
   describe("fetchCalendars cache", () => {

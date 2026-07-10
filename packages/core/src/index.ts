@@ -39,4 +39,6 @@ export {
   formatInTimezone,
   parseTimestamp,
   type ParsedTimestamp,
+  getLocalDateParts,
+  zonedTimeToUtc,
 } from "./timezone.js";

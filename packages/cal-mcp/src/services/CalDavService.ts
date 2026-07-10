@@ -4,8 +4,10 @@ import {
   CalendarError,
   ErrorCode,
   formatInTimezone,
+  getLocalDateParts,
   getTimezone,
   toPimError,
+  zonedTimeToUtc,
 } from "@miguelarios/pim-core";
 import {
   type ParsedAlarm,
@@ -811,18 +813,29 @@ export class CalDavService {
         const slotStart = new Date(slot.start);
         const slotEnd = new Date(slot.end);
 
-        // Compute preferred boundary timestamps for each day the slot spans
-        const dayStart = new Date(slotStart);
-        dayStart.setUTCHours(0, 0, 0, 0);
+        // Compute preferred boundary timestamps for each day the slot spans,
+        // in the configured timezone (DST-safe).
+        const dayParts = getLocalDateParts(slotStart, this.timezone);
 
         const boundaries: number[] = [];
         // Check current day and next day in case slot spans midnight
         for (let d = 0; d <= 1; d++) {
-          const day = new Date(dayStart.getTime() + d * 86400000);
-          const prefS = new Date(day);
-          prefS.setUTCHours(prefStartH, prefStartM, 0, 0);
-          const prefE = new Date(day);
-          prefE.setUTCHours(prefEndH, prefEndM, 0, 0);
+          const prefS = zonedTimeToUtc(
+            dayParts.year,
+            dayParts.month,
+            dayParts.day + d,
+            prefStartH,
+            prefStartM,
+            this.timezone,
+          );
+          const prefE = zonedTimeToUtc(
+            dayParts.year,
+            dayParts.month,
+            dayParts.day + d,
+            prefEndH,
+            prefEndM,
+            this.timezone,
+          );
           if (prefS.getTime() > slotStart.getTime() && prefS.getTime() < slotEnd.getTime()) {
             boundaries.push(prefS.getTime());
           }
@@ -862,11 +875,23 @@ export class CalDavService {
       }
 
       // Sort: preferred-hours slots first, then chronologically
+      const localMinutes = (d: Date): number => {
+        const dtf = new Intl.DateTimeFormat("en-US", {
+          timeZone: this.timezone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        });
+        const parts: Record<string, string> = {};
+        for (const p of dtf.formatToParts(d)) parts[p.type] = p.value;
+        return (parts.hour === "24" ? 0 : Number(parts.hour)) * 60 + Number(parts.minute);
+      };
+
       splitSlots.sort((a, b) => {
         const aDate = new Date(a.start);
         const bDate = new Date(b.start);
-        const aMinutes = aDate.getUTCHours() * 60 + aDate.getUTCMinutes();
-        const bMinutes = bDate.getUTCHours() * 60 + bDate.getUTCMinutes();
+        const aMinutes = localMinutes(aDate);
+        const bMinutes = localMinutes(bDate);
         const aInPref = aMinutes >= prefStartMinutes && aMinutes < prefEndMinutes;
         const bInPref = bMinutes >= prefStartMinutes && bMinutes < prefEndMinutes;
 
