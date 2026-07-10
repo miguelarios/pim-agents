@@ -15,6 +15,7 @@ export const CONTACT_TOOLS: Tool[] = [
     name: "list_contacts",
     description:
       "List or search contacts. Returns all contacts if no query provided, or filters by name/email/phone/org when query is given.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -39,6 +40,7 @@ export const CONTACT_TOOLS: Tool[] = [
   {
     name: "get_contact",
     description: "Get full details of a single contact by UID.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -223,6 +225,7 @@ export const CONTACT_TOOLS: Tool[] = [
   {
     name: "delete_contact",
     description: "Delete a contact by UID. This action cannot be undone.",
+    annotations: { destructiveHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -239,6 +242,7 @@ export const CONTACT_TOOLS: Tool[] = [
     name: "resolve_contact",
     description:
       "Given a person's name, resolve to email. Returns { status: 'resolved', fullName, email } on a single match; { status: 'ambiguous', candidates: [...] } when multiple contacts match (caller must disambiguate); { status: 'not_found', message } when no contact with email matches.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {

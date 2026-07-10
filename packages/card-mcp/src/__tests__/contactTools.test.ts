@@ -78,6 +78,15 @@ describe("CONTACT_TOOLS definitions", () => {
     expect(props.birthday).toBeDefined();
     expect(props.categories).toBeDefined();
   });
+
+  it("read-only tools carry readOnlyHint; destructive tools carry destructiveHint", () => {
+    const byName = Object.fromEntries(CONTACT_TOOLS.map((t) => [t.name, t as any]));
+    for (const name of ["list_contacts", "get_contact", "resolve_contact"]) {
+      expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
+    }
+    expect(byName.delete_contact.annotations?.destructiveHint).toBe(true);
+    expect(byName.create_contact.annotations?.readOnlyHint).toBeFalsy();
+  });
 });
 
 describe("contactTools detail_level wiring", () => {

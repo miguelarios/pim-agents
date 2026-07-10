@@ -27,6 +27,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "search_emails",
     description:
       "Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (subject, from, to, etc.) for most searches. Note: for result sets >1000, non-date sort fields are approximate (sorted within page only).",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -115,6 +116,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "get_email",
     description:
       "Fetch a full email by UID including headers, body, and attachment metadata. Returns body as markdown by default for token efficiency. Use format='html' or format='text' for raw content.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -267,6 +269,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "delete_email",
     description:
       "Delete one or more emails. Moves to Trash by default, or permanently deletes if specified.",
+    annotations: { destructiveHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -291,6 +294,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "list_folders",
     description:
       "List all IMAP folders with their paths and special-use flags (Inbox, Sent, Trash, etc.).",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {},
@@ -314,6 +318,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "download_attachment",
     description:
       "Download a specific attachment from an email. Returns the attachment content as base64.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -336,6 +341,7 @@ export const EMAIL_TOOLS: Tool[] = [
   {
     name: "get_email_raw",
     description: "Export an email as raw .eml (RFC 822 source). Useful for archival or forwarding.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -355,6 +361,7 @@ export const EMAIL_TOOLS: Tool[] = [
     name: "get_folder_status",
     description:
       "Get total and unread message counts for a folder via IMAP STATUS (single round-trip, no payload).",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {

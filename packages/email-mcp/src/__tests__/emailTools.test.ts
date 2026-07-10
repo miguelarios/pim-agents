@@ -122,6 +122,22 @@ describe("EMAIL_TOOLS definitions", () => {
     expect(tool.inputSchema.required).toContain("uid");
     expect(tool.inputSchema.required).toContain("partId");
   });
+
+  it("read-only tools carry readOnlyHint; destructive tools carry destructiveHint", () => {
+    const byName = Object.fromEntries(EMAIL_TOOLS.map((t) => [t.name, t as any]));
+    for (const name of [
+      "search_emails",
+      "get_email",
+      "list_folders",
+      "download_attachment",
+      "get_email_raw",
+      "get_folder_status",
+    ]) {
+      expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
+    }
+    expect(byName.delete_email.annotations?.destructiveHint).toBe(true);
+    expect(byName.send_email.annotations?.readOnlyHint).toBeFalsy();
+  });
 });
 
 describe("handleEmailTool get_email format", () => {
