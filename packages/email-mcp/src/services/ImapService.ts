@@ -327,6 +327,7 @@ export class ImapService {
   }
 
   async deleteEmails(folder: string, uids: number[], permanent = false): Promise<void> {
+    const trashFolder = permanent ? null : await this.getSpecialUseFolder("\\Trash");
     const client = this.createClient();
     try {
       await client.connect();
@@ -336,7 +337,7 @@ export class ImapService {
         if (permanent) {
           await client.messageDelete(uidRange, { uid: true });
         } else {
-          await client.messageMove(uidRange, "Trash", { uid: true });
+          await client.messageMove(uidRange, trashFolder!, { uid: true });
         }
       } finally {
         lock.release();
@@ -400,9 +401,15 @@ export class ImapService {
   private static FALLBACK_NAMES: Record<string, string[]> = {
     "\\Sent": ["Sent", "Sent Messages", "Sent Items", "INBOX.Sent"],
     "\\Drafts": ["Drafts", "Draft", "INBOX.Drafts"],
+    "\\Trash": ["Trash", "Deleted Items", "Deleted Messages", "INBOX.Trash"],
   };
 
+  private specialUseCache = new Map<string, string>();
+
   async getSpecialUseFolder(flag: string): Promise<string> {
+    const cached = this.specialUseCache.get(flag);
+    if (cached) return cached;
+
     const client = this.createClient();
     try {
       await client.connect();
@@ -410,13 +417,19 @@ export class ImapService {
 
       // Try special-use flag first
       const byFlag = mailboxes.find((mb) => mb.specialUse === flag);
-      if (byFlag) return byFlag.path;
+      if (byFlag) {
+        this.specialUseCache.set(flag, byFlag.path);
+        return byFlag.path;
+      }
 
       // Fallback to common names
       const fallbacks = ImapService.FALLBACK_NAMES[flag] || [];
       const paths = new Set(mailboxes.map((mb) => mb.path));
       for (const name of fallbacks) {
-        if (paths.has(name)) return name;
+        if (paths.has(name)) {
+          this.specialUseCache.set(flag, name);
+          return name;
+        }
       }
 
       throw new EmailError(
