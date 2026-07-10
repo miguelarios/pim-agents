@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-24
 **Packages:** `@miguelarios/pim-core` + `@miguelarios/cal-mcp`
-**Status:** Designed, pending implementation
+**Status:** Implemented (cal-mcp 0.10.0 / pim-core 0.6.0, PR #35)
 **Related:** Todoist task `6gQGcqcMCRHj8Jj4` under the Calendar MCP project.
 
 ## Problem

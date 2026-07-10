@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-13
 **Packages:** `@miguelarios/pim-core` + `@miguelarios/card-mcp`
-**Status:** Designed, pending implementation
+**Status:** Implemented (card-mcp 0.3.0 / pim-core 0.5.0, PR #30)
 
 ## Problem
 
