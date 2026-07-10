@@ -33,6 +33,10 @@ Add the server to your MCP client config (Claude Desktop, Claude Code, etc.). Cr
 
 Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`, `PIM_TIMEZONE`.
 
+- `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. Path-based attachments (`attachments[].path`) are rejected unless this is set, and only files resolving inside it are allowed. Use `attachments[].content` for inline content without setting this.
+- `URL_RESOLVE_DISABLE` — set to `1`/`true` to skip network link-resolution when rendering email to markdown; links are left unresolved in the output.
+- `SMTP_AUTO_SENT` — set to `true` if your provider auto-files sent mail, so the server skips the extra IMAP append to Sent.
+
 ## Tools (12)
 
 See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter and output details.

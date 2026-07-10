@@ -68,7 +68,7 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 | `subject` | string | | Email subject line. Required for new emails. When `replyToUid` is set and subject is omitted, automatically uses `Re: <original subject>`. When provided explicitly, used as-is. |
 | `text` | string | | Plain text body. |
 | `html` | string | | HTML body. |
-| `attachments` | `{ filename: string, path?: string, content?: string }[]` | | File attachments. Use `path` to attach a file from disk, or `content` for inline string content. |
+| `attachments` | `{ filename: string, path?: string, content?: string }[]` | | File attachments. Use `content` for inline string content. `path` (attach a file from disk) is **disabled unless the `EMAIL_ATTACHMENT_DIR` env var is set**, and only files resolving inside that directory are allowed. |
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
 | `saveToDrafts` | boolean | | When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false. |
