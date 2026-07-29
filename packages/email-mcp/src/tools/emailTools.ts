@@ -598,7 +598,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     name: "download_attachment",
     title: "Download Attachment",
     description:
-      "Download a specific attachment from an email. Returns the bytes as an embedded binary resource, with the same base64 payload in structured output.",
+      "Download a specific attachment from an email. Returns the bytes as an embedded binary resource; structured output carries the filename, content type and size.",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
@@ -617,27 +617,25 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       run(async () => {
         const folder = args.folder || "INBOX";
         const attachment = await imap.downloadAttachment(folder, args.uid, args.partId);
-        const base64 = attachment.content.toString("base64");
-        const payload = {
-          filename: attachment.filename,
-          contentType: attachment.contentType,
-          size: attachment.size,
-          content: base64,
-        };
         return {
-          // A real binary resource block, so clients can save or render the
-          // attachment instead of parsing base64 out of a JSON string.
+          // The bytes ride in the resource block only — repeating the base64 in
+          // structuredContent would double the response for large attachments.
+          // Same reasoning as get_email_raw below.
           content: [
             {
               type: "resource",
               resource: {
                 uri: `imap://${encodeURIComponent(folder)}/${args.uid}/${encodeURIComponent(args.partId)}`,
                 mimeType: attachment.contentType,
-                blob: base64,
+                blob: attachment.content.toString("base64"),
               },
             },
           ],
-          structuredContent: payload,
+          structuredContent: {
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            size: attachment.size,
+          },
         };
       }),
   },

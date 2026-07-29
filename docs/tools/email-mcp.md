@@ -250,14 +250,13 @@ The bytes are returned as an embedded binary resource in `content`:
 }
 ```
 
-with the same payload in `structuredContent`:
+`structuredContent` carries the metadata only — repeating the base64 there would double the response for large attachments:
 
 ```ts
 {
   filename: string;
   contentType: string;
   size: number;       // bytes
-  content: string;    // base64-encoded
 }
 ```
 

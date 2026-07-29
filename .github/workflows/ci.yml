@@ -25,4 +25,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      # `typecheck` is `tsc --noEmit`, so it does not exercise emit, the
+      # Turborepo build graph, or the `chmod +x` on the CLI shims — all of
+      # which the publish workflow depends on.
+      - run: npm run build
       - run: npm test

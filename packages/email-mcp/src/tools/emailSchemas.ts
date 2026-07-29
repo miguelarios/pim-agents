@@ -99,12 +99,14 @@ export const createFolderResultSchema = v.object({
   path: v.string(),
 });
 
+/**
+ * Metadata only — the bytes ride in the result's embedded binary resource
+ * block, so a large attachment is not duplicated in the payload.
+ */
 export const attachmentSchema = v.object({
   filename: v.string(),
   contentType: v.string(),
   size: v.number(),
-  /** Base64 payload, also returned as an embedded resource in `content`. */
-  content: v.string(),
 });
 
 /**
