@@ -4,6 +4,8 @@
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
 
+> All results carry validated `structuredContent` matching the tool's advertised `outputSchema`, with the same JSON serialized into a text block for clients that do not read structured output. Errors are returned as `isError: true` with a `{ error, message, retryable }` body.
+
 ## search_emails
 
 Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (`subject`, `from`, `to`, etc.) for most searches. **Note:** for result sets >1000, non-date sort fields are approximate (sorted within page only).
@@ -33,7 +35,14 @@ Search and list emails in a folder. Returns email summaries with configurable so
 
 **Output**
 
-`EmailSummary[]` — see [Email shapes](#email-shapes) below.
+```ts
+{
+  emails: EmailSummary[];
+  count: number;
+}
+```
+
+See [Email shapes](#email-shapes) below.
 
 ## get_email
 
@@ -57,6 +66,8 @@ Fetch a full email by UID including headers, body, and attachment metadata. Retu
 ## send_email
 
 Compose and send an email, or save it as a draft. Supports replies with automatic threading — when `replyToUid` is provided, the tool fetches the original email and sets correct `In-Reply-To`/`References` headers and `Re:` subject prefix automatically. Set `saveToDrafts` to true to save to the Drafts folder instead of sending. Sent emails are automatically copied to the Sent folder. Callers may optionally set a visible `From` address, but only when it is explicitly allowed by server configuration.
+
+> **Asks for confirmation.** Only when actually sending — `saveToDrafts: true` is not gated. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
@@ -103,6 +114,8 @@ without touching the address, and carries no deliverability risk.
 ## send_draft
 
 Send an existing email draft from the Drafts folder. Fetches the draft's raw RFC 822 source, sends it via SMTP, copies it to the Sent folder, and removes it from Drafts. The draft must already exist — use `send_email` with `saveToDrafts: true` to create one.
+
+> **Asks for confirmation.** Sending a draft cannot be recalled. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
@@ -160,6 +173,8 @@ Set or unset flags on one or more emails. Common flags: `\Seen` (read), `\Flagge
 
 Delete one or more emails. Moves to Trash by default, or permanently deletes if specified.
 
+> **Asks for confirmation.** Only when `permanent` is `true` — a move to Trash is not gated. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
+
 **Parameters**
 
 | Parameter | Type | Required | Description |
@@ -183,11 +198,13 @@ List all IMAP folders with their paths and special-use flags (Inbox, Sent, Trash
 **Output**
 
 ```ts
-Array<{
-  path: string;
-  specialUse?: string;   // e.g. "\\Sent", "\\Drafts", "\\Trash"
-  delimiter: string;     // hierarchy separator, usually "/" or "."
-}>
+{
+  folders: Array<{
+    path: string;
+    specialUse?: string;   // e.g. "\\Sent", "\\Drafts", "\\Trash"
+    delimiter: string;     // hierarchy separator, usually "/" or "."
+  }>;
+}
 ```
 
 ## create_folder
@@ -220,6 +237,21 @@ Download a specific attachment from an email. Returns the attachment content as 
 
 **Output**
 
+The bytes are returned as an embedded binary resource in `content`:
+
+```ts
+{
+  type: "resource",
+  resource: {
+    uri: "imap://<folder>/<uid>/<partId>",
+    mimeType: string,
+    blob: string,     // base64-encoded
+  }
+}
+```
+
+with the same payload in `structuredContent`:
+
 ```ts
 {
   filename: string;
@@ -242,7 +274,24 @@ Export an email as raw .eml (RFC 822 source). Useful for archival or forwarding.
 
 **Output**
 
-Raw RFC 822 message source as a single text string (not JSON-wrapped).
+The source is returned as an embedded `message/rfc822` resource in `content`, so a multi-megabyte `.eml` is not duplicated in the payload:
+
+```ts
+{
+  type: "resource",
+  resource: {
+    uri: "imap://<folder>/<uid>.eml",
+    mimeType: "message/rfc822",
+    text: string,     // raw RFC 822 source
+  }
+}
+```
+
+`structuredContent` carries the metadata only:
+
+```ts
+{ uid: number; folder: string; size: number }
+```
 
 ## get_folder_status
 

@@ -2,6 +2,13 @@
 
 MCP server for calendars via CalDAV — query, create, and manage events across one or more providers, including recurrence, attendees, alarms, and free/busy lookups.
 
+## Protocol support
+
+Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
+Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
+
+`delete_event` with `span: "all"` asks the user to confirm before removing a whole series; deleting a single occurrence does not. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
+
 ## Usage
 
 ```bash

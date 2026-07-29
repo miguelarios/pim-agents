@@ -1,31 +1,29 @@
 import { createRequire } from "node:module";
 import { loadCalDavConfig } from "@miguelarios/pim-core";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { CalDavService } from "./services/CalDavService.js";
-import { CALENDAR_TOOLS, handleCalendarTool } from "./tools/calendarTools.js";
+import { CALENDAR_TOOLS } from "./tools/calendarTools.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
 
-export async function createServer(): Promise<Server> {
+export async function createServer(): Promise<McpServer> {
   const config = loadCalDavConfig();
   const service = new CalDavService(config);
 
-  const server = new Server(
-    { name: "@miguelarios/cal-mcp", version },
-    { capabilities: { tools: {} } },
+  const server = new McpServer(
+    { name: "@miguelarios/cal-mcp", title: "CalDAV Calendars", version },
+    {
+      capabilities: { tools: { listChanged: false } },
+      instructions:
+        "Read and manage CalDAV calendars across every configured provider. Calendar IDs are provider-prefixed (e.g. mailbox/Work) — call list_calendars first. delete_event asks the user to confirm before removing a whole series.",
+      cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
+    },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: CALENDAR_TOOLS,
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    return handleCalendarTool(name, (args ?? {}) as Record<string, unknown>, service);
-  });
+  registerTools(server, CALENDAR_TOOLS, service);
 
   const handleShutdown = async () => {
     process.exit(0);
@@ -33,16 +31,14 @@ export async function createServer(): Promise<Server> {
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
 
-  server.onerror = (error) => {
-    console.error("[cal-mcp] Server error:", error.message);
-  };
-
   return server;
 }
 
 export async function startServer(): Promise<void> {
-  const server = await createServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  // `serveStdio` owns the era decision: a 2026-07-28 client gets the new
+  // protocol, and a 2025-era client is still served from the same factory.
+  serveStdio(() => createServer(), {
+    onerror: (error) => console.error("[cal-mcp] Server error:", error.message),
+  });
   console.error("[cal-mcp] Server started on stdio");
 }

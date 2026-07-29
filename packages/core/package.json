@@ -28,6 +28,10 @@
     "./ics": {
       "import": "./dist/ics/index.js",
       "types": "./dist/ics/index.d.ts"
+    },
+    "./mcp": {
+      "import": "./dist/mcp/index.js",
+      "types": "./dist/mcp/index.d.ts"
     }
   },
   "scripts": {
@@ -36,9 +40,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "@touch4it/ical-timezones": "^1.9.0",
+    "@valibot/to-json-schema": "^1.7.1",
     "ical.js": "^2.2.1",
-    "valibot": "^1.0.0"
+    "valibot": "^1.4.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

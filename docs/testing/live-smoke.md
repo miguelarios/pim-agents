@@ -149,3 +149,26 @@ Quote the whole call in single quotes so the shell doesn't interpret the parenth
 use double-quoted string values inside. Timestamps are ISO 8601; omit the trailing `Z`
 for provider-local times where a tool expects local time (e.g. `find_free_slots`
 `preferred_start`).
+
+## 7. Protocol conformance spot-checks
+
+The servers speak MCP `2026-07-28` and also serve 2025-era clients. The
+`src/__tests__/roundtrip.test.ts` suite in each package covers both eras against
+mocked backends; these steps confirm the same behaviour against real ones.
+
+- [ ] Client reports the negotiated version as `2026-07-28`. On a 2025-era host it
+      should report a 2025 revision and still work — neither needs configuration.
+- [ ] `tools/list` shows a `title`, an `outputSchema`, and all four annotations
+      (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) on every
+      tool, and repeats in the same order across two calls.
+- [ ] A read tool (`list_contacts`, `list_events`, `search_emails`) returns
+      `structuredContent` that validates against its advertised `outputSchema`.
+- [ ] A bad argument (e.g. `get_email(uid: "abc")`) comes back as `isError: true`
+      without reaching the backend.
+- [ ] `delete_contact` on a throwaway PIM-Test contact prompts for confirmation.
+      Declining leaves the contact intact; accepting deletes it.
+- [ ] `send_email(saveToDrafts: true)` does **not** prompt; a real self-addressed
+      send does.
+- [ ] `delete_email(permanent: true)` prompts; a plain `delete_email` (Trash) does not.
+- [ ] `download_attachment` returns the bytes as an embedded binary resource, and
+      `get_email_raw` returns a `message/rfc822` resource.

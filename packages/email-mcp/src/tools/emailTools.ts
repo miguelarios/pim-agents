@@ -1,12 +1,40 @@
 import { realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { toPimError } from "@miguelarios/pim-core";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import {
+  type CallToolResult,
+  type ToolDef,
+  type ToolResult,
+  confirmDestructive,
+  fail,
+  structured,
+  toolError,
+} from "@miguelarios/pim-core/mcp";
 import { simpleParser } from "mailparser";
 import { htmlToMarkdown } from "../htmlToMarkdown.js";
 import type { SearchParams } from "../search.js";
 import type { ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
+import {
+  attachmentSchema,
+  createFolderResultSchema,
+  deleteResultSchema,
+  emailFullSchema,
+  folderListSchema,
+  folderStatusSchema,
+  markResultSchema,
+  moveResultSchema,
+  rawEmailSchema,
+  searchResultSchema,
+  sendResultSchema,
+} from "./emailSchemas.js";
+
+/** Both backing services, passed to every handler as one unit. */
+export interface EmailServices {
+  imap: ImapService;
+  smtp: SmtpService;
+}
+
+type Attachment = { filename: string; path?: string; content?: string };
 
 function assertAttachmentPathAllowed(p: string): void {
   const allowedRoot = process.env.EMAIL_ATTACHMENT_DIR;
@@ -22,19 +50,45 @@ function assertAttachmentPathAllowed(p: string): void {
   }
 }
 
-export const EMAIL_TOOLS: Tool[] = [
+/** Runs a handler body, converting anything thrown into a tool execution error. */
+async function run(body: () => Promise<ToolResult>): Promise<ToolResult> {
+  try {
+    return await body();
+  } catch (err) {
+    return toolError(err);
+  }
+}
+
+function invalid(message: string): CallToolResult {
+  return fail("INVALID_INPUT", message);
+}
+
+const FOLDER_PROP = {
+  type: "string",
+  description: "IMAP folder. Defaults to INBOX.",
+} as const;
+
+const UIDS_PROP = (description: string) =>
+  ({ type: "array", items: { type: "number" }, description }) as const;
+
+const READ_ONLY = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+} as const;
+
+export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
   {
     name: "search_emails",
+    title: "Search Emails",
     description:
       "Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (subject, from, to, etc.) for most searches. Note: for result sets >1000, non-date sort fields are approximate (sorted within page only).",
-    annotations: { readOnlyHint: true },
+    annotations: READ_ONLY,
     inputSchema: {
       type: "object",
       properties: {
-        folder: {
-          type: "string",
-          description: 'IMAP folder path. Defaults to "INBOX".',
-        },
+        folder: { type: "string", description: 'IMAP folder path. Defaults to "INBOX".' },
         subject: {
           type: "string",
           description:
@@ -48,14 +102,8 @@ export const EMAIL_TOOLS: Tool[] = [
           type: "string",
           description: "Match recipient name or email address (substring match).",
         },
-        cc: {
-          type: "string",
-          description: "Match CC recipient (substring match).",
-        },
-        bcc: {
-          type: "string",
-          description: "Match BCC recipient (substring match).",
-        },
+        cc: { type: "string", description: "Match CC recipient (substring match)." },
+        bcc: { type: "string", description: "Match BCC recipient (substring match)." },
         body: {
           type: "string",
           description:
@@ -66,35 +114,17 @@ export const EMAIL_TOOLS: Tool[] = [
           description:
             'Search all message content (headers + body, IMAP TEXT). Multiple words are ANDed. Use quotes for exact phrase. Use -term for exclusion. Examples: "budget", "report -draft", \'"quarterly report"\'.',
         },
-        since: {
-          type: "string",
-          description: "Emails on or after this date (YYYY-MM-DD).",
-        },
-        before: {
-          type: "string",
-          description: "Emails before this date (YYYY-MM-DD).",
-        },
-        unread: {
-          type: "boolean",
-          description: "Filter by unread status.",
-        },
-        flagged: {
-          type: "boolean",
-          description: "Filter by flagged/starred status.",
-        },
-        hasAttachment: {
-          type: "boolean",
-          description: "Filter for emails with attachments.",
-        },
+        since: { type: "string", description: "Emails on or after this date (YYYY-MM-DD)." },
+        before: { type: "string", description: "Emails before this date (YYYY-MM-DD)." },
+        unread: { type: "boolean", description: "Filter by unread status." },
+        flagged: { type: "boolean", description: "Filter by flagged/starred status." },
+        hasAttachment: { type: "boolean", description: "Filter for emails with attachments." },
         tags: {
           type: "array",
           items: { type: "string" },
           description: "Filter by IMAP keyword flags.",
         },
-        limit: {
-          type: "number",
-          description: "Max results to return. Defaults to 50.",
-        },
+        limit: { type: "number", description: "Max results to return. Defaults to 50." },
         offset: {
           type: "number",
           description: "Number of results to skip for pagination. Defaults to 0.",
@@ -111,12 +141,48 @@ export const EMAIL_TOOLS: Tool[] = [
         },
       },
     },
+    outputSchema: searchResultSchema,
+    handler: (
+      args: SearchParams & {
+        folder?: string;
+        limit?: number;
+        offset?: number;
+        sortBy?: "date" | "from" | "subject";
+        sortOrder?: "asc" | "desc";
+      },
+      { imap },
+    ) =>
+      run(async () => {
+        const searchParams: SearchParams = {
+          hasWords: args.hasWords,
+          body: args.body,
+          from: args.from,
+          to: args.to,
+          cc: args.cc,
+          bcc: args.bcc,
+          subject: args.subject,
+          since: args.since,
+          before: args.before,
+          unread: args.unread,
+          flagged: args.flagged,
+          hasAttachment: args.hasAttachment,
+          tags: args.tags,
+        };
+        const emails = await imap.searchEmails(args.folder || "INBOX", searchParams, {
+          limit: args.limit || 50,
+          offset: args.offset || 0,
+          sortBy: args.sortBy ?? "date",
+          sortOrder: args.sortOrder ?? "desc",
+        });
+        return structured({ emails, count: emails.length });
+      }),
   },
   {
     name: "get_email",
+    title: "Get Email",
     description:
       "Fetch a full email by UID including headers, body, and attachment metadata. Returns body as markdown by default for token efficiency. Use format='html' or format='text' for raw content.",
-    annotations: { readOnlyHint: true },
+    annotations: READ_ONLY,
     inputSchema: {
       type: "object",
       properties: {
@@ -124,10 +190,7 @@ export const EMAIL_TOOLS: Tool[] = [
           type: "string",
           description: "IMAP folder containing the email. Defaults to INBOX.",
         },
-        uid: {
-          type: "number",
-          description: "The UID of the email to fetch.",
-        },
+        uid: { type: "number", description: "The UID of the email to fetch." },
         format: {
           type: "string",
           enum: ["markdown", "html", "text"],
@@ -137,11 +200,47 @@ export const EMAIL_TOOLS: Tool[] = [
       },
       required: ["uid"],
     },
+    outputSchema: emailFullSchema,
+    handler: (
+      args: { folder?: string; uid: number; format?: "markdown" | "html" | "text" },
+      { imap },
+    ) =>
+      run(async () => {
+        const format = args.format || "markdown";
+        const email = await imap.fetchEmail(args.folder || "INBOX", args.uid);
+
+        if (format === "markdown") {
+          try {
+            if (email.htmlBody) {
+              email.markdownBody = await htmlToMarkdown(email.htmlBody);
+            } else if (email.textBody) {
+              email.markdownBody = email.textBody;
+            }
+            delete email.htmlBody;
+            delete email.textBody;
+          } catch {
+            // Conversion failed — fall back to returning raw bodies unchanged
+          }
+        } else if (format === "text") {
+          delete email.htmlBody;
+        } else if (format === "html") {
+          delete email.textBody;
+        }
+
+        return structured(email);
+      }),
   },
   {
     name: "send_email",
+    title: "Send Email",
     description:
-      "Compose and send an email, or save it as a draft. Supports replies with automatic threading — when replyToUid is provided, the tool fetches the original email and sets correct In-Reply-To/References headers and Re: subject prefix automatically. Set saveToDrafts to true to save to the Drafts folder instead of sending. Sent emails are automatically copied to the Sent folder. Use only an explicitly allowed visible From address, and put the writing agent identity into fromName or the signature/body when needed.",
+      "Compose and send an email, or save it as a draft. Supports replies with automatic threading — when replyToUid is provided, the tool fetches the original email and sets correct In-Reply-To/References headers and Re: subject prefix automatically. Set saveToDrafts to true to save to the Drafts folder instead of sending. Sending (but not saving a draft) asks the user to confirm first. Sent emails are automatically copied to the Sent folder.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -150,29 +249,15 @@ export const EMAIL_TOOLS: Tool[] = [
           items: { type: "string" },
           description: "Recipient email addresses.",
         },
-        cc: {
-          type: "array",
-          items: { type: "string" },
-          description: "CC email addresses.",
-        },
-        bcc: {
-          type: "array",
-          items: { type: "string" },
-          description: "BCC email addresses.",
-        },
+        cc: { type: "array", items: { type: "string" }, description: "CC email addresses." },
+        bcc: { type: "array", items: { type: "string" }, description: "BCC email addresses." },
         subject: {
           type: "string",
           description:
             "Email subject line. Required for new emails. When replyToUid is set and subject is omitted, automatically uses 'Re: <original subject>'. When provided explicitly, used as-is.",
         },
-        text: {
-          type: "string",
-          description: "Plain text body.",
-        },
-        html: {
-          type: "string",
-          description: "HTML body.",
-        },
+        text: { type: "string", description: "Plain text body." },
+        html: { type: "string", description: "HTML body." },
         attachments: {
           type: "array",
           items: {
@@ -184,10 +269,7 @@ export const EMAIL_TOOLS: Tool[] = [
                 description:
                   "File path to attach. Disabled unless the server has EMAIL_ATTACHMENT_DIR set to an allowed directory; the resolved path must be inside it. Use content instead if unavailable.",
               },
-              content: {
-                type: "string",
-                description: "String content to attach.",
-              },
+              content: { type: "string", description: "String content to attach." },
             },
             required: ["filename"],
           },
@@ -211,56 +293,187 @@ export const EMAIL_TOOLS: Tool[] = [
         from: {
           type: "string",
           description:
-            "Optional visible From address. Must be explicitly allowed by the server configuration. SMTP envelope delivery still uses the account sender unless the server implementation changes.",
+            "Optional visible From address. Must be SMTP_USER or listed in the server's SMTP_ALLOWED_FROM allowlist; anything else is rejected. SMTP envelope delivery still uses the account sender, so an address on a different domain than SMTP_USER may fail DMARC at the recipient.",
         },
         fromName: {
           type: "string",
           description:
-            "Optional visible display name for the From header. Useful when multiple agents share one allowed sender address, for example Pepper Potts via AI Agents.",
+            "Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. Changes only the display name, never the address.",
         },
       },
       required: ["to"],
     },
-  },
-  {
-    name: "move_email",
-    description: "Move one or more emails to a different IMAP folder.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        folder: {
-          type: "string",
-          description: "Source IMAP folder. Defaults to INBOX.",
-        },
-        uids: {
-          type: "array",
-          items: { type: "number" },
-          description: "UIDs of emails to move.",
-        },
-        destination: {
-          type: "string",
-          description: "Destination folder path.",
-        },
+    outputSchema: sendResultSchema,
+    handler: async (
+      args: {
+        to: string[] | string;
+        cc?: string[] | string;
+        bcc?: string[] | string;
+        subject?: string;
+        text?: string;
+        html?: string;
+        attachments?: Attachment[];
+        replyToUid?: number;
+        replyToFolder?: string;
+        saveToDrafts?: boolean;
+        from?: string;
+        fromName?: string;
       },
-      required: ["uids", "destination"],
+      { imap, smtp },
+      ctx,
+    ) => {
+      const to = Array.isArray(args.to) ? args.to : [args.to];
+      const cc = args.cc == null ? undefined : Array.isArray(args.cc) ? args.cc : [args.cc];
+      const bcc = args.bcc == null ? undefined : Array.isArray(args.bcc) ? args.bcc : [args.bcc];
+      const saveToDrafts = args.saveToDrafts || false;
+
+      // Validation: subject required when not replying
+      if (!args.subject && !args.replyToUid) {
+        return invalid("subject is required when not replying to an existing email");
+      }
+
+      // Saving a draft is reversible; actually putting mail on the wire is not.
+      if (!saveToDrafts) {
+        const recipients = [...to, ...(cc ?? []), ...(bcc ?? [])].join(", ");
+        const gate = confirmDestructive(
+          ctx,
+          "confirm_send_email",
+          `Send this email to ${recipients}${args.subject ? ` with subject "${args.subject}"` : ""}? This cannot be undone.`,
+        );
+        if (gate.status === "interrupt") return gate.result;
+      }
+
+      return run(async () => {
+        for (const att of args.attachments ?? []) {
+          if (att.path) assertAttachmentPathAllowed(att.path);
+        }
+        const replyToFolder = args.replyToFolder || "INBOX";
+        let subject = args.subject;
+
+        // Threading: fetch original email for reply context
+        let inReplyTo: string | undefined;
+        let references: string[] | undefined;
+        if (args.replyToUid) {
+          const original = await imap.fetchEmail(replyToFolder, args.replyToUid);
+          inReplyTo = original.messageId;
+          references = [...(original.references || [])];
+          if (original.messageId && !references.includes(original.messageId)) {
+            references.push(original.messageId);
+          }
+          if (!subject) {
+            const origSubject = original.subject || "";
+            subject = origSubject.startsWith("Re:") ? origSubject : `Re: ${origSubject}`;
+          }
+        }
+
+        // Compose RFC 822 message
+        const from = smtp.formatFromHeader(smtp.resolveFromAddress(args.from), args.fromName);
+
+        const messageOptions = {
+          from,
+          to,
+          cc,
+          bcc,
+          subject: subject as string,
+          text: args.text,
+          html: args.html,
+          attachments: args.attachments,
+          inReplyTo,
+          references,
+        };
+
+        if (saveToDrafts) {
+          // Draft mode: keep Bcc in the saved message so a later send_draft
+          // can still deliver to it — the header is stripped at send time.
+          const rawMessage = await smtp.composeRawMessage(messageOptions, { keepBcc: true });
+          // APPEND to Drafts folder
+          const draftsFolder = await imap.getSpecialUseFolder("\\Drafts");
+          const appendResult = await imap.appendMessage(draftsFolder, rawMessage, [
+            "\\Draft",
+            "\\Seen",
+          ]);
+          return structured({
+            status: "draft" as const,
+            uid: appendResult.uid,
+            folder: draftsFolder,
+          });
+        }
+
+        // Send mode: SMTP send + APPEND to Sent (Bcc stripped per RFC 2822 default)
+        const rawMessage = await smtp.composeRawMessage(messageOptions);
+        const envelope = {
+          from: smtp.config.smtp.user,
+          to: [...to, ...(cc || []), ...(bcc || [])],
+        };
+        const sendResult = await smtp.sendRawMessage(rawMessage, envelope);
+
+        let sentFolderPath = "Sent";
+        if (!smtp.config.autoSent) {
+          try {
+            sentFolderPath = await imap.getSpecialUseFolder("\\Sent");
+            await imap.appendMessage(sentFolderPath, rawMessage, ["\\Seen"]);
+          } catch (appendError) {
+            console.error("[email-mcp] Failed to copy to Sent folder:", appendError);
+          }
+        }
+
+        return structured({
+          status: "sent" as const,
+          messageId: sendResult.messageId,
+          folder: sentFolderPath,
+        });
+      });
     },
   },
   {
-    name: "mark_email",
-    description:
-      'Set or unset flags on one or more emails. Common flags: "\\Seen" (read), "\\Flagged" (starred).',
+    name: "move_email",
+    title: "Move Email",
+    description: "Move one or more emails to a different IMAP folder.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
-        folder: {
-          type: "string",
-          description: "IMAP folder. Defaults to INBOX.",
-        },
-        uids: {
-          type: "array",
-          items: { type: "number" },
-          description: "UIDs of emails to modify.",
-        },
+        folder: { type: "string", description: "Source IMAP folder. Defaults to INBOX." },
+        uids: UIDS_PROP("UIDs of emails to move."),
+        destination: { type: "string", description: "Destination folder path." },
+      },
+      required: ["uids", "destination"],
+    },
+    outputSchema: moveResultSchema,
+    handler: (args: { folder?: string; uids: number[]; destination: string }, { imap }) =>
+      run(async () => {
+        if (!Array.isArray(args.uids) || args.uids.length === 0) {
+          return invalid("uids must be a non-empty array of message UIDs");
+        }
+        await imap.moveEmails(args.folder || "INBOX", args.uids, args.destination);
+        return structured({
+          status: "moved" as const,
+          uids: args.uids,
+          destination: args.destination,
+        });
+      }),
+  },
+  {
+    name: "mark_email",
+    title: "Mark Email",
+    description:
+      'Set or unset flags on one or more emails. Common flags: "\\Seen" (read), "\\Flagged" (starred).',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: FOLDER_PROP,
+        uids: UIDS_PROP("UIDs of emails to modify."),
         flags: {
           type: "array",
           items: { type: "string" },
@@ -274,24 +487,41 @@ export const EMAIL_TOOLS: Tool[] = [
       },
       required: ["uids", "flags"],
     },
+    outputSchema: markResultSchema,
+    handler: (
+      args: { folder?: string; uids: number[]; flags: string[]; action?: "add" | "remove" },
+      { imap },
+    ) =>
+      run(async () => {
+        if (!Array.isArray(args.uids) || args.uids.length === 0) {
+          return invalid("uids must be a non-empty array of message UIDs");
+        }
+        const action = args.action || "add";
+        await imap.markEmails(args.folder || "INBOX", args.uids, args.flags, action);
+        return structured({
+          status: "updated" as const,
+          uids: args.uids,
+          flags: args.flags,
+          action,
+        });
+      }),
   },
   {
     name: "delete_email",
+    title: "Delete Email",
     description:
-      "Delete one or more emails. Moves to Trash by default, or permanently deletes if specified.",
-    annotations: { destructiveHint: true },
+      "Delete one or more emails. Moves to Trash by default, or permanently deletes if specified. A permanent delete asks the user to confirm first.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
-        folder: {
-          type: "string",
-          description: "IMAP folder. Defaults to INBOX.",
-        },
-        uids: {
-          type: "array",
-          items: { type: "number" },
-          description: "UIDs of emails to delete.",
-        },
+        folder: FOLDER_PROP,
+        uids: UIDS_PROP("UIDs of emails to delete."),
         permanent: {
           type: "boolean",
           description: "If true, permanently delete instead of moving to Trash. Defaults to false.",
@@ -299,47 +529,82 @@ export const EMAIL_TOOLS: Tool[] = [
       },
       required: ["uids"],
     },
+    outputSchema: deleteResultSchema,
+    handler: async (
+      args: { folder?: string; uids: number[]; permanent?: boolean },
+      { imap },
+      ctx,
+    ) => {
+      if (!Array.isArray(args.uids) || args.uids.length === 0) {
+        return invalid("uids must be a non-empty array of message UIDs");
+      }
+      const permanent = args.permanent || false;
+
+      // A Trash move is recoverable; an expunge is not.
+      if (permanent) {
+        const gate = confirmDestructive(
+          ctx,
+          "confirm_delete_email",
+          `Permanently delete ${args.uids.length} email(s) from ${args.folder || "INBOX"}? They cannot be recovered.`,
+        );
+        if (gate.status === "interrupt") return gate.result;
+      }
+
+      return run(async () => {
+        await imap.deleteEmails(args.folder || "INBOX", args.uids, permanent);
+        return structured({
+          status: permanent ? ("permanently_deleted" as const) : ("moved_to_trash" as const),
+          uids: args.uids,
+        });
+      });
+    },
   },
   {
     name: "list_folders",
+    title: "List Folders",
     description:
       "List all IMAP folders with their paths and special-use flags (Inbox, Sent, Trash, etc.).",
-    annotations: { readOnlyHint: true },
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    annotations: READ_ONLY,
+    inputSchema: { type: "object", properties: {} },
+    outputSchema: folderListSchema,
+    handler: (_args: Record<string, never>, { imap }) =>
+      run(async () => structured({ folders: await imap.listFolders() })),
   },
   {
     name: "create_folder",
+    title: "Create Folder",
     description: "Create a new IMAP folder.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
-        path: {
-          type: "string",
-          description: "Folder path to create (e.g., 'Projects/Work').",
-        },
+        path: { type: "string", description: "Folder path to create (e.g., 'Projects/Work')." },
       },
       required: ["path"],
     },
+    outputSchema: createFolderResultSchema,
+    handler: (args: { path: string }, { imap }) =>
+      run(async () => {
+        await imap.createFolder(args.path);
+        return structured({ status: "created" as const, path: args.path });
+      }),
   },
   {
     name: "download_attachment",
+    title: "Download Attachment",
     description:
-      "Download a specific attachment from an email. Returns the attachment content as base64.",
-    annotations: { readOnlyHint: true },
+      "Download a specific attachment from an email. Returns the bytes as an embedded binary resource, with the same base64 payload in structured output.",
+    annotations: READ_ONLY,
     inputSchema: {
       type: "object",
       properties: {
-        folder: {
-          type: "string",
-          description: "IMAP folder. Defaults to INBOX.",
-        },
-        uid: {
-          type: "number",
-          description: "UID of the email containing the attachment.",
-        },
+        folder: FOLDER_PROP,
+        uid: { type: "number", description: "UID of the email containing the attachment." },
         partId: {
           type: "string",
           description: "MIME part ID of the attachment (from get_email attachment metadata).",
@@ -347,52 +612,102 @@ export const EMAIL_TOOLS: Tool[] = [
       },
       required: ["uid", "partId"],
     },
+    outputSchema: attachmentSchema,
+    handler: (args: { folder?: string; uid: number; partId: string }, { imap }) =>
+      run(async () => {
+        const folder = args.folder || "INBOX";
+        const attachment = await imap.downloadAttachment(folder, args.uid, args.partId);
+        const base64 = attachment.content.toString("base64");
+        const payload = {
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          content: base64,
+        };
+        return {
+          // A real binary resource block, so clients can save or render the
+          // attachment instead of parsing base64 out of a JSON string.
+          content: [
+            {
+              type: "resource",
+              resource: {
+                uri: `imap://${encodeURIComponent(folder)}/${args.uid}/${encodeURIComponent(args.partId)}`,
+                mimeType: attachment.contentType,
+                blob: base64,
+              },
+            },
+          ],
+          structuredContent: payload,
+        };
+      }),
   },
   {
     name: "get_email_raw",
-    description: "Export an email as raw .eml (RFC 822 source). Useful for archival or forwarding.",
-    annotations: { readOnlyHint: true },
+    title: "Get Raw Email",
+    description:
+      "Export an email as raw .eml (RFC 822 source). Useful for archival or forwarding. The source is returned as an embedded message/rfc822 resource.",
+    annotations: READ_ONLY,
     inputSchema: {
       type: "object",
       properties: {
-        folder: {
-          type: "string",
-          description: "IMAP folder. Defaults to INBOX.",
-        },
-        uid: {
-          type: "number",
-          description: "UID of the email to export.",
-        },
+        folder: FOLDER_PROP,
+        uid: { type: "number", description: "UID of the email to export." },
       },
       required: ["uid"],
     },
+    outputSchema: rawEmailSchema,
+    handler: (args: { folder?: string; uid: number }, { imap }) =>
+      run(async () => {
+        const folder = args.folder || "INBOX";
+        const raw = await imap.fetchRawEmail(folder, args.uid);
+        return {
+          // The source rides in the resource block rather than being repeated
+          // in both `content` and `structuredContent` — .eml payloads are large.
+          content: [
+            {
+              type: "resource",
+              resource: {
+                uri: `imap://${encodeURIComponent(folder)}/${args.uid}.eml`,
+                mimeType: "message/rfc822",
+                text: raw,
+              },
+            },
+          ],
+          structuredContent: { uid: args.uid, folder, size: raw.length },
+        };
+      }),
   },
   {
     name: "get_folder_status",
+    title: "Get Folder Status",
     description:
       "Get total and unread message counts for a folder via IMAP STATUS (single round-trip, no payload).",
-    annotations: { readOnlyHint: true },
+    annotations: READ_ONLY,
     inputSchema: {
       type: "object",
       properties: {
-        folder: {
-          type: "string",
-          description: "IMAP folder path. Defaults to INBOX.",
-        },
+        folder: { type: "string", description: "IMAP folder path. Defaults to INBOX." },
       },
     },
+    outputSchema: folderStatusSchema,
+    handler: (args: { folder?: string }, { imap }) =>
+      run(async () => structured(await imap.getFolderStatus(args.folder || "INBOX"))),
   },
   {
     name: "send_draft",
+    title: "Send Draft",
     description:
-      "Send an existing email draft from the Drafts folder. Fetches the draft's raw RFC 822 source, sends it via SMTP, copies it to the Sent folder, and removes it from Drafts. The draft must already exist — use send_email with saveToDrafts: true to create one.",
+      "Send an existing email draft from the Drafts folder. Fetches the draft's raw RFC 822 source, sends it via SMTP, copies it to the Sent folder, and removes it from Drafts. Asks the user to confirm before sending. The draft must already exist — use send_email with saveToDrafts: true to create one.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
-        uid: {
-          type: "number",
-          description: "UID of the draft email in the Drafts folder.",
-        },
+        uid: { type: "number", description: "UID of the draft email in the Drafts folder." },
         folder: {
           type: "string",
           description: "IMAP folder containing the draft. Defaults to the server's Drafts folder.",
@@ -400,265 +715,20 @@ export const EMAIL_TOOLS: Tool[] = [
       },
       required: ["uid"],
     },
-  },
-];
+    outputSchema: sendResultSchema,
+    handler: async (args: { uid: number; folder?: string }, { imap, smtp }, ctx) => {
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_send_draft",
+        `Send draft ${args.uid}? Once sent it cannot be recalled.`,
+      );
+      if (gate.status === "interrupt") return gate.result;
 
-export async function handleEmailTool(
-  name: string,
-  args: Record<string, unknown>,
-  imapService: ImapService,
-  smtpService: SmtpService,
-): Promise<{
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-}> {
-  try {
-    const folder = (args.folder as string) || "INBOX";
-
-    switch (name) {
-      case "search_emails": {
-        const searchParams: SearchParams = {
-          hasWords: args.hasWords as string | undefined,
-          body: args.body as string | undefined,
-          from: args.from as string | undefined,
-          to: args.to as string | undefined,
-          cc: args.cc as string | undefined,
-          bcc: args.bcc as string | undefined,
-          subject: args.subject as string | undefined,
-          since: args.since as string | undefined,
-          before: args.before as string | undefined,
-          unread: args.unread as boolean | undefined,
-          flagged: args.flagged as boolean | undefined,
-          hasAttachment: args.hasAttachment as boolean | undefined,
-          tags: args.tags as string[] | undefined,
-        };
-        const limit = (args.limit as number) || 50;
-        const offset = (args.offset as number) || 0;
-        const sortBy = (args.sortBy as string | undefined) ?? "date";
-        const sortOrder = (args.sortOrder as string | undefined) ?? "desc";
-        const emails = await imapService.searchEmails(folder, searchParams, {
-          limit,
-          offset,
-          sortBy: sortBy as "date" | "from" | "subject",
-          sortOrder: sortOrder as "asc" | "desc",
-        });
-        return ok(JSON.stringify(emails, null, 2));
-      }
-
-      case "get_email": {
-        const uid = args.uid as number;
-        const format = (args.format as string) || "markdown";
-        const email = await imapService.fetchEmail(folder, uid);
-
-        if (format === "markdown") {
-          try {
-            if (email.htmlBody) {
-              email.markdownBody = await htmlToMarkdown(email.htmlBody);
-            } else if (email.textBody) {
-              email.markdownBody = email.textBody;
-            }
-            delete email.htmlBody;
-            delete email.textBody;
-          } catch {
-            // Conversion failed — fall back to returning raw bodies unchanged
-          }
-        } else if (format === "text") {
-          delete email.htmlBody;
-        } else if (format === "html") {
-          delete email.textBody;
-        }
-
-        return ok(JSON.stringify(email, null, 2));
-      }
-
-      case "send_email": {
-        const to = Array.isArray(args.to) ? (args.to as string[]) : [args.to as string];
-        const cc =
-          args.cc == null
-            ? undefined
-            : Array.isArray(args.cc)
-              ? (args.cc as string[])
-              : [args.cc as string];
-        const bcc =
-          args.bcc == null
-            ? undefined
-            : Array.isArray(args.bcc)
-              ? (args.bcc as string[])
-              : [args.bcc as string];
-        const text = args.text as string | undefined;
-        const html = args.html as string | undefined;
-        const attachments = args.attachments as any[] | undefined;
-        for (const att of attachments ?? []) {
-          if (att.path) assertAttachmentPathAllowed(att.path);
-        }
-        const replyToUid = args.replyToUid as number | undefined;
-        const replyToFolder = (args.replyToFolder as string) || "INBOX";
-        const saveToDrafts = (args.saveToDrafts as boolean) || false;
-        const requestedFrom = args.from as string | undefined;
-        const requestedFromName = args.fromName as string | undefined;
-        let subject = args.subject as string | undefined;
-
-        // Validation: subject required when not replying
-        if (!subject && !replyToUid) {
-          return error("subject is required when not replying to an existing email");
-        }
-
-        // Threading: fetch original email for reply context
-        let inReplyTo: string | undefined;
-        let references: string[] | undefined;
-        if (replyToUid) {
-          const original = await imapService.fetchEmail(replyToFolder, replyToUid);
-          inReplyTo = original.messageId;
-          references = [...(original.references || [])];
-          if (original.messageId && !references.includes(original.messageId)) {
-            references.push(original.messageId);
-          }
-          if (!subject) {
-            const origSubject = original.subject || "";
-            subject = origSubject.startsWith("Re:") ? origSubject : `Re: ${origSubject}`;
-          }
-        }
-
-        // Compose RFC 822 message
-        const fromAddress = smtpService.resolveFromAddress(requestedFrom);
-        const from = smtpService.formatFromHeader(fromAddress, requestedFromName);
-
-        const messageOptions = {
-          from,
-          to,
-          cc,
-          bcc,
-          subject: subject!,
-          text,
-          html,
-          attachments,
-          inReplyTo,
-          references,
-        };
-
-        if (saveToDrafts) {
-          // Draft mode: keep Bcc in the saved message so a later send_draft
-          // can still deliver to it — the header is stripped at send time.
-          const rawMessage = await smtpService.composeRawMessage(messageOptions, {
-            keepBcc: true,
-          });
-          // APPEND to Drafts folder
-          const draftsFolder = await imapService.getSpecialUseFolder("\\Drafts");
-          const appendResult = await imapService.appendMessage(draftsFolder, rawMessage, [
-            "\\Draft",
-            "\\Seen",
-          ]);
-          return ok(
-            JSON.stringify({ status: "draft", uid: appendResult.uid, folder: draftsFolder }),
-          );
-        }
-
-        // Send mode: SMTP send + APPEND to Sent (Bcc stripped per RFC 2822 default)
-        const rawMessage = await smtpService.composeRawMessage(messageOptions);
-        const envelope = {
-          from: smtpService.config.smtp.user,
-          to: [...to, ...(cc || []), ...(bcc || [])],
-        };
-        const sendResult = await smtpService.sendRawMessage(rawMessage, envelope);
-
-        let sentFolderPath = "Sent";
-        if (!smtpService.config.autoSent) {
-          try {
-            sentFolderPath = await imapService.getSpecialUseFolder("\\Sent");
-            await imapService.appendMessage(sentFolderPath, rawMessage, ["\\Seen"]);
-          } catch (appendError) {
-            console.error("[email-mcp] Failed to copy to Sent folder:", appendError);
-          }
-        }
-
-        return ok(
-          JSON.stringify({
-            status: "sent",
-            messageId: sendResult.messageId,
-            folder: sentFolderPath,
-          }),
-        );
-      }
-
-      case "move_email": {
-        const uids = args.uids as number[];
-        if (!Array.isArray(uids) || uids.length === 0) {
-          return error("uids must be a non-empty array of message UIDs");
-        }
-        const destination = args.destination as string;
-        await imapService.moveEmails(folder, uids, destination);
-        return ok(JSON.stringify({ status: "moved", uids, destination }));
-      }
-
-      case "mark_email": {
-        const uids = args.uids as number[];
-        if (!Array.isArray(uids) || uids.length === 0) {
-          return error("uids must be a non-empty array of message UIDs");
-        }
-        const flags = args.flags as string[];
-        const action = (args.action as "add" | "remove") || "add";
-        await imapService.markEmails(folder, uids, flags, action);
-        return ok(JSON.stringify({ status: "updated", uids, flags, action }));
-      }
-
-      case "delete_email": {
-        const uids = args.uids as number[];
-        if (!Array.isArray(uids) || uids.length === 0) {
-          return error("uids must be a non-empty array of message UIDs");
-        }
-        const permanent = (args.permanent as boolean) || false;
-        await imapService.deleteEmails(folder, uids, permanent);
-        return ok(
-          JSON.stringify({
-            status: permanent ? "permanently_deleted" : "moved_to_trash",
-            uids,
-          }),
-        );
-      }
-
-      case "list_folders": {
-        const folders = await imapService.listFolders();
-        return ok(JSON.stringify(folders, null, 2));
-      }
-
-      case "create_folder": {
-        const path = args.path as string;
-        await imapService.createFolder(path);
-        return ok(JSON.stringify({ status: "created", path }));
-      }
-
-      case "download_attachment": {
-        const uid = args.uid as number;
-        const partId = args.partId as string;
-        const attachment = await imapService.downloadAttachment(folder, uid, partId);
-        return ok(
-          JSON.stringify({
-            filename: attachment.filename,
-            contentType: attachment.contentType,
-            size: attachment.size,
-            content: attachment.content.toString("base64"),
-          }),
-        );
-      }
-
-      case "get_email_raw": {
-        const uid = args.uid as number;
-        const raw = await imapService.fetchRawEmail(folder, uid);
-        return ok(raw);
-      }
-
-      case "get_folder_status": {
-        const status = await imapService.getFolderStatus(folder);
-        return ok(JSON.stringify(status));
-      }
-
-      case "send_draft": {
-        const uid = args.uid as number;
-        const draftFolder =
-          (args.folder as string) || (await imapService.getSpecialUseFolder("\\Drafts"));
+      return run(async () => {
+        const draftFolder = args.folder || (await imap.getSpecialUseFolder("\\Drafts"));
 
         // Fetch raw source
-        const rawSource = await imapService.fetchRawSource(draftFolder, uid);
+        const rawSource = await imap.fetchRawSource(draftFolder, args.uid);
 
         // Parse headers for SMTP envelope
         const parsed = await simpleParser(rawSource);
@@ -677,7 +747,7 @@ export async function handleEmailTool(
 
         const allRecipients = [...toAddrs, ...ccAddrs, ...bccAddrs];
         if (allRecipients.length === 0) {
-          return error("Draft has no recipients — cannot send");
+          return invalid("Draft has no recipients — cannot send");
         }
 
         // Send via SMTP. The envelope still carries bccAddrs (via
@@ -686,50 +756,34 @@ export async function handleEmailTool(
         // transmitted copy while keeping rawSource intact for the Sent
         // folder append below (so the sender keeps a record of who was bcc'd).
         const envelope = {
-          from: smtpService.config.smtp.user,
+          from: smtp.config.smtp.user,
           to: allRecipients,
         };
-        const sendResult = await smtpService.sendRawMessage(stripBccHeader(rawSource), envelope);
+        const sendResult = await smtp.sendRawMessage(stripBccHeader(rawSource), envelope);
 
         // Copy to Sent
         let sentFolderPath = "Sent";
-        if (!smtpService.config.autoSent) {
+        if (!smtp.config.autoSent) {
           try {
-            sentFolderPath = await imapService.getSpecialUseFolder("\\Sent");
-            await imapService.appendMessage(sentFolderPath, rawSource, ["\\Seen"]);
+            sentFolderPath = await imap.getSpecialUseFolder("\\Sent");
+            await imap.appendMessage(sentFolderPath, rawSource, ["\\Seen"]);
           } catch (appendError) {
             console.error("[email-mcp] Failed to copy to Sent folder:", appendError);
           }
         }
 
         // Delete draft (permanently — not move to Trash)
-        await imapService.deleteEmails(draftFolder, [uid], true);
+        await imap.deleteEmails(draftFolder, [args.uid], true);
 
-        return ok(
-          JSON.stringify({
-            status: "sent",
-            messageId: sendResult.messageId,
-            folder: sentFolderPath,
-          }),
-        );
-      }
-
-      default:
-        return error(`Unknown tool: ${name}`);
-    }
-  } catch (err) {
-    const pimError = toPimError(err instanceof Error ? err : new Error(String(err)));
-    return error(`${pimError.message}${pimError.isRetryable ? " (retryable)" : ""}`);
-  }
-}
-
-function ok(text: string) {
-  return { content: [{ type: "text" as const, text }] };
-}
-
-function error(text: string) {
-  return { content: [{ type: "text" as const, text }], isError: true };
-}
+        return structured({
+          status: "sent" as const,
+          messageId: sendResult.messageId,
+          folder: sentFolderPath,
+        });
+      });
+    },
+  },
+];
 
 function stripBccHeader(raw: Buffer): Buffer {
   const str = raw.toString("latin1");

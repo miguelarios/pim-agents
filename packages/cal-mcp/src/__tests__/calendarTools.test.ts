@@ -1,5 +1,21 @@
+import { dispatchTool } from "@miguelarios/pim-core/mcp";
+import type { ServerContext } from "@modelcontextprotocol/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CALENDAR_TOOLS, handleCalendarTool } from "../tools/calendarTools.js";
+import { CALENDAR_TOOLS } from "../tools/calendarTools.js";
+
+/** A context that answers any confirmation prompt with "yes". */
+const confirmed = (key: string) =>
+  ({
+    mcpReq: { inputResponses: { [key]: { action: "accept", content: { confirm: true } } } },
+  }) as unknown as ServerContext;
+
+const handleCalendarTool = (
+  name: string,
+  args: Record<string, unknown>,
+  service: unknown,
+  ctx?: ServerContext,
+  // test-only loose typing over a heterogeneous result
+) => dispatchTool(CALENDAR_TOOLS, name, args, service as any, ctx) as Promise<any>;
 
 const mockService = {
   listCalendars: vi.fn(),
@@ -51,7 +67,31 @@ describe("calendarTools", () => {
       expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
     }
     expect(byName.delete_event.annotations?.destructiveHint).toBe(true);
-    expect(byName.create_event.annotations?.readOnlyHint).toBeFalsy();
+    expect(byName.create_event.annotations?.readOnlyHint).toBe(false);
+    expect(byName.create_event.annotations?.idempotentHint).toBe(false);
+    expect(byName.move_event.annotations?.readOnlyHint).toBe(false);
+    expect(byName.move_event.annotations?.destructiveHint).toBe(false);
+  });
+
+  it("every tool declares a title, an output schema and all four annotations", () => {
+    for (const tool of CALENDAR_TOOLS) {
+      expect(tool.title, tool.name).toBeTruthy();
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      for (const hint of [
+        "readOnlyHint",
+        "destructiveHint",
+        "idempotentHint",
+        "openWorldHint",
+      ] as const) {
+        expect(typeof tool.annotations[hint], `${tool.name}.${hint}`).toBe("boolean");
+      }
+    }
+  });
+
+  it("uses tool names the spec allows", () => {
+    for (const tool of CALENDAR_TOOLS) {
+      expect(tool.name, tool.name).toMatch(/^[A-Za-z0-9_.-]{1,128}$/);
+    }
   });
 
   it("create_event schema uses title not summary", () => {
@@ -198,6 +238,32 @@ describe("calendarTools", () => {
       expect(parsed.events[0].title).toBe("Meeting");
     });
 
+    it("move_event passes the fetched meta through and returns the moved event", async () => {
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: { uid: "evt-1", title: "Meeting" },
+        meta: { url: "https://dav.example.com/cal/work/evt-1.ics", etag: '"e1"' },
+      });
+      mockService.moveEvent.mockResolvedValue({
+        uid: "evt-1",
+        calendar_id: "mailbox/Personal",
+        title: "Meeting",
+      });
+
+      const result = await handleCalendarTool(
+        "move_event",
+        { calendar: "mailbox/Work", uid: "evt-1", target_calendar: "mailbox/Personal" },
+        mockService as any,
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(mockService.moveEvent).toHaveBeenCalledWith("mailbox/Work", "evt-1", "mailbox/Personal", {
+        url: "https://dav.example.com/cal/work/evt-1.ics",
+        etag: '"e1"',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.event.calendar_id).toBe("mailbox/Personal");
+    });
+
     it("get_event wraps in { event } envelope", async () => {
       mockService.getEvent.mockResolvedValue({ uid: "evt-1", title: "Meeting" });
 
@@ -230,54 +296,51 @@ describe("calendarTools", () => {
       expect(parsed.event.uid).toBe("new-1");
     });
 
-    it("move_event schema requires target_calendar", () => {
-      const tool = CALENDAR_TOOLS.find((t) => t.name === "move_event")!;
-      const props = (tool.inputSchema as any).properties;
-      expect(props.calendar).toBeDefined();
-      expect(props.uid).toBeDefined();
-      expect(props.target_calendar).toBeDefined();
-      expect((tool.inputSchema as any).required).toEqual(["calendar", "uid", "target_calendar"]);
-    });
-
-    it("move_event returns { event } envelope", async () => {
-      mockService.getEventWithMeta.mockResolvedValue({
-        event: { uid: "evt-1", title: "Meeting" },
-        meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
-      });
-      mockService.moveEvent.mockResolvedValue({ uid: "evt-1", calendar_id: "mailbox/Personal" });
-
-      const result = await handleCalendarTool(
-        "move_event",
-        {
-          calendar: "mailbox/Work",
-          uid: "evt-1",
-          target_calendar: "mailbox/Personal",
-        },
-        mockService as any,
-      );
-
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.event.uid).toBe("evt-1");
-      expect(mockService.moveEvent).toHaveBeenCalledWith(
-        "mailbox/Work",
-        "evt-1",
-        "mailbox/Personal",
-        { url: "/cal/evt-1.ics", etag: '"e1"' },
-      );
-    });
-
-    it("delete_event returns { deleted, uid } envelope", async () => {
+    it("delete_event returns { deleted, uid } envelope once confirmed", async () => {
       mockService.deleteEvent.mockResolvedValue(undefined);
 
       const result = await handleCalendarTool(
         "delete_event",
         { calendar: "mailbox/Work", uid: "evt-1" },
         mockService as any,
+        confirmed("confirm_delete_event"),
       );
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.deleted).toBe(true);
       expect(parsed.uid).toBe("evt-1");
+    });
+
+    it("delete_event span=all asks for confirmation before touching the server", async () => {
+      mockService.deleteEvent.mockResolvedValue(undefined);
+
+      const result = await handleCalendarTool(
+        "delete_event",
+        { calendar: "mailbox/Work", uid: "evt-1", span: "all" },
+        mockService as any,
+      );
+
+      expect(result.resultType).toBe("input_required");
+      expect(result.inputRequests.confirm_delete_event).toBeDefined();
+      expect(mockService.deleteEvent).not.toHaveBeenCalled();
+    });
+
+    it("delete_event span=this deletes a single occurrence without confirmation", async () => {
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: { uid: "evt-1", is_recurring: false, all_day: false },
+        meta: { url: "u", etag: "e" },
+      });
+      mockService.deleteEvent.mockResolvedValue(undefined);
+
+      const result = await handleCalendarTool(
+        "delete_event",
+        { calendar: "mailbox/Work", uid: "evt-1", span: "this" },
+        mockService as any,
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.deleted).toBe(true);
+      expect(mockService.deleteEvent).toHaveBeenCalled();
     });
 
     it("returns structured error for unknown tool", async () => {

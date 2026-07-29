@@ -24,10 +24,11 @@
   },
   "dependencies": {
     "@miguelarios/pim-core": "^0.7.0",
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "tsdav": "^2.1.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^20.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
