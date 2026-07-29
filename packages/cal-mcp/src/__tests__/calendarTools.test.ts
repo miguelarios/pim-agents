@@ -325,7 +325,9 @@ describe("calendarTools", () => {
       expect(mockService.deleteEvent).not.toHaveBeenCalled();
     });
 
-    it("delete_event span=this deletes a single occurrence without confirmation", async () => {
+    it("delete_event span=this on a NON-recurring event still asks for confirmation", async () => {
+      // There is no occurrence to exclude, so this is a full irreversible
+      // delete — the narrower-sounding span must not bypass the gate.
       mockService.getEventWithMeta.mockResolvedValue({
         event: { uid: "evt-1", is_recurring: false, all_day: false },
         meta: { url: "u", etag: "e" },
@@ -336,6 +338,25 @@ describe("calendarTools", () => {
         "delete_event",
         { calendar: "mailbox/Work", uid: "evt-1", span: "this" },
         mockService as any,
+      );
+
+      expect(result.resultType).toBe("input_required");
+      expect(result.inputRequests.confirm_delete_event).toBeDefined();
+      expect(mockService.deleteEvent).not.toHaveBeenCalled();
+    });
+
+    it("delete_event span=this on a NON-recurring event deletes once confirmed", async () => {
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: { uid: "evt-1", is_recurring: false, all_day: false },
+        meta: { url: "u", etag: "e" },
+      });
+      mockService.deleteEvent.mockResolvedValue(undefined);
+
+      const result = await handleCalendarTool(
+        "delete_event",
+        { calendar: "mailbox/Work", uid: "evt-1", span: "this" },
+        mockService as any,
+        confirmed("confirm_delete_event"),
       );
 
       const parsed = JSON.parse(result.content[0].text);

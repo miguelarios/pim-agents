@@ -8,7 +8,7 @@ All three servers speak MCP revision **2026-07-28** over stdio, and continue to 
 
 Every tool declares a `title`, a full set of behaviour annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), and an `outputSchema`; results carry validated `structuredContent` alongside the serialized JSON.
 
-Irreversible operations — `send_email`, `send_draft`, a permanent `delete_email`, `delete_contact`, and `delete_event` with `span: "all"` — ask the user to confirm before they run, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
+Irreversible operations — `send_email`, `send_draft`, a permanent `delete_email`, `delete_contact`, and any `delete_event` that removes the calendar object — ask the user to confirm before they run, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
 
 ## Packages
 
@@ -48,7 +48,7 @@ Irreversible operations — `send_email`, `send_draft`, a permanent `delete_emai
 | `get_event` | Get full event details by UID |
 | `create_event` | Create event with attendees, alarms, categories |
 | `update_event` | Update event by UID, including single recurrence instances |
-| `delete_event` | Delete event by UID (confirms first) or single recurrence instance |
+| `delete_event` | Delete event by UID (confirms first) or exclude a single recurrence instance |
 | `create_events_batch` | Create multiple events at once |
 | `import_ics` | Import events from .ics content |
 | `find_free_slots` | Find available time slots across calendars |

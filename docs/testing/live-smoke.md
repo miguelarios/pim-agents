@@ -170,5 +170,7 @@ mocked backends; these steps confirm the same behaviour against real ones.
 - [ ] `send_email(saveToDrafts: true)` does **not** prompt; a real self-addressed
       send does.
 - [ ] `delete_email(permanent: true)` prompts; a plain `delete_email` (Trash) does not.
+- [ ] `delete_event` prompts for `span: "all"` **and** for `span: "this"` on a non-recurring
+      event; `span: "this"` on a recurring event adds an `EXDATE` without prompting.
 - [ ] `download_attachment` returns the bytes as an embedded binary resource, and
       `get_email_raw` returns a `message/rfc822` resource.

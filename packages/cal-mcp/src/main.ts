@@ -18,7 +18,7 @@ export async function createServer(): Promise<McpServer> {
     {
       capabilities: { tools: { listChanged: false } },
       instructions:
-        "Read and manage CalDAV calendars across every configured provider. Calendar IDs are provider-prefixed (e.g. mailbox/Work) — call list_calendars first. delete_event asks the user to confirm before removing a whole series.",
+        "Read and manage CalDAV calendars across every configured provider. Calendar IDs are provider-prefixed (e.g. mailbox/Work) — call list_calendars first. delete_event asks the user to confirm whenever it removes the calendar object; excluding one occurrence of a recurring event does not.",
       cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
     },
   );

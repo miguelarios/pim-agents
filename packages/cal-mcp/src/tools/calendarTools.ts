@@ -613,7 +613,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     name: "delete_event",
     title: "Delete Event",
     description:
-      "Delete a calendar event by UID. Deleting a whole series asks the user to confirm first.",
+      "Delete a calendar event by UID. Asks the user to confirm first, unless it is excluding a single occurrence of a recurring event (span 'this'), which is recoverable.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,
@@ -647,19 +647,15 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     ) => {
       const span = args.span ?? "all";
 
-      // Removing an entire series is irreversible; removing one occurrence is
-      // recoverable by re-adding it, so only the series delete is gated.
-      if (span === "all") {
-        const gate = confirmDestructive(
-          ctx,
-          "confirm_delete_event",
-          `Delete the entire event series ${args.uid} from ${args.calendar}? This cannot be undone.`,
-        );
-        if (gate.status === "interrupt") return gate.result;
-      }
-
-      return run(async () => {
-        if (span === "this") {
+      // Excluding one occurrence of a recurring event is recoverable — the
+      // occurrence can be re-added. EVERY other path removes the calendar
+      // object outright, including `span: "this"` on a NON-recurring event,
+      // which is the same irreversible delete as `span: "all"`. So recurrence
+      // has to be resolved before deciding whether to gate; keying the gate off
+      // `span` alone would let an agent delete a one-off event unconfirmed
+      // simply by passing the narrower-sounding span.
+      if (span === "this") {
+        return run(async () => {
           const { event: existing, meta: eventMeta } = await service.getEventWithMeta(
             args.calendar,
             args.uid,
@@ -689,12 +685,29 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
             return ok({ deleted: true, uid: args.uid });
           }
 
-          // Non-recurring with span="this" — just delete normally
+          // Non-recurring: there is no occurrence to exclude, so this deletes
+          // the whole event. Gate it exactly like `span: "all"`.
+          const gate = confirmDestructive(
+            ctx,
+            "confirm_delete_event",
+            `Delete event ${args.uid} from ${args.calendar}? This cannot be undone.`,
+          );
+          if (gate.status === "interrupt") return gate.result;
+
           await service.deleteEvent(args.calendar, args.uid, eventMeta);
           return ok({ deleted: true, uid: args.uid });
-        }
+        });
+      }
 
-        // span="all" — delete the entire calendar object
+      // span="all" — removes the calendar object, series and all.
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_delete_event",
+        `Delete event ${args.uid} from ${args.calendar}? If it recurs, the entire series is removed. This cannot be undone.`,
+      );
+      if (gate.status === "interrupt") return gate.result;
+
+      return run(async () => {
         await service.deleteEvent(args.calendar, args.uid);
         return ok({ deleted: true, uid: args.uid });
       });

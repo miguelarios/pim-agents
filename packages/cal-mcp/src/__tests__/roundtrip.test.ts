@@ -23,6 +23,21 @@ const EVENT = {
   occurrence_date: null,
 };
 
+const RECURRING_ICS = [
+  "BEGIN:VCALENDAR",
+  "VERSION:2.0",
+  "PRODID:-//test//EN",
+  "BEGIN:VEVENT",
+  "UID:evt-1",
+  "DTSTAMP:20260701T000000Z",
+  "DTSTART:20260801T090000Z",
+  "DTEND:20260801T091500Z",
+  "SUMMARY:Standup",
+  "RRULE:FREQ=DAILY",
+  "END:VEVENT",
+  "END:VCALENDAR",
+].join("\r\n");
+
 function fakeService() {
   return {
     listCalendars: vi.fn().mockResolvedValue([
@@ -43,6 +58,8 @@ function fakeService() {
       meta: { url: "u", etag: "e" },
     }),
     deleteEvent: vi.fn().mockResolvedValue(undefined),
+    updateEvent: vi.fn().mockResolvedValue(EVENT),
+    fetchRawCalendarObject: vi.fn().mockResolvedValue({ data: RECURRING_ICS, url: "u", etag: "e" }),
     findFreeSlots: vi.fn().mockResolvedValue([]),
     getAccountEmail: vi.fn(() => "user@example.com"),
   };
@@ -192,7 +209,33 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect(service.deleteEvent).not.toHaveBeenCalled();
   });
 
-  it("deletes a single occurrence without asking", async () => {
+  it("excludes a single occurrence of a recurring event without asking", async () => {
+    const service = fakeService();
+    service.getEventWithMeta.mockResolvedValue({
+      event: { ...EVENT, is_recurring: true },
+      meta: { url: "u", etag: "e" },
+    });
+    const { client, elicitations } = await connect(era, service);
+    const result = await client.callTool({
+      name: "delete_event",
+      arguments: {
+        calendar: "mailbox/Work",
+        uid: "evt-1",
+        span: "this",
+        occurrence_date: "2026-08-02T09:00:00.000Z",
+      },
+    });
+
+    expect(elicitations).toHaveLength(0);
+    expect(result.isError).toBeFalsy();
+    // Excluding an occurrence rewrites the object rather than deleting it.
+    expect(service.updateEvent).toHaveBeenCalled();
+    expect(service.deleteEvent).not.toHaveBeenCalled();
+  });
+
+  it("still asks for span=this on a NON-recurring event", async () => {
+    // No occurrence to exclude, so this is a full delete — the narrower span
+    // must not bypass the gate.
     const service = fakeService();
     const { client, elicitations } = await connect(era, service);
     const result = await client.callTool({
@@ -200,8 +243,21 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
       arguments: { calendar: "mailbox/Work", uid: "evt-1", span: "this" },
     });
 
-    expect(elicitations).toHaveLength(0);
+    expect(elicitations).toHaveLength(1);
     expect(result.isError).toBeFalsy();
     expect(service.deleteEvent).toHaveBeenCalled();
+  });
+
+  it("does not delete a non-recurring event via span=this when declined", async () => {
+    const service = fakeService();
+    const { client, elicitations } = await connect(era, service, { action: "decline" });
+    const result = await client.callTool({
+      name: "delete_event",
+      arguments: { calendar: "mailbox/Work", uid: "evt-1", span: "this" },
+    });
+
+    expect(elicitations).toHaveLength(1);
+    expect(result.isError).toBe(true);
+    expect(service.deleteEvent).not.toHaveBeenCalled();
   });
 });
