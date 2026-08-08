@@ -31,11 +31,33 @@ Add the server to your MCP client config (Claude Desktop, Claude Code, etc.). Cr
 }
 ```
 
-Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`, `SMTP_ALLOWED_FROM` (comma-separated allowlist of additional visible `From` addresses), `PIM_TIMEZONE`.
+Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`, `PIM_TIMEZONE`.
 
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. Path-based attachments (`attachments[].path`) are rejected unless this is set, and only files resolving inside it are allowed. Use `attachments[].content` for inline content without setting this.
 - `URL_RESOLVE_DISABLE` — set to `1`/`true` to skip network link-resolution when rendering email to markdown; links are left unresolved in the output.
 - `SMTP_AUTO_SENT` — set to `true` if your provider auto-files sent mail, so the server skips the extra IMAP append to Sent.
+- `SMTP_ALLOWED_FROM` — comma-separated allowlist of additional visible `From` addresses that `send_email` may use via its `from` parameter. Any address not in this list (and not `SMTP_USER`) is rejected. Read [Deliverability](#deliverability-spf-dkim-and-dmarc) before setting it.
+
+### Deliverability: SPF, DKIM and DMARC
+
+`SMTP_ALLOWED_FROM` changes the **visible** `From:` header only. The SMTP envelope sender remains the authenticated
+`SMTP_USER`, so the message is still submitted as your account.
+
+Receiving servers check those two against each other. DMARC requires the visible `From:` domain to *align* with a
+domain that passed SPF (evaluated against the envelope sender) or DKIM (evaluated against the signing domain).
+
+| Configuration | Aligns? | Result |
+|---|---|---|
+| `SMTP_USER=alice@example.com`, allow `team@example.com` | yes | Delivers normally — the intended use |
+| `SMTP_USER=alice@example.com`, allow `bob@example.org` | no | Likely spam-foldered or rejected if `example.org` publishes `p=quarantine`/`p=reject` |
+
+Keep allowlisted addresses on a domain your SMTP account can authenticate for. To send as a genuinely different
+domain, authorise it at the provider — add the domain to the account, publish an SPF record covering the provider,
+and enable DKIM signing for it. This allowlist controls what the server *permits*; it cannot make a receiving
+server trust you.
+
+`SMTP_FROM_NAME` and the per-call `fromName` change only the display name, never the address, so they carry no
+deliverability risk. Prefer them when you just want a distinct agent identity on a shared mailbox.
 
 ## Tools (12)
 
