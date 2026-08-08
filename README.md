@@ -37,7 +37,7 @@ Irreversible operations — `send_email`, `send_draft`, a permanent `delete_emai
 | `get_email_raw` | Export email as raw .eml, as an embedded `message/rfc822` resource |
 | `get_folder_status` | Get total and unread message counts for a folder |
 
-### [Calendar (11 tools)](docs/tools/cal-mcp.md)
+### [Calendar (12 tools)](docs/tools/cal-mcp.md)
 
 | Tool | Description |
 |------|-------------|
@@ -48,6 +48,7 @@ Irreversible operations — `send_email`, `send_draft`, a permanent `delete_emai
 | `get_event` | Get full event details by UID |
 | `create_event` | Create event with attendees, alarms, categories |
 | `update_event` | Update event by UID, including single recurrence instances |
+| `move_event` | Move an event to another calendar within the same account |
 | `delete_event` | Delete event by UID (confirms first) or exclude a single recurrence instance |
 | `create_events_batch` | Create multiple events at once |
 | `import_ics` | Import events from .ics content |
