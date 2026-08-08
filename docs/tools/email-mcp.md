@@ -56,7 +56,7 @@ Fetch a full email by UID including headers, body, and attachment metadata. Retu
 
 ## send_email
 
-Compose and send an email, or save it as a draft. Supports replies with automatic threading — when `replyToUid` is provided, the tool fetches the original email and sets correct `In-Reply-To`/`References` headers and `Re:` subject prefix automatically. Set `saveToDrafts` to true to save to the Drafts folder instead of sending. Sent emails are automatically copied to the Sent folder.
+Compose and send an email, or save it as a draft. Supports replies with automatic threading — when `replyToUid` is provided, the tool fetches the original email and sets correct `In-Reply-To`/`References` headers and `Re:` subject prefix automatically. Set `saveToDrafts` to true to save to the Drafts folder instead of sending. Sent emails are automatically copied to the Sent folder. Callers may optionally set a visible `From` address, but only when it is explicitly allowed by server configuration.
 
 **Parameters**
 
@@ -72,6 +72,8 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
 | `saveToDrafts` | boolean | | When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false. |
+| `from` | string | | Optional visible From address. Must be either `SMTP_USER` or listed in `SMTP_ALLOWED_FROM`. SMTP envelope delivery still uses the account sender. |
+| `fromName` | string | | Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. |
 
 **Output**
 

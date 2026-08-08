@@ -20,11 +20,17 @@ const mockImapService = {
 const mockSendEmail = vi.fn();
 const mockComposeRawMessage = vi.fn();
 const mockSendRawMessage = vi.fn();
+const mockResolveFromAddress = vi.fn((requested?: string) => requested || "user@test.com");
+const mockFormatFromHeader = vi.fn(
+  (address: string, displayName?: string) => `"${displayName || "Test User"}" <${address}>`,
+);
 
 const mockSmtpService = {
   sendEmail: mockSendEmail,
   composeRawMessage: mockComposeRawMessage,
   sendRawMessage: mockSendRawMessage,
+  resolveFromAddress: mockResolveFromAddress,
+  formatFromHeader: mockFormatFromHeader,
   config: { autoSent: false, fromName: "Test User", smtp: { user: "user@test.com" } },
 } as any;
 
@@ -68,12 +74,14 @@ describe("EMAIL_TOOLS definitions", () => {
     expect(tool.inputSchema.required).toEqual(["to"]);
   });
 
-  it("send_email has replyToUid, replyToFolder, and saveToDrafts properties", () => {
+  it("send_email has replyToUid, replyToFolder, saveToDrafts, from, and fromName properties", () => {
     const tool = EMAIL_TOOLS.find((t) => t.name === "send_email")!;
     const props = tool.inputSchema.properties as Record<string, unknown>;
     expect(props).toHaveProperty("replyToUid");
     expect(props).toHaveProperty("replyToFolder");
     expect(props).toHaveProperty("saveToDrafts");
+    expect(props).toHaveProperty("from");
+    expect(props).toHaveProperty("fromName");
   });
 
   it("send_draft requires uid", () => {
@@ -243,6 +251,10 @@ describe("handleEmailTool get_email format", () => {
 describe("send_email handler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveFromAddress.mockImplementation((requested?: string) => requested || "user@test.com");
+    mockFormatFromHeader.mockImplementation(
+      (address: string, displayName?: string) => `"${displayName || "Test User"}" <${address}>`,
+    );
     mockComposeRawMessage.mockResolvedValue(Buffer.from("raw-message"));
     mockSendRawMessage.mockResolvedValue({
       messageId: "<sent-1@test.com>",
@@ -478,6 +490,82 @@ describe("send_email handler", () => {
         bcc: ["bcc@test.com"],
       }),
     );
+  });
+
+  it("passes an allowed custom from address into the visible From header", async () => {
+    const result = await handleEmailTool(
+      "send_email",
+      {
+        to: ["r@test.com"],
+        from: "shared@test.com",
+        subject: "Hi",
+        text: "Hello",
+      },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.status).toBe("sent");
+    expect(mockResolveFromAddress).toHaveBeenCalledWith("shared@test.com");
+    expect(mockFormatFromHeader).toHaveBeenCalledWith("shared@test.com", undefined);
+    expect(mockComposeRawMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: '"Test User" <shared@test.com>',
+      }),
+    );
+    expect(mockSendRawMessage).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      expect.objectContaining({ from: "user@test.com" }),
+    );
+  });
+
+  it("passes a caller-provided display name into the visible From header", async () => {
+    const result = await handleEmailTool(
+      "send_email",
+      {
+        to: ["r@test.com"],
+        from: "shared@test.com",
+        fromName: "John Doe via Example Agents",
+        subject: "Hi",
+        text: "Hello",
+      },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.status).toBe("sent");
+    expect(mockFormatFromHeader).toHaveBeenCalledWith(
+      "shared@test.com",
+      "John Doe via Example Agents",
+    );
+    expect(mockComposeRawMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: '"John Doe via Example Agents" <shared@test.com>',
+      }),
+    );
+  });
+
+  it("returns an error when the requested from address is not allowed", async () => {
+    mockResolveFromAddress.mockImplementationOnce(() => {
+      throw new Error("Requested from address is not allowed: blocked@test.com");
+    });
+
+    const result = await handleEmailTool(
+      "send_email",
+      {
+        to: ["r@test.com"],
+        from: "blocked@test.com",
+        subject: "Hi",
+        text: "Hello",
+      },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not allowed");
   });
 
   it("skips Sent folder append when autoSent is true", async () => {

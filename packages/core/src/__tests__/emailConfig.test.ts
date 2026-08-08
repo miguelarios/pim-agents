@@ -45,6 +45,12 @@ describe("loadEmailConfig", () => {
     expect(config.fromName).toBe("Miguel Rios");
   });
 
+  it("reads optional SMTP_ALLOWED_FROM as a trimmed list", () => {
+    vi.stubEnv("SMTP_ALLOWED_FROM", "shared@example.com, alias@example.com, ");
+    const config = loadEmailConfig();
+    expect(config.allowedFrom).toEqual(["shared@example.com", "alias@example.com"]);
+  });
+
   it("throws ConfigurationError when IMAP_HOST missing", () => {
     vi.stubEnv("IMAP_HOST", "");
     expect(() => loadEmailConfig()).toThrow("Config validation failed");

@@ -49,6 +49,39 @@ export class SmtpService {
     this.config = config;
   }
 
+  private normalizedAllowedFromAddresses(): string[] {
+    return Array.from(
+      new Set(
+        [this.config.smtp.user, ...(this.config.allowedFrom || [])]
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  resolveFromAddress(requestedFrom?: string): string {
+    const fallback = this.config.smtp.user;
+    if (!requestedFrom) return fallback;
+
+    const normalizedRequested = requestedFrom.trim().toLowerCase();
+    if (!normalizedRequested) return fallback;
+
+    if (!this.normalizedAllowedFromAddresses().includes(normalizedRequested)) {
+      throw toPimError(
+        new Error(
+          `Requested from address is not allowed: ${requestedFrom}. Allowed addresses: ${this.normalizedAllowedFromAddresses().join(", ")}`,
+        ),
+      );
+    }
+
+    return requestedFrom.trim();
+  }
+
+  formatFromHeader(fromAddress: string, displayName?: string): string {
+    const effectiveName = displayName?.trim() || this.config.fromName;
+    return effectiveName ? `"${effectiveName}" <${fromAddress}>` : fromAddress;
+  }
+
   private createTransporter(): Transporter {
     return nodemailer.createTransport({
       host: this.config.smtp.host,
@@ -64,9 +97,7 @@ export class SmtpService {
   async sendEmail(options: SendEmailOptions): Promise<SendResult> {
     const transporter = this.createTransporter();
     try {
-      const from = this.config.fromName
-        ? `"${this.config.fromName}" <${this.config.smtp.user}>`
-        : this.config.smtp.user;
+      const from = this.formatFromHeader(this.resolveFromAddress());
 
       const info = await transporter.sendMail({
         from,

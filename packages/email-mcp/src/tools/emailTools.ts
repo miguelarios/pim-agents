@@ -141,7 +141,7 @@ export const EMAIL_TOOLS: Tool[] = [
   {
     name: "send_email",
     description:
-      "Compose and send an email, or save it as a draft. Supports replies with automatic threading — when replyToUid is provided, the tool fetches the original email and sets correct In-Reply-To/References headers and Re: subject prefix automatically. Set saveToDrafts to true to save to the Drafts folder instead of sending. Sent emails are automatically copied to the Sent folder.",
+      "Compose and send an email, or save it as a draft. Supports replies with automatic threading — when replyToUid is provided, the tool fetches the original email and sets correct In-Reply-To/References headers and Re: subject prefix automatically. Set saveToDrafts to true to save to the Drafts folder instead of sending. Sent emails are automatically copied to the Sent folder. Use only an explicitly allowed visible From address, and put the writing agent identity into fromName or the signature/body when needed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -207,6 +207,16 @@ export const EMAIL_TOOLS: Tool[] = [
           type: "boolean",
           description:
             "When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false.",
+        },
+        from: {
+          type: "string",
+          description:
+            "Optional visible From address. Must be explicitly allowed by the server configuration. SMTP envelope delivery still uses the account sender unless the server implementation changes.",
+        },
+        fromName: {
+          type: "string",
+          description:
+            "Optional visible display name for the From header. Useful when multiple agents share one allowed sender address, for example Pepper Potts via AI Agents.",
         },
       },
       required: ["to"],
@@ -484,6 +494,8 @@ export async function handleEmailTool(
         const replyToUid = args.replyToUid as number | undefined;
         const replyToFolder = (args.replyToFolder as string) || "INBOX";
         const saveToDrafts = (args.saveToDrafts as boolean) || false;
+        const requestedFrom = args.from as string | undefined;
+        const requestedFromName = args.fromName as string | undefined;
         let subject = args.subject as string | undefined;
 
         // Validation: subject required when not replying
@@ -508,9 +520,8 @@ export async function handleEmailTool(
         }
 
         // Compose RFC 822 message
-        const from = smtpService.config.fromName
-          ? `"${smtpService.config.fromName}" <${smtpService.config.smtp.user}>`
-          : smtpService.config.smtp.user;
+        const fromAddress = smtpService.resolveFromAddress(requestedFrom);
+        const from = smtpService.formatFromHeader(fromAddress, requestedFromName);
 
         const messageOptions = {
           from,

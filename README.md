@@ -88,6 +88,7 @@ Optional email env vars:
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. **Path-based attachments (`attachments[].path`) are rejected unless this is set**, and only files resolving inside it are allowed (a guard against exfiltrating arbitrary files via prompt injection). Use `attachments[].content` for inline content without setting this.
 - `URL_RESOLVE_DISABLE` — set to `1` or `true` to skip all network link-resolution when rendering email to markdown (avoids outbound requests to links in a message). Link/tracker URLs are left unresolved in the output.
 - `SMTP_AUTO_SENT` — set to `true` if your provider auto-files sent mail into the Sent folder, so the server skips the extra IMAP append.
+- `SMTP_ALLOWED_FROM` — comma-separated allowlist of additional visible `From` addresses that `send_email` may use. The SMTP envelope sender is always the authenticated account; only the visible header changes.
 
 ### Calendar
 

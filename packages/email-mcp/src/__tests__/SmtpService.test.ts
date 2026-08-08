@@ -35,6 +35,7 @@ const testConfig = {
     secure: true,
   },
   fromName: "Test User",
+  allowedFrom: ["shared@test.com"],
 };
 
 describe("SmtpService", () => {
@@ -49,6 +50,30 @@ describe("SmtpService", () => {
     });
     mockVerify.mockResolvedValue(true);
     service = new SmtpService(testConfig);
+  });
+
+  describe("from address helpers", () => {
+    it("defaults to the smtp user when no custom from is requested", () => {
+      expect(service.resolveFromAddress()).toBe("user@test.com");
+    });
+
+    it("allows configured custom from addresses", () => {
+      expect(service.resolveFromAddress("shared@test.com")).toBe("shared@test.com");
+    });
+
+    it("rejects unlisted custom from addresses", () => {
+      expect(() => service.resolveFromAddress("blocked@test.com")).toThrow(/not allowed/i);
+    });
+
+    it("formats From headers with the configured display name", () => {
+      expect(service.formatFromHeader("shared@test.com")).toBe('"Test User" <shared@test.com>');
+    });
+
+    it("lets a caller override the visible display name", () => {
+      expect(service.formatFromHeader("shared@test.com", "John Doe")).toBe(
+        '"John Doe" <shared@test.com>',
+      );
+    });
   });
 
   describe("sendEmail", () => {

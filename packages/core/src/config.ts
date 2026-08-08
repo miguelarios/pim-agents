@@ -121,6 +121,7 @@ export interface EmailConfig {
   };
   fromName?: string;
   autoSent?: boolean;
+  allowedFrom?: string[];
 }
 
 const EmailEnvSchema = v.object({
@@ -164,6 +165,10 @@ export function loadEmailConfig(): EmailConfig {
       },
       fromName: process.env.SMTP_FROM_NAME || undefined,
       autoSent: process.env.SMTP_AUTO_SENT === "true",
+      allowedFrom: (process.env.SMTP_ALLOWED_FROM || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
     };
   } catch (error) {
     if (v.isValiError(error)) {
