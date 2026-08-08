@@ -41,6 +41,12 @@ function fakeServices() {
     },
     smtp: {
       config: { smtp: { user: "me@example.com" }, autoSent: true, fromName: undefined },
+      // Mirrors SmtpService: an allowed address passes through, otherwise the
+      // account sender is used; the header is only formatted, never validated here.
+      resolveFromAddress: vi.fn((requested?: string) => requested?.trim() || "me@example.com"),
+      formatFromHeader: vi.fn((address: string, displayName?: string) =>
+        displayName ? `"${displayName}" <${address}>` : address,
+      ),
       composeRawMessage: vi.fn().mockResolvedValue(Buffer.from("raw")),
       sendRawMessage: vi.fn().mockResolvedValue({ messageId: "<sent@test.com>" }),
     },

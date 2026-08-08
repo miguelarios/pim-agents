@@ -256,10 +256,15 @@ describe("calendarTools", () => {
       );
 
       expect(result.isError).toBeUndefined();
-      expect(mockService.moveEvent).toHaveBeenCalledWith("mailbox/Work", "evt-1", "mailbox/Personal", {
-        url: "https://dav.example.com/cal/work/evt-1.ics",
-        etag: '"e1"',
-      });
+      expect(mockService.moveEvent).toHaveBeenCalledWith(
+        "mailbox/Work",
+        "evt-1",
+        "mailbox/Personal",
+        {
+          url: "https://dav.example.com/cal/work/evt-1.ics",
+          etag: '"e1"',
+        },
+      );
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.event.calendar_id).toBe("mailbox/Personal");
     });
