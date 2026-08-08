@@ -45,6 +45,7 @@ See [docs/tools/cal-mcp.md](../../docs/tools/cal-mcp.md) for full parameter and 
 | `get_event` | Get full event details by UID |
 | `create_event` | Create event with attendees, alarms, categories |
 | `update_event` | Update event by UID, including single recurrence instances |
+| `move_event` | Move an event to another calendar within the same account |
 | `delete_event` | Delete event by UID or single recurrence instance |
 | `create_events_batch` | Create multiple events at once |
 | `import_ics` | Import events from .ics content |

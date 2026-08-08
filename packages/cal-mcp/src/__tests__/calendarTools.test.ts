@@ -10,6 +10,7 @@ const mockService = {
   createEvent: vi.fn(),
   updateEvent: vi.fn(),
   deleteEvent: vi.fn(),
+  moveEvent: vi.fn(),
   findFreeSlots: vi.fn(),
   fetchRawCalendarObject: vi.fn(),
   getAccountEmail: vi.fn(() => "user@example.com"),
@@ -20,8 +21,8 @@ describe("calendarTools", () => {
     vi.clearAllMocks();
   });
 
-  it("exports 11 tool definitions", () => {
-    expect(CALENDAR_TOOLS).toHaveLength(11);
+  it("exports 12 tool definitions", () => {
+    expect(CALENDAR_TOOLS).toHaveLength(12);
     const names = CALENDAR_TOOLS.map((t) => t.name);
     expect(names).toContain("list_calendars");
     expect(names).toContain("list_events");
@@ -30,6 +31,7 @@ describe("calendarTools", () => {
     expect(names).toContain("get_event");
     expect(names).toContain("create_event");
     expect(names).toContain("update_event");
+    expect(names).toContain("move_event");
     expect(names).toContain("delete_event");
     expect(names).toContain("create_events_batch");
     expect(names).toContain("import_ics");
@@ -226,6 +228,42 @@ describe("calendarTools", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.event.uid).toBe("new-1");
+    });
+
+    it("move_event schema requires target_calendar", () => {
+      const tool = CALENDAR_TOOLS.find((t) => t.name === "move_event")!;
+      const props = (tool.inputSchema as any).properties;
+      expect(props.calendar).toBeDefined();
+      expect(props.uid).toBeDefined();
+      expect(props.target_calendar).toBeDefined();
+      expect((tool.inputSchema as any).required).toEqual(["calendar", "uid", "target_calendar"]);
+    });
+
+    it("move_event returns { event } envelope", async () => {
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: { uid: "evt-1", title: "Meeting" },
+        meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
+      });
+      mockService.moveEvent.mockResolvedValue({ uid: "evt-1", calendar_id: "mailbox/Personal" });
+
+      const result = await handleCalendarTool(
+        "move_event",
+        {
+          calendar: "mailbox/Work",
+          uid: "evt-1",
+          target_calendar: "mailbox/Personal",
+        },
+        mockService as any,
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.event.uid).toBe("evt-1");
+      expect(mockService.moveEvent).toHaveBeenCalledWith(
+        "mailbox/Work",
+        "evt-1",
+        "mailbox/Personal",
+        { url: "/cal/evt-1.ics", etag: '"e1"' },
+      );
     });
 
     it("delete_event returns { deleted, uid } envelope", async () => {

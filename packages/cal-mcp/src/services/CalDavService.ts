@@ -612,6 +612,102 @@ export class CalDavService {
     }
   }
 
+  async moveEvent(
+    calendarId: string,
+    uid: string,
+    targetCalendarId: string,
+    meta?: CalendarObjectMeta,
+  ): Promise<EventFull> {
+    const { account, calendarName } = this.resolveAccount(calendarId);
+    const target = this.resolveAccount(targetCalendarId);
+
+    if (account.id !== target.account.id) {
+      throw new CalendarError(
+        "Moving events across providers/accounts is not supported",
+        ErrorCode.WRITE_FAILED,
+        uid,
+      );
+    }
+
+    try {
+      const client = await this.getClient(account);
+
+      let url: string;
+      let etag: string | undefined;
+      if (meta?.url) {
+        url = meta.url;
+        etag = meta.etag;
+      } else {
+        const calendar = await this.findCalendar(client, calendarName, account.id);
+        const obj = await this.findCalendarObject(client, calendar, uid, calendarId);
+        url = obj.url;
+        etag = obj.etag;
+      }
+
+      const targetCalendar = await this.findCalendar(client, target.calendarName, account.id);
+      const sourceFilename = new URL(url).pathname.split("/").pop();
+      if (!sourceFilename) {
+        throw new CalendarError(
+          `Failed to derive calendar object filename for event "${uid}"`,
+          ErrorCode.WRITE_FAILED,
+          uid,
+        );
+      }
+
+      const targetCalendarUrl = new URL(targetCalendar.url, account.url).toString();
+      const destination = new URL(sourceFilename, targetCalendarUrl).toString();
+
+      const performMove = async (currentUrl: string, currentEtag?: string): Promise<Response> => {
+        const headers: Record<string, string> = {
+          Authorization: `Basic ${Buffer.from(`${account.username}:${account.password}`).toString("base64")}`,
+          Destination: destination,
+          Overwrite: "F",
+        };
+        if (currentEtag) {
+          headers["If-Match"] = currentEtag;
+        }
+        return fetch(currentUrl, {
+          method: "MOVE",
+          headers,
+        });
+      };
+
+      let response = await performMove(url, etag);
+
+      if (response.status === 412) {
+        const calendar = await this.findCalendar(client, calendarName, account.id);
+        const obj = await this.findCalendarObject(client, calendar, uid, calendarId);
+        url = obj.url;
+        etag = obj.etag;
+        response = await performMove(url, etag);
+      }
+
+      if (!response.ok) {
+        throw new CalendarError(
+          `Failed to move event: ${response.status} ${response.statusText}`,
+          ErrorCode.WRITE_FAILED,
+          uid,
+        );
+      }
+
+      deleteCachedObject(calendarId, uid);
+      try {
+        const relative = new URL(destination).pathname;
+        setCachedObject(targetCalendarId, uid, {
+          url: relative || destination,
+        });
+      } catch {
+        setCachedObject(targetCalendarId, uid, { url: destination });
+      }
+
+      return await this.getEvent(targetCalendarId, uid);
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      this.calendarsCache.delete(account.id);
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   async deleteEvent(calendarId: string, uid: string, meta?: CalendarObjectMeta): Promise<void> {
     const { account, calendarName } = this.resolveAccount(calendarId);
 

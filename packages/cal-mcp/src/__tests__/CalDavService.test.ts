@@ -950,6 +950,168 @@ describe("CalDavService", () => {
     });
   });
 
+  describe("moveEvent", () => {
+    it("moves a calendar object to another calendar in the same provider", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("@miguelarios/pim-core/ics");
+
+      (parseIcsEvents as any)
+        .mockReturnValueOnce([{ uid: "evt-1" }])
+        .mockReturnValueOnce([{ uid: "evt-1" }])
+        .mockReturnValueOnce([
+          {
+            uid: "evt-1",
+            title: "Moved Meeting",
+            start: "2026-03-10T14:00:00.000Z",
+            end: "2026-03-10T15:00:00.000Z",
+            all_day: false,
+            location: null,
+            description: null,
+            status: null,
+            availability: null,
+            url: null,
+            attendees: [],
+            organizer: null,
+            recurrence_rule: null,
+            is_recurring: false,
+            created: null,
+            last_modified: null,
+            alarms: [],
+            categories: [],
+            geo: null,
+          },
+        ]);
+
+      __mockClient.fetchCalendarObjects
+        .mockResolvedValueOnce([
+          { data: "...", url: "https://dav.example.com/cal/work/evt-1.ics", etag: '"e1"' },
+        ])
+        .mockResolvedValueOnce([
+          { data: "...", url: "https://dav.example.com/cal/personal/evt-1.ics", etag: '"e2"' },
+        ]);
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue({ ok: true, status: 201, statusText: "Created" } as Response);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await service.moveEvent("mailbox/Work", "evt-1", "mailbox/Personal");
+
+      expect(result.uid).toBe("evt-1");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://dav.example.com/cal/work/evt-1.ics",
+        expect.objectContaining({
+          method: "MOVE",
+          headers: expect.objectContaining({
+            Destination: "https://dav.mailbox.org/caldav/personal/evt-1.ics",
+            Overwrite: "F",
+            "If-Match": '"e1"',
+          }),
+        }),
+      );
+      vi.unstubAllGlobals();
+    });
+
+    it("rejects moves across providers/accounts", async () => {
+      await expect(service.moveEvent("mailbox/Work", "evt-1", "nextcloud/Work")).rejects.toThrow(
+        "Moving events across providers/accounts is not supported",
+      );
+    });
+
+    it("retries once with a fresh etag on 412 and succeeds", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("@miguelarios/pim-core/ics");
+
+      (parseIcsEvents as any)
+        .mockReturnValueOnce([{ uid: "evt-1" }])
+        .mockReturnValueOnce([{ uid: "evt-1" }])
+        .mockReturnValueOnce([{ uid: "evt-1" }])
+        .mockReturnValueOnce([
+          {
+            uid: "evt-1",
+            title: "Moved Meeting",
+            start: "2026-03-10T14:00:00.000Z",
+            end: "2026-03-10T15:00:00.000Z",
+            all_day: false,
+            location: null,
+            description: null,
+            status: null,
+            availability: null,
+            url: null,
+            attendees: [],
+            organizer: null,
+            recurrence_rule: null,
+            is_recurring: false,
+            created: null,
+            last_modified: null,
+            alarms: [],
+            categories: [],
+            geo: null,
+          },
+        ]);
+
+      __mockClient.fetchCalendarObjects
+        .mockResolvedValueOnce([
+          { data: "...", url: "https://dav.example.com/cal/work/evt-1.ics", etag: '"stale"' },
+        ])
+        .mockResolvedValueOnce([
+          { data: "...", url: "https://dav.example.com/cal/work/evt-1.ics", etag: '"fresh"' },
+        ])
+        .mockResolvedValueOnce([
+          { data: "...", url: "https://dav.example.com/cal/personal/evt-1.ics", etag: '"e2"' },
+        ]);
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 412,
+          statusText: "Precondition Failed",
+        } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 201, statusText: "Created" } as Response);
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await service.moveEvent("mailbox/Work", "evt-1", "mailbox/Personal");
+
+      expect(result.uid).toBe("evt-1");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        "https://dav.example.com/cal/work/evt-1.ics",
+        expect.objectContaining({
+          headers: expect.objectContaining({ "If-Match": '"stale"' }),
+        }),
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "https://dav.example.com/cal/work/evt-1.ics",
+        expect.objectContaining({
+          headers: expect.objectContaining({ "If-Match": '"fresh"' }),
+        }),
+      );
+      vi.unstubAllGlobals();
+    });
+
+    it("throws CalendarError when MOVE fails", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = await import("@miguelarios/pim-core/ics");
+      (parseIcsEvents as any).mockReturnValue([{ uid: "evt-1" }]);
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "...", url: "https://dav.example.com/cal/work/evt-1.ics", etag: '"e1"' },
+      ]);
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue({ ok: false, status: 409, statusText: "Conflict" } as Response);
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(service.moveEvent("mailbox/Work", "evt-1", "mailbox/Personal")).rejects.toThrow(
+        "Failed to move event: 409 Conflict",
+      );
+      vi.unstubAllGlobals();
+    });
+  });
+
   describe("deleteEvent", () => {
     it("deletes a calendar object by UID", async () => {
       const { __mockClient } = (await import("tsdav")) as any;

@@ -313,6 +313,29 @@ export const CALENDAR_TOOLS: Tool[] = [
     },
   },
   {
+    name: "move_event",
+    description:
+      "Move an event to another calendar, equivalent to reassigning its calendar in a CalDAV client.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        calendar: {
+          type: "string",
+          description: "Current provider-prefixed calendar ID",
+        },
+        uid: {
+          type: "string",
+          description: "Event UID to move",
+        },
+        target_calendar: {
+          type: "string",
+          description: "Destination provider-prefixed calendar ID",
+        },
+      },
+      required: ["calendar", "uid", "target_calendar"],
+    },
+  },
+  {
     name: "delete_event",
     description: "Delete a calendar event by UID.",
     annotations: { destructiveHint: true },
@@ -767,6 +790,20 @@ export async function handleCalendarTool(
             url: rawObj.url,
             etag: rawObj.etag,
           },
+        );
+        return ok({ event });
+      }
+
+      case "move_event": {
+        const { meta } = await service.getEventWithMeta(
+          args.calendar as string,
+          args.uid as string,
+        );
+        const event = await service.moveEvent(
+          args.calendar as string,
+          args.uid as string,
+          args.target_calendar as string,
+          meta,
         );
         return ok({ event });
       }
