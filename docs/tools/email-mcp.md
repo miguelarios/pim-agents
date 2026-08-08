@@ -72,7 +72,7 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
 | `saveToDrafts` | boolean | | When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false. |
-| `from` | string | | Optional visible From address. Must be either `SMTP_USER` or listed in `SMTP_ALLOWED_FROM`. SMTP envelope delivery still uses the account sender. |
+| `from` | string | | Optional visible From address. Must be either `SMTP_USER` or listed in `SMTP_ALLOWED_FROM`; anything else is rejected. SMTP envelope delivery still uses the account sender, so the address should share a domain with `SMTP_USER` — see the deliverability note below. |
 | `fromName` | string | | Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. |
 
 **Output**
@@ -88,6 +88,17 @@ When sending (default):
 ```
 
 Errors with `subject is required when not replying to an existing email` if no subject and no `replyToUid`.
+
+**Deliverability when using `from`**
+
+`from` sets the visible `From:` header; the SMTP envelope sender remains the authenticated account. DMARC requires
+the visible `From:` domain to align with a domain that passed SPF or DKIM, so an allowlisted address on the *same*
+domain as `SMTP_USER` delivers normally, while one on a *different* domain is likely to be spam-foldered or rejected
+outright when that domain publishes `p=quarantine` or `p=reject`.
+
+If the goal is only to distinguish which agent sent a message, prefer `fromName` — it changes the display name
+without touching the address, and carries no deliverability risk.
+
 
 ## send_draft
 

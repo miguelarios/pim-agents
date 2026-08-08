@@ -88,7 +88,28 @@ Optional email env vars:
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. **Path-based attachments (`attachments[].path`) are rejected unless this is set**, and only files resolving inside it are allowed (a guard against exfiltrating arbitrary files via prompt injection). Use `attachments[].content` for inline content without setting this.
 - `URL_RESOLVE_DISABLE` — set to `1` or `true` to skip all network link-resolution when rendering email to markdown (avoids outbound requests to links in a message). Link/tracker URLs are left unresolved in the output.
 - `SMTP_AUTO_SENT` — set to `true` if your provider auto-files sent mail into the Sent folder, so the server skips the extra IMAP append.
-- `SMTP_ALLOWED_FROM` — comma-separated allowlist of additional visible `From` addresses that `send_email` may use. The SMTP envelope sender is always the authenticated account; only the visible header changes.
+- `SMTP_ALLOWED_FROM` — comma-separated allowlist of additional visible `From` addresses that `send_email` may use. The SMTP envelope sender is always the authenticated account; only the visible header changes. **Keep allowlisted addresses on a domain your SMTP account can authenticate for** — see [Deliverability: SPF, DKIM and DMARC](#deliverability-spf-dkim-and-dmarc).
+
+#### Deliverability: SPF, DKIM and DMARC
+
+`SMTP_ALLOWED_FROM` changes the **visible** `From:` header only. The SMTP envelope sender stays the authenticated
+`SMTP_USER`, so mail is still submitted as your account.
+
+That split is what receiving servers scrutinise. DMARC requires the visible `From:` domain to *align* with a domain
+that passed SPF (checked against the envelope sender) or DKIM (checked against the signing domain). So:
+
+- **Same domain — safe.** `SMTP_USER=alice@example.com` with `SMTP_ALLOWED_FROM=team@example.com` aligns, because
+  both are `example.com`. This is the intended use: several agents sharing one mailbox under a shared identity.
+- **Different domain — expect problems.** `SMTP_USER=alice@example.com` with `SMTP_ALLOWED_FROM=bob@example.org`
+  does *not* align. If `example.org` publishes a DMARC policy of `p=quarantine` or `p=reject`, recipients will spam-folder
+  or bounce the message, and you may harm the sending reputation of both domains.
+
+If you genuinely need to send as another domain, authorise it properly at the provider — add the domain to your mail
+account, publish an SPF record covering the provider, and enable DKIM signing for it — rather than only adding it to
+this allowlist. The allowlist controls what this server *permits*; it cannot make a receiving server trust you.
+
+`SMTP_FROM_NAME` and the per-call `fromName` only change the display name, never the address, so they carry no
+deliverability risk.
 
 ### Calendar
 
