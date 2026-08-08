@@ -1,6 +1,36 @@
 import { mkdirSync, rmSync } from "node:fs";
+import { dispatchTool } from "@miguelarios/pim-core/mcp";
+import type { ServerContext } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EMAIL_TOOLS, handleEmailTool } from "../tools/emailTools.js";
+import { EMAIL_TOOLS } from "../tools/emailTools.js";
+
+/**
+ * Answers every confirmation prompt this package can raise with "yes". Used as
+ * the default so the suites below exercise send/delete behaviour rather than
+ * the gate; the gate has its own tests, which pass `NOT_CONFIRMED`.
+ */
+const AUTO_CONFIRM = {
+  mcpReq: {
+    inputResponses: Object.fromEntries(
+      ["confirm_send_email", "confirm_send_draft", "confirm_delete_email"].map((key) => [
+        key,
+        { action: "accept", content: { confirm: true } },
+      ]),
+    ),
+  },
+} as unknown as ServerContext;
+
+/** A first-round context: no answers carried yet. */
+const NOT_CONFIRMED = { mcpReq: { inputResponses: undefined } } as unknown as ServerContext;
+
+const handleEmailTool = (
+  name: string,
+  args: Record<string, unknown>,
+  imap: unknown,
+  smtp: unknown,
+  ctx: ServerContext = AUTO_CONFIRM,
+  // test-only loose typing over a heterogeneous result
+) => dispatchTool(EMAIL_TOOLS, name, args, { imap, smtp } as any, ctx) as Promise<any>;
 
 // Mock ImapService
 const mockFetchEmail = vi.fn();
@@ -144,7 +174,124 @@ describe("EMAIL_TOOLS definitions", () => {
       expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
     }
     expect(byName.delete_email.annotations?.destructiveHint).toBe(true);
-    expect(byName.send_email.annotations?.readOnlyHint).toBeFalsy();
+    expect(byName.send_email.annotations?.readOnlyHint).toBe(false);
+    expect(byName.send_email.annotations?.idempotentHint).toBe(false);
+    expect(byName.send_email.annotations?.openWorldHint).toBe(true);
+  });
+
+  it("every tool declares a title, an output schema and all four annotations", () => {
+    for (const tool of EMAIL_TOOLS) {
+      expect(tool.title, tool.name).toBeTruthy();
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      for (const hint of [
+        "readOnlyHint",
+        "destructiveHint",
+        "idempotentHint",
+        "openWorldHint",
+      ] as const) {
+        expect(typeof tool.annotations[hint], `${tool.name}.${hint}`).toBe("boolean");
+      }
+    }
+  });
+
+  it("uses tool names the spec allows", () => {
+    for (const tool of EMAIL_TOOLS) {
+      expect(tool.name, tool.name).toMatch(/^[A-Za-z0-9_.-]{1,128}$/);
+    }
+  });
+});
+
+describe("confirmation gates", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockComposeRawMessage.mockResolvedValue(Buffer.from("raw-message"));
+    mockSendRawMessage.mockResolvedValue({
+      messageId: "<sent-1@test.com>",
+      accepted: ["r@test.com"],
+      rejected: [],
+    });
+    mockGetSpecialUseFolder.mockResolvedValue("Drafts");
+    mockAppendMessage.mockResolvedValue({ uid: 100 });
+    mockDeleteEmails.mockResolvedValue(undefined);
+  });
+
+  it("send_email asks before putting mail on the wire", async () => {
+    const result = await handleEmailTool(
+      "send_email",
+      { to: ["r@test.com"], subject: "Hi", text: "Hello" },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.resultType).toBe("input_required");
+    expect(result.inputRequests.confirm_send_email).toBeDefined();
+    expect(mockSendRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("send_email does not ask when only saving a draft", async () => {
+    const result = await handleEmailTool(
+      "send_email",
+      { to: ["r@test.com"], subject: "Hi", text: "Hello", saveToDrafts: true },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.resultType).toBeUndefined();
+    expect(JSON.parse(result.content[0].text).status).toBe("draft");
+    expect(mockSendRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("send_email does not send when the user declines", async () => {
+    const declined = {
+      mcpReq: { inputResponses: { confirm_send_email: { action: "decline" } } },
+    } as unknown as ServerContext;
+    const result = await handleEmailTool(
+      "send_email",
+      { to: ["r@test.com"], subject: "Hi", text: "Hello" },
+      mockImapService,
+      mockSmtpService,
+      declined,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.resultType).toBeUndefined();
+    expect(mockSendRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("send_draft asks before sending", async () => {
+    const result = await handleEmailTool(
+      "send_draft",
+      { uid: 7 },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.resultType).toBe("input_required");
+    expect(mockSendRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("delete_email asks only for a permanent delete", async () => {
+    const trashed = await handleEmailTool(
+      "delete_email",
+      { uids: [1] },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+    expect(trashed.resultType).toBeUndefined();
+    expect(JSON.parse(trashed.content[0].text).status).toBe("moved_to_trash");
+
+    const permanent = await handleEmailTool(
+      "delete_email",
+      { uids: [1], permanent: true },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+    expect(permanent.resultType).toBe("input_required");
   });
 });
 

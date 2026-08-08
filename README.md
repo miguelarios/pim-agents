@@ -2,6 +2,14 @@
 
 AI agent tooling for email (IMAP/SMTP), calendar (CalDAV), and contacts (CardDAV). Three independent MCP servers built on open protocols.
 
+## Protocol support
+
+All three servers speak MCP revision **2026-07-28** over stdio, and continue to serve 2025-era clients from the same tool definitions — no configuration needed either way.
+
+Every tool declares a `title`, a full set of behaviour annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), and an `outputSchema`; results carry validated `structuredContent` alongside the serialized JSON.
+
+Irreversible operations — `send_email`, `send_draft`, a permanent `delete_email`, `delete_contact`, and any `delete_event` that removes the calendar object — ask the user to confirm before they run, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
+
 ## Packages
 
 | Package | Description | Install |
@@ -18,18 +26,18 @@ AI agent tooling for email (IMAP/SMTP), calendar (CalDAV), and contacts (CardDAV
 |------|-------------|
 | `search_emails` | Search and filter emails by folder, sender, subject, date, flags |
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata |
-| `send_email` | Compose and send via SMTP, reply with threading, or save as draft |
-| `send_draft` | Send an existing draft from the Drafts folder |
+| `send_email` | Compose and send via SMTP, reply with threading, or save as draft (confirms before sending) |
+| `send_draft` | Send an existing draft from the Drafts folder (confirms first) |
 | `move_email` | Move emails between folders |
 | `mark_email` | Set/unset flags (read, unread, flagged) |
-| `delete_email` | Move to trash or permanently delete |
+| `delete_email` | Move to trash, or permanently delete (confirms first) |
 | `list_folders` | List all IMAP folders with special-use flags |
 | `create_folder` | Create an IMAP folder |
-| `download_attachment` | Download attachment by email UID and part ID |
-| `get_email_raw` | Export email as raw .eml |
+| `download_attachment` | Download attachment by email UID and part ID, as an embedded binary resource |
+| `get_email_raw` | Export email as raw .eml, as an embedded `message/rfc822` resource |
 | `get_folder_status` | Get total and unread message counts for a folder |
 
-### [Calendar (11 tools)](docs/tools/cal-mcp.md)
+### [Calendar (12 tools)](docs/tools/cal-mcp.md)
 
 | Tool | Description |
 |------|-------------|
@@ -40,7 +48,8 @@ AI agent tooling for email (IMAP/SMTP), calendar (CalDAV), and contacts (CardDAV
 | `get_event` | Get full event details by UID |
 | `create_event` | Create event with attendees, alarms, categories |
 | `update_event` | Update event by UID, including single recurrence instances |
-| `delete_event` | Delete event by UID or single recurrence instance |
+| `move_event` | Move an event to another calendar within the same account |
+| `delete_event` | Delete event by UID (confirms first) or exclude a single recurrence instance |
 | `create_events_batch` | Create multiple events at once |
 | `import_ics` | Import events from .ics content |
 | `find_free_slots` | Find available time slots across calendars |
@@ -53,7 +62,7 @@ AI agent tooling for email (IMAP/SMTP), calendar (CalDAV), and contacts (CardDAV
 | `get_contact` | Get full contact details by UID |
 | `create_contact` | Create a new contact with typed fields |
 | `update_contact` | Update an existing contact (merge-based) |
-| `delete_contact` | Delete a contact by UID |
+| `delete_contact` | Delete a contact by UID (confirms first) |
 | `resolve_contact` | Given a name, return email address |
 
 ## Configuration

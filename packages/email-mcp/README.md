@@ -2,6 +2,13 @@
 
 MCP server for email via IMAP/SMTP — search, read, send, and manage emails and folders.
 
+## Protocol support
+
+Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
+Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
+
+`send_email` (when sending, not when saving a draft), `send_draft`, and `delete_email` with `permanent: true` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
+
 ## Usage
 
 ```bash

@@ -2,6 +2,13 @@
 
 MCP server for contacts via CardDAV — CRUD contacts, search, resolve names to emails.
 
+## Protocol support
+
+Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
+Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
+
+`delete_contact` asks the user to confirm before deleting. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
+
 ## Usage
 
 ```bash

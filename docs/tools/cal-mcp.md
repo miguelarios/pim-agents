@@ -4,6 +4,8 @@
 
 > Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts`. Output shapes from `packages/cal-mcp/src/services/CalDavService.ts`.
 
+> All results carry validated `structuredContent` matching the tool's advertised `outputSchema`, with the same JSON serialized into a text block for clients that do not read structured output. Errors are returned as `isError: true` with a `{ error, message, retryable }` body.
+
 ## list_calendars
 
 List all calendars across all configured CalDAV providers. Returns provider-prefixed IDs (e.g., `mailbox/work`).
@@ -161,6 +163,8 @@ When `span: "this"` is applied to a recurring event, the response reflects the m
 ## delete_event
 
 Delete a calendar event by UID.
+
+> **Asks for confirmation.** Gated whenever the calendar object is actually removed — that is `span: "all"`, and also `span: "this"` on a **non-recurring** event, where there is no occurrence to exclude. Only excluding one occurrence of a recurring event (`span: "this"` on a recurring event, which adds an `EXDATE`) is ungated, since it can be undone by re-adding the occurrence. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 

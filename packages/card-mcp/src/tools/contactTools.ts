@@ -5,17 +5,86 @@ import {
   ErrorCode,
   type PostalAddress,
   type TypedValue,
-  toPimError,
 } from "@miguelarios/pim-core";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import type { CardDavService } from "../services/CardDavService.js";
+import {
+  contactListSchema,
+  contactSchema,
+  resolveResultSchema,
+  writeResultSchema,
+} from "./contactSchemas.js";
 
-export const CONTACT_TOOLS: Tool[] = [
+const ADDRESS_BOOK_PROP = {
+  type: "string",
+  description: "Address book URL. If omitted, uses the first available address book.",
+} as const;
+
+const DETAIL_LEVEL_PROP = {
+  type: "string",
+  enum: ["summary", "full"],
+  description:
+    "Level of detail. 'summary' (default) omits photo binary and raw otherProperties. 'full' returns the complete parsed vCard shape.",
+} as const;
+
+const TYPED_VALUE_ITEMS = (typeDesc: string, valueDesc: string) =>
+  ({
+    type: "object",
+    properties: {
+      type: { type: "string", description: typeDesc },
+      value: { type: "string", description: valueDesc },
+    },
+    required: ["value"],
+  }) as const;
+
+const ADDRESS_ITEMS = {
+  type: "object",
+  properties: {
+    type: { type: "string", description: "Address type (e.g., 'home', 'work')" },
+    street: { type: "string", description: "Street address" },
+    city: { type: "string", description: "City" },
+    state: { type: "string", description: "State/province" },
+    postalCode: { type: "string", description: "Postal/ZIP code" },
+    country: { type: "string", description: "Country" },
+  },
+} as const;
+
+type ListArgs = { query?: string; addressBook?: string; detail_level?: "summary" | "full" };
+type GetArgs = { uid: string; addressBook?: string; detail_level?: "summary" | "full" };
+type ContactFields = {
+  fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  emails?: TypedValue[];
+  phones?: TypedValue[];
+  addresses?: PostalAddress[];
+  urls?: TypedValue[];
+  organization?: string;
+  title?: string;
+  role?: string;
+  nickname?: string;
+  birthday?: string;
+  categories?: string[];
+  note?: string;
+  addressBook?: string;
+};
+type CreateArgs = ContactFields & { fullName: string };
+type UpdateArgs = ContactFields & { uid: string };
+type DeleteArgs = { uid: string; addressBook?: string };
+type ResolveArgs = { name: string; addressBook?: string };
+
+export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
   {
     name: "list_contacts",
+    title: "List Contacts",
     description:
       "List or search contacts. Returns all contacts if no query provided, or filters by name/email/phone/org when query is given.",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -24,47 +93,73 @@ export const CONTACT_TOOLS: Tool[] = [
           description:
             "Optional search query to filter contacts by name, email, phone, or organization",
         },
-        addressBook: {
-          type: "string",
-          description: "Address book URL. If omitted, uses the first available address book.",
-        },
-        detail_level: {
-          type: "string",
-          enum: ["summary", "full"],
-          description:
-            "Level of detail. 'summary' (default) omits photo binary and raw otherProperties. 'full' returns the complete parsed vCard shape.",
-        },
+        addressBook: ADDRESS_BOOK_PROP,
+        detail_level: DETAIL_LEVEL_PROP,
       },
+    },
+    outputSchema: contactListSchema,
+    handler: async (args: ListArgs, service) => {
+      try {
+        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const detailLevel = args.detail_level ?? "summary";
+        const contacts = args.query
+          ? await service.searchContacts(addressBookUrl, args.query, { detailLevel })
+          : await service.fetchContacts(addressBookUrl, { detailLevel });
+        return structured({ contacts, count: contacts.length });
+      } catch (err) {
+        return toolError(err);
+      }
     },
   },
   {
     name: "get_contact",
+    title: "Get Contact",
     description: "Get full details of a single contact by UID.",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
-        uid: {
-          type: "string",
-          description: "The unique identifier (UID) of the contact",
-        },
-        addressBook: {
-          type: "string",
-          description: "Address book URL. If omitted, uses the first available address book.",
-        },
-        detail_level: {
-          type: "string",
-          enum: ["summary", "full"],
-          description:
-            "Level of detail. 'summary' (default) omits photo binary and raw otherProperties. 'full' returns the complete parsed vCard shape.",
-        },
+        uid: { type: "string", description: "The unique identifier (UID) of the contact" },
+        addressBook: ADDRESS_BOOK_PROP,
+        detail_level: DETAIL_LEVEL_PROP,
       },
       required: ["uid"],
+    },
+    outputSchema: contactSchema,
+    handler: async (args: GetArgs, service) => {
+      try {
+        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const detailLevel = args.detail_level ?? "summary";
+        const contacts = await service.fetchContacts(addressBookUrl, { detailLevel });
+        const contact = contacts.find((c) => c.uid === args.uid);
+        if (!contact) {
+          throw new ContactError(
+            `Contact ${args.uid} not found`,
+            ErrorCode.CONTACT_NOT_FOUND,
+            args.uid,
+          );
+        }
+        return structured(contact);
+      } catch (err) {
+        return toolError(err);
+      }
     },
   },
   {
     name: "create_contact",
+    title: "Create Contact",
     description: "Create a new contact with the specified details.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -73,53 +168,22 @@ export const CONTACT_TOOLS: Tool[] = [
         lastName: { type: "string", description: "Last/family name" },
         emails: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "Email type (e.g., 'home', 'work')" },
-              value: { type: "string", description: "Email address" },
-            },
-            required: ["value"],
-          },
+          items: TYPED_VALUE_ITEMS("Email type (e.g., 'home', 'work')", "Email address"),
           description: "Email addresses with optional type",
         },
         phones: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "Phone type (e.g., 'cell', 'home', 'work')" },
-              value: { type: "string", description: "Phone number" },
-            },
-            required: ["value"],
-          },
+          items: TYPED_VALUE_ITEMS("Phone type (e.g., 'cell', 'home', 'work')", "Phone number"),
           description: "Phone numbers with optional type",
         },
         addresses: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "Address type (e.g., 'home', 'work')" },
-              street: { type: "string", description: "Street address" },
-              city: { type: "string", description: "City" },
-              state: { type: "string", description: "State/province" },
-              postalCode: { type: "string", description: "Postal/ZIP code" },
-              country: { type: "string", description: "Country" },
-            },
-          },
+          items: ADDRESS_ITEMS,
           description: "Postal addresses",
         },
         urls: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "URL type (e.g., 'home', 'work')" },
-              value: { type: "string", description: "URL" },
-            },
-            required: ["value"],
-          },
+          items: TYPED_VALUE_ITEMS("URL type (e.g., 'home', 'work')", "URL"),
           description: "URLs with optional type",
         },
         organization: { type: "string", description: "Company/organization name" },
@@ -133,18 +197,54 @@ export const CONTACT_TOOLS: Tool[] = [
           description: "Contact categories/tags",
         },
         note: { type: "string", description: "Free-text note" },
-        addressBook: {
-          type: "string",
-          description: "Address book URL. If omitted, uses the first available address book.",
-        },
+        addressBook: ADDRESS_BOOK_PROP,
       },
       required: ["fullName"],
+    },
+    outputSchema: writeResultSchema,
+    handler: async (args: CreateArgs, service) => {
+      try {
+        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const contact: Contact = {
+          uid: randomUUID(),
+          fullName: args.fullName,
+          firstName: args.firstName,
+          lastName: args.lastName,
+          emails: args.emails ?? [],
+          phones: args.phones ?? [],
+          addresses: args.addresses ?? [],
+          urls: args.urls ?? [],
+          organization: args.organization,
+          title: args.title,
+          role: args.role,
+          nickname: args.nickname,
+          birthday: args.birthday,
+          categories: args.categories,
+          note: args.note,
+          otherProperties: [],
+        };
+        await service.createContact(addressBookUrl, contact);
+        return structured({
+          status: "created" as const,
+          uid: contact.uid,
+          fullName: contact.fullName,
+        });
+      } catch (err) {
+        return toolError(err);
+      }
     },
   },
   {
     name: "update_contact",
+    title: "Update Contact",
     description:
       "Update an existing contact. Only provided fields are changed (merge update). Omitted fields keep their current values.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -154,53 +254,22 @@ export const CONTACT_TOOLS: Tool[] = [
         lastName: { type: "string", description: "New last name" },
         emails: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "Email type (e.g., 'home', 'work')" },
-              value: { type: "string", description: "Email address" },
-            },
-            required: ["value"],
-          },
+          items: TYPED_VALUE_ITEMS("Email type (e.g., 'home', 'work')", "Email address"),
           description: "New email addresses with optional type (replaces existing)",
         },
         phones: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "Phone type (e.g., 'cell', 'home', 'work')" },
-              value: { type: "string", description: "Phone number" },
-            },
-            required: ["value"],
-          },
+          items: TYPED_VALUE_ITEMS("Phone type (e.g., 'cell', 'home', 'work')", "Phone number"),
           description: "New phone numbers with optional type (replaces existing)",
         },
         addresses: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "Address type (e.g., 'home', 'work')" },
-              street: { type: "string", description: "Street address" },
-              city: { type: "string", description: "City" },
-              state: { type: "string", description: "State/province" },
-              postalCode: { type: "string", description: "Postal/ZIP code" },
-              country: { type: "string", description: "Country" },
-            },
-          },
+          items: ADDRESS_ITEMS,
           description: "New postal addresses (replaces existing)",
         },
         urls: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", description: "URL type (e.g., 'home', 'work')" },
-              value: { type: "string", description: "URL" },
-            },
-            required: ["value"],
-          },
+          items: TYPED_VALUE_ITEMS("URL type (e.g., 'home', 'work')", "URL"),
           description: "New URLs with optional type (replaces existing)",
         },
         organization: { type: "string", description: "New organization" },
@@ -214,151 +283,112 @@ export const CONTACT_TOOLS: Tool[] = [
           description: "New contact categories/tags (replaces existing)",
         },
         note: { type: "string", description: "New note" },
-        addressBook: {
-          type: "string",
-          description: "Address book URL. If omitted, uses the first available address book.",
-        },
+        addressBook: ADDRESS_BOOK_PROP,
       },
       required: ["uid"],
+    },
+    outputSchema: writeResultSchema,
+    handler: async (args: UpdateArgs, service) => {
+      try {
+        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const updates: Partial<Omit<Contact, "uid" | "otherProperties">> = {};
+        const fields = [
+          "fullName",
+          "firstName",
+          "lastName",
+          "emails",
+          "phones",
+          "addresses",
+          "urls",
+          "organization",
+          "title",
+          "role",
+          "nickname",
+          "birthday",
+          "categories",
+          "note",
+        ] as const;
+        for (const field of fields) {
+          if (args[field] !== undefined) {
+            // field-by-field copy across a union of value types
+            (updates as any)[field] = args[field];
+          }
+        }
+
+        await service.updateContact(addressBookUrl, args.uid, updates);
+        return structured({ status: "updated" as const, uid: args.uid });
+      } catch (err) {
+        return toolError(err);
+      }
     },
   },
   {
     name: "delete_contact",
-    description: "Delete a contact by UID. This action cannot be undone.",
-    annotations: { destructiveHint: true },
+    title: "Delete Contact",
+    description:
+      "Delete a contact by UID. This action cannot be undone, and asks the user to confirm before deleting.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
         uid: { type: "string", description: "The UID of the contact to delete" },
-        addressBook: {
-          type: "string",
-          description: "Address book URL. If omitted, uses the first available address book.",
-        },
+        addressBook: ADDRESS_BOOK_PROP,
       },
       required: ["uid"],
+    },
+    outputSchema: writeResultSchema,
+    handler: async (args: DeleteArgs, service, ctx) => {
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_delete_contact",
+        `Permanently delete contact ${args.uid}? This cannot be undone.`,
+      );
+      if (gate.status === "interrupt") return gate.result;
+
+      try {
+        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        await service.deleteContact(addressBookUrl, args.uid);
+        return structured({ status: "deleted" as const, uid: args.uid });
+      } catch (err) {
+        return toolError(err);
+      }
     },
   },
   {
     name: "resolve_contact",
+    title: "Resolve Contact to Email",
     description:
       "Given a person's name, resolve to email. Returns { status: 'resolved', fullName, email } on a single match; { status: 'ambiguous', candidates: [...] } when multiple contacts match (caller must disambiguate); { status: 'not_found', message } when no contact with email matches.",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
-        name: {
-          type: "string",
-          description: "Name to search for (partial matches allowed)",
-        },
-        addressBook: {
-          type: "string",
-          description: "Address book URL. If omitted, uses the first available address book.",
-        },
+        name: { type: "string", description: "Name to search for (partial matches allowed)" },
+        addressBook: ADDRESS_BOOK_PROP,
       },
       required: ["name"],
     },
+    outputSchema: resolveResultSchema,
+    handler: async (args: ResolveArgs, service) => {
+      try {
+        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        return structured(await service.resolveContact(addressBookUrl, args.name));
+      } catch (err) {
+        return toolError(err);
+      }
+    },
   },
 ];
-
-export async function handleContactTool(
-  name: string,
-  args: Record<string, unknown>,
-  service: CardDavService,
-): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
-  try {
-    const addressBookUrl = await resolveAddressBook(
-      args.addressBook as string | undefined,
-      service,
-    );
-
-    switch (name) {
-      case "list_contacts": {
-        const query = args.query as string | undefined;
-        const detailLevel = (args.detail_level as "summary" | "full" | undefined) ?? "summary";
-        const contacts = query
-          ? await service.searchContacts(addressBookUrl, query, { detailLevel })
-          : await service.fetchContacts(addressBookUrl, { detailLevel });
-        return ok(JSON.stringify(contacts, null, 2));
-      }
-
-      case "get_contact": {
-        const uid = args.uid as string;
-        const detailLevel = (args.detail_level as "summary" | "full" | undefined) ?? "summary";
-        const contacts = await service.fetchContacts(addressBookUrl, { detailLevel });
-        const contact = contacts.find((c) => c.uid === uid);
-        if (!contact) {
-          throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
-        }
-        return ok(JSON.stringify(contact, null, 2));
-      }
-
-      case "create_contact": {
-        const contact: Contact = {
-          uid: randomUUID(),
-          fullName: args.fullName as string,
-          firstName: args.firstName as string | undefined,
-          lastName: args.lastName as string | undefined,
-          emails: (args.emails as TypedValue[]) ?? [],
-          phones: (args.phones as TypedValue[]) ?? [],
-          addresses: (args.addresses as PostalAddress[]) ?? [],
-          urls: (args.urls as TypedValue[]) ?? [],
-          organization: args.organization as string | undefined,
-          title: args.title as string | undefined,
-          role: args.role as string | undefined,
-          nickname: args.nickname as string | undefined,
-          birthday: args.birthday as string | undefined,
-          categories: args.categories as string[] | undefined,
-          note: args.note as string | undefined,
-          otherProperties: [],
-        };
-        await service.createContact(addressBookUrl, contact);
-        return ok(
-          JSON.stringify({ status: "created", uid: contact.uid, fullName: contact.fullName }),
-        );
-      }
-
-      case "update_contact": {
-        const uid = args.uid as string;
-        const updates: Partial<Omit<Contact, "uid" | "otherProperties">> = {};
-        if (args.fullName !== undefined) updates.fullName = args.fullName as string;
-        if (args.firstName !== undefined) updates.firstName = args.firstName as string;
-        if (args.lastName !== undefined) updates.lastName = args.lastName as string;
-        if (args.emails !== undefined) updates.emails = args.emails as TypedValue[];
-        if (args.phones !== undefined) updates.phones = args.phones as TypedValue[];
-        if (args.addresses !== undefined) updates.addresses = args.addresses as PostalAddress[];
-        if (args.urls !== undefined) updates.urls = args.urls as TypedValue[];
-        if (args.organization !== undefined) updates.organization = args.organization as string;
-        if (args.title !== undefined) updates.title = args.title as string;
-        if (args.role !== undefined) updates.role = args.role as string;
-        if (args.nickname !== undefined) updates.nickname = args.nickname as string;
-        if (args.birthday !== undefined) updates.birthday = args.birthday as string;
-        if (args.categories !== undefined) updates.categories = args.categories as string[];
-        if (args.note !== undefined) updates.note = args.note as string;
-
-        await service.updateContact(addressBookUrl, uid, updates);
-        return ok(JSON.stringify({ status: "updated", uid }));
-      }
-
-      case "delete_contact": {
-        const uid = args.uid as string;
-        await service.deleteContact(addressBookUrl, uid);
-        return ok(JSON.stringify({ status: "deleted", uid }));
-      }
-
-      case "resolve_contact": {
-        const name = args.name as string;
-        const result = await service.resolveContact(addressBookUrl, name);
-        return ok(JSON.stringify(result));
-      }
-
-      default:
-        return error(`Unknown tool: ${name}`);
-    }
-  } catch (err) {
-    const pimError = toPimError(err instanceof Error ? err : new Error(String(err)));
-    return error(`${pimError.message}${pimError.isRetryable ? " (retryable)" : ""}`);
-  }
-}
 
 async function resolveAddressBook(
   explicit: string | undefined,
@@ -370,12 +400,4 @@ async function resolveAddressBook(
     throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
   }
   return books[0].url;
-}
-
-function ok(text: string) {
-  return { content: [{ type: "text" as const, text }] };
-}
-
-function error(text: string) {
-  return { content: [{ type: "text" as const, text }], isError: true };
 }

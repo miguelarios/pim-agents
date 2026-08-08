@@ -4,6 +4,8 @@
 
 > Definitions are pulled directly from `packages/card-mcp/src/tools/contactTools.ts`. Output shapes from `packages/card-mcp/src/services/CardDavService.ts` and `packages/core/src/vcard.ts`.
 
+> All results carry validated `structuredContent` matching the tool's advertised `outputSchema`, with the same JSON serialized into a text block for clients that do not read structured output. Errors are returned as `isError: true` with a `{ error, message, retryable }` body.
+
 ## list_contacts
 
 List or search contacts. Returns all contacts if no query provided, or filters by name/email/phone/org when query is given.
@@ -18,7 +20,14 @@ List or search contacts. Returns all contacts if no query provided, or filters b
 
 **Output**
 
-`Contact[]` — array of contacts. See [Contact shape](#contact-shape) below.
+```ts
+{
+  contacts: Contact[];
+  count: number;
+}
+```
+
+See [Contact shape](#contact-shape) below.
 
 ## get_contact
 
@@ -100,6 +109,8 @@ Update an existing contact. Only provided fields are changed (merge update). Omi
 ## delete_contact
 
 Delete a contact by UID. This action cannot be undone.
+
+> **Asks for confirmation.** This deletes the contact permanently. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 

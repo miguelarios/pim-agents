@@ -1,34 +1,34 @@
 import { createRequire } from "node:module";
 import { loadEmailConfig } from "@miguelarios/pim-core";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { disposeUrlCleaner } from "./htmlToMarkdown.js";
 import { ImapService } from "./services/ImapService.js";
 import { SmtpService } from "./services/SmtpService.js";
-import { EMAIL_TOOLS, handleEmailTool } from "./tools/emailTools.js";
+import { EMAIL_TOOLS } from "./tools/emailTools.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
 
-export async function createServer(): Promise<Server> {
+export async function createServer(): Promise<McpServer> {
   const config = loadEmailConfig();
-  const imapService = new ImapService(config);
-  const smtpService = new SmtpService(config);
+  const services = {
+    imap: new ImapService(config),
+    smtp: new SmtpService(config),
+  };
 
-  const server = new Server(
-    { name: "@miguelarios/email-mcp", version },
-    { capabilities: { tools: {} } },
+  const server = new McpServer(
+    { name: "@miguelarios/email-mcp", title: "IMAP/SMTP Email", version },
+    {
+      capabilities: { tools: { listChanged: false } },
+      instructions:
+        "Read, search and send email over IMAP/SMTP. Folder paths are IMAP paths and default to INBOX — call list_folders to discover them. send_email, send_draft and permanent deletes ask the user to confirm first.",
+      cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
+    },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: EMAIL_TOOLS,
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    return handleEmailTool(name, (args ?? {}) as Record<string, unknown>, imapService, smtpService);
-  });
+  registerTools(server, EMAIL_TOOLS, services);
 
   const handleShutdown = async () => {
     await disposeUrlCleaner();
@@ -37,16 +37,14 @@ export async function createServer(): Promise<Server> {
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
 
-  server.onerror = (error) => {
-    console.error("[email-mcp] Server error:", error.message);
-  };
-
   return server;
 }
 
 export async function startServer(): Promise<void> {
-  const server = await createServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  // `serveStdio` owns the era decision: a 2026-07-28 client gets the new
+  // protocol, and a 2025-era client is still served from the same factory.
+  serveStdio(() => createServer(), {
+    onerror: (error) => console.error("[email-mcp] Server error:", error.message),
+  });
   console.error("[email-mcp] Server started on stdio");
 }
