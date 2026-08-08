@@ -1,6 +1,6 @@
 {
   "name": "@miguelarios/email-mcp",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "MCP server for email via IMAP/SMTP — read, search, send, and manage emails",
   "keywords": [
     "mcp",
@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@backrunner/url-cleaner": "^0.1.0",
-    "@miguelarios/pim-core": "^0.7.0",
+    "@miguelarios/pim-core": "^0.8.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "imapflow": "^1.0.0",
     "mailparser": "^3.7.0",
