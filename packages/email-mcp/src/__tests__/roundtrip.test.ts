@@ -38,6 +38,13 @@ function fakeServices() {
       deleteEmails: vi.fn().mockResolvedValue(undefined),
       getSpecialUseFolder: vi.fn().mockResolvedValue("Drafts"),
       appendMessage: vi.fn().mockResolvedValue({ uid: 100 }),
+      downloadAttachment: vi.fn().mockResolvedValue({
+        filename: "report.pdf",
+        contentType: "application/pdf",
+        size: 4,
+        content: Buffer.from("PDF!"),
+      }),
+      fetchRawEmail: vi.fn().mockResolvedValue("From: ada@example.com\r\n\r\nbody"),
     },
     smtp: {
       config: { smtp: { user: "me@example.com" }, autoSent: true, fromName: undefined },
@@ -156,6 +163,47 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
 
     expect(result.isError).toBe(true);
     expect(services.imap.fetchEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns an attachment as a binary resource, with the bytes only there", async () => {
+    const { client } = await connect(era, fakeServices());
+    const result = await client.callTool({
+      name: "download_attachment",
+      arguments: { uid: 1, partId: "2" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const [block] = result.content as Array<{
+      type: string;
+      resource: { mimeType: string; blob: string };
+    }>;
+    expect(block.type).toBe("resource");
+    expect(block.resource.mimeType).toBe("application/pdf");
+    expect(Buffer.from(block.resource.blob, "base64").toString()).toBe("PDF!");
+    // Metadata only — repeating the base64 here would double the response.
+    expect(result.structuredContent).toEqual({
+      filename: "report.pdf",
+      contentType: "application/pdf",
+      size: 4,
+    });
+  });
+
+  it("returns raw source as a message/rfc822 resource, with metadata-only structured output", async () => {
+    const { client } = await connect(era, fakeServices());
+    const result = await client.callTool({
+      name: "get_email_raw",
+      arguments: { uid: 1 },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const [block] = result.content as Array<{
+      type: string;
+      resource: { mimeType: string; text: string };
+    }>;
+    expect(block.type).toBe("resource");
+    expect(block.resource.mimeType).toBe("message/rfc822");
+    expect(block.resource.text).toContain("ada@example.com");
+    expect(result.structuredContent).toEqual({ uid: 1, folder: "INBOX", size: 29 });
   });
 
   it("confirms before sending, then sends", async () => {

@@ -209,6 +209,39 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect(service.deleteEvent).not.toHaveBeenCalled();
   });
 
+  it("returns schema-valid structuredContent when updating one occurrence's attendees and alarms", async () => {
+    // The exception branch builds its response from the caller's raw input
+    // rather than a server round-trip, so it is the one update path that can
+    // drift from the advertised outputSchema.
+    const service = fakeService();
+    service.getEventWithMeta.mockResolvedValue({
+      event: { ...EVENT, is_recurring: true },
+      meta: { url: "u", etag: "e" },
+    });
+    const { client } = await connect(era, service);
+
+    const result = await client.callTool({
+      name: "update_event",
+      arguments: {
+        calendar: "mailbox/Work",
+        uid: "evt-1",
+        span: "this",
+        occurrence_date: "2026-08-02T09:00:00.000Z",
+        attendees: [{ email: "guest@example.com" }],
+        alarms: [{ type: "relative", trigger: -600 }],
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const event = (result.structuredContent as { event: Record<string, unknown> }).event;
+    expect(event.attendees).toEqual([
+      { email: "guest@example.com", name: null, status: null, role: null, type: "person" },
+    ]);
+    expect(event.alarms).toEqual([
+      { type: "relative", trigger: -600, trigger_human: "10 minutes before" },
+    ]);
+  });
+
   it("excludes a single occurrence of a recurring event without asking", async () => {
     const service = fakeService();
     service.getEventWithMeta.mockResolvedValue({

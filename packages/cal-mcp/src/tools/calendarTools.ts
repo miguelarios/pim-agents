@@ -4,6 +4,7 @@ import {
   addExdateToIcs,
   combineIcsComponents,
   createExceptionComponent,
+  formatTriggerHuman,
   generateEventIcs,
   removeExceptionFromIcs,
   splitIcsByUid,
@@ -109,6 +110,33 @@ function mapError(err: unknown): CallToolResult {
     }
   }
   return { ...toolError(err, () => "backend_error"), ...debugMeta() };
+}
+
+/**
+ * Widens an attendee from the tool's input shape (`{ email }`) to the shape a
+ * read returns. `generateEventIcs` writes a bare `ATTENDEE:mailto:…` with no
+ * CN/PARTSTAT/ROLE/CUTYPE, so re-reading it yields nulls and the RFC 5545
+ * §3.2.3 default CUTYPE of INDIVIDUAL — which the parser maps to "person".
+ */
+function toResponseAttendee(attendee: Attendee) {
+  return {
+    email: attendee.email,
+    name: null,
+    status: null,
+    role: null,
+    type: "person",
+  };
+}
+
+/** Widens an alarm from the tool's input shape by rendering `trigger_human`. */
+function toResponseAlarm(alarm: Alarm) {
+  return {
+    ...alarm,
+    trigger_human:
+      alarm.type === "absolute"
+        ? new Date(alarm.trigger).toISOString()
+        : formatTriggerHuman(Number(alarm.trigger)),
+  };
 }
 
 /** Runs a handler body, converting anything thrown into this server's error shape. */
@@ -515,7 +543,11 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
             etag: rawObj.etag,
           });
 
-          // Build response from overrides + existing
+          // Build response from overrides + existing. Unlike every other write
+          // path, this one does not re-read the event afterwards, so anything
+          // taken from `overrides` is in the tool's *input* shape and has to be
+          // widened to the shape a read would return — otherwise the result
+          // fails validation against this tool's own outputSchema.
           const occDuration = new Date(existing.end).getTime() - new Date(existing.start).getTime();
           return ok({
             event: {
@@ -528,8 +560,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
               all_day: overrides.all_day ?? existing.all_day,
               location: overrides.location ?? existing.location,
               description: overrides.description ?? existing.description,
-              attendees: overrides.attendees ?? existing.attendees,
-              alarms: overrides.alarms ?? existing.alarms,
+              attendees: overrides.attendees
+                ? overrides.attendees.map(toResponseAttendee)
+                : existing.attendees,
+              alarms: overrides.alarms ? overrides.alarms.map(toResponseAlarm) : existing.alarms,
+              organizer: overrides.organizer
+                ? { name: overrides.organizer.name ?? null, email: overrides.organizer.email }
+                : existing.organizer,
               categories: overrides.categories ?? existing.categories,
               occurrence_date: occurrenceDate,
               recurrence_rule: null,
