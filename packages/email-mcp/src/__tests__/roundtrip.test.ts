@@ -26,10 +26,23 @@ function fakeServices() {
       searchEmails: vi.fn().mockResolvedValue([SUMMARY]),
       fetchEmail: vi.fn().mockResolvedValue({
         ...SUMMARY,
+        hasAttachments: true,
         inReplyTo: null,
         references: [],
         textBody: "Hello there",
-        attachments: [],
+        attachments: [
+          { filename: "attachment-0", contentType: "text/calendar", size: 64, partId: "2" },
+        ],
+        calendarParts: [
+          {
+            partId: "2",
+            contentType: "text/calendar",
+            method: "REQUEST",
+            filename: null,
+            size: 64,
+            content: "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR",
+          },
+        ],
       }),
       listFolders: vi
         .fn()
@@ -150,6 +163,23 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
 
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({ count: 1 });
+  });
+
+  it("delivers calendar parts through the advertised get_email outputSchema", async () => {
+    const { client } = await connect(era, fakeServices());
+    const result = await client.callTool({ name: "get_email", arguments: { uid: 1 } });
+
+    // The SDK validates structuredContent against the advertised schema, so a
+    // clean result proves schema and payload stayed in sync.
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      hasAttachments: boolean;
+      calendarParts: Array<{ method: string | null; content?: string; partId: string }>;
+    };
+    expect(structured.hasAttachments).toBe(true);
+    expect(structured.calendarParts).toHaveLength(1);
+    expect(structured.calendarParts[0].method).toBe("REQUEST");
+    expect(structured.calendarParts[0].content).toContain("BEGIN:VCALENDAR");
   });
 
   it("rejects malformed arguments without running the handler", async () => {

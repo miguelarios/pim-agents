@@ -46,7 +46,7 @@ See [Email shapes](#email-shapes) below.
 
 ## get_email
 
-Fetch a full email by UID including headers, body, and attachment metadata. Returns body as markdown by default for token efficiency. Use `format='html'` or `format='text'` for raw content.
+Fetch a full email by UID including headers, body, and attachment metadata. Calendar invitations (`text/calendar` parts, even inline ones without a filename) are surfaced in `calendarParts` with their iTIP method and decoded iCalendar content. Returns body as markdown by default for token efficiency. Use `format='html'` or `format='text'` for raw content.
 
 **Parameters**
 
@@ -62,6 +62,8 @@ Fetch a full email by UID including headers, body, and attachment metadata. Retu
 - `markdown` → `markdownBody` populated, `htmlBody` and `textBody` removed.
 - `html` → `htmlBody` populated, `textBody` removed.
 - `text` → `textBody` populated, `htmlBody` removed.
+
+Calendar parts are detected from the message structure regardless of content disposition, so invitations delivered inline (no filename, no `Content-Disposition: attachment`) still count toward `hasAttachments`, appear in `attachments` (with a synthetic `attachment-<n>` filename when the part has none), and are listed in `calendarParts`. Decoded iCalendar text is inlined up to 256 KiB; larger parts set `truncated: true` and can be fetched via `download_attachment` with the part's `partId`.
 
 ## send_email
 
@@ -340,6 +342,15 @@ interface EmailFull extends EmailSummary {
     contentType: string;
     size: number;                  // bytes
     partId: string;                // pass to download_attachment
+  }>;
+  calendarParts?: Array<{          // present only when text/calendar parts exist
+    partId: string;                // pass to download_attachment
+    contentType: string;
+    method: string | null;         // iTIP method, e.g. "REQUEST", "REPLY", "CANCEL"
+    filename: string | null;       // null for inline invitations
+    size: number;                  // bytes (transfer-encoded)
+    content?: string;              // decoded iCalendar text (≤ 256 KiB)
+    truncated?: boolean;           // true → content withheld, download instead
   }>;
 }
 ```

@@ -41,6 +41,19 @@ export const emailFullSchema = v.object({
       partId: v.string(),
     }),
   ),
+  calendarParts: v.optional(
+    v.array(
+      v.object({
+        partId: v.string(),
+        contentType: v.string(),
+        method: v.nullable(v.string()),
+        filename: v.nullable(v.string()),
+        size: v.number(),
+        content: v.optional(v.string()),
+        truncated: v.optional(v.boolean()),
+      }),
+    ),
+  ),
 });
 
 export const searchResultSchema = v.object({

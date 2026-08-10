@@ -352,6 +352,45 @@ describe("handleEmailTool get_email format", () => {
     expect(body.markdownBody).toBeUndefined();
   });
 
+  it("keeps calendarParts in the response across format handling", async () => {
+    mockFetchEmail.mockResolvedValue({
+      uid: 123,
+      messageId: "<invite@test.com>",
+      subject: "Invitation",
+      from: { address: "organizer@test.com" },
+      to: [{ address: "attendee@test.com" }],
+      date: "2026-08-10T12:00:00Z",
+      flags: [],
+      hasAttachments: true,
+      textBody: "You are invited.",
+      attachments: [
+        { filename: "attachment-0", contentType: "text/calendar", size: 228, partId: "2" },
+      ],
+      calendarParts: [
+        {
+          partId: "2",
+          contentType: "text/calendar",
+          method: "REQUEST",
+          filename: null,
+          size: 228,
+          content: "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR",
+        },
+      ],
+    });
+
+    const result = await handleEmailTool(
+      "get_email",
+      { uid: 123 },
+      mockImapService,
+      mockSmtpService,
+    );
+    const body = JSON.parse(result.content[0].text);
+    expect(body.calendarParts).toHaveLength(1);
+    expect(body.calendarParts[0].method).toBe("REQUEST");
+    expect(body.calendarParts[0].content).toContain("BEGIN:VCALENDAR");
+    expect(result.structuredContent.calendarParts).toEqual(body.calendarParts);
+  });
+
   it("text-only email with markdown format uses textBody as markdownBody", async () => {
     mockFetchEmail.mockResolvedValue({
       uid: 123,

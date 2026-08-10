@@ -73,7 +73,7 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 | Tool | Description |
 |------|-------------|
 | `search_emails` | Search and filter emails by folder, sender, subject, date, flags |
-| `get_email` | Fetch full email by UID — headers, body, attachment metadata |
+| `get_email` | Fetch full email by UID — headers, body, attachment metadata, calendar invitation parts |
 | `send_email` | Compose and send via SMTP, reply with threading, save as draft, or use an allowed visible From address |
 | `send_draft` | Send an existing draft from the Drafts folder |
 | `move_email` | Move emails between folders |

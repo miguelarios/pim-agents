@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `get_email` now detects `text/calendar` MIME parts regardless of content disposition or filename, so inline calendar invitations are no longer omitted from responses (issue #18, `claude/feature-planning-xexlsc`).
+- Added `calendarParts` to the `get_email` output: MIME part ID, content type, iTIP method, filename when present, and decoded iCalendar content (base64/quoted-printable handled). Content is inlined up to 256 KiB; larger parts set `truncated: true` and remain downloadable via `download_attachment` (issue #18, `claude/feature-planning-xexlsc`).
+- `hasAttachments` in `get_email` and `search_emails` now counts inline calendar parts, and such parts are listed in `attachments` with a working `partId` (issue #18, `claude/feature-planning-xexlsc`).
+
 ## 0.10.0 (2026-07-10)
 
 - **BREAKING:** attachment `partId` values now identify a MIME bodystructure part path instead of an array index — callers that cached or hardcoded a previous `partId` must re-fetch it via `get_email` before calling `download_attachment` (PR #10, `fix/email-attachments`).

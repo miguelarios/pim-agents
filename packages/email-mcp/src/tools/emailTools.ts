@@ -181,7 +181,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     name: "get_email",
     title: "Get Email",
     description:
-      "Fetch a full email by UID including headers, body, and attachment metadata. Returns body as markdown by default for token efficiency. Use format='html' or format='text' for raw content.",
+      "Fetch a full email by UID including headers, body, and attachment metadata. Calendar invitations (text/calendar parts, even inline ones without a filename) are surfaced in calendarParts with their iTIP method and decoded iCalendar content. Returns body as markdown by default for token efficiency. Use format='html' or format='text' for raw content.",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
