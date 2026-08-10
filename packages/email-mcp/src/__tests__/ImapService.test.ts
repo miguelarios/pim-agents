@@ -1060,6 +1060,99 @@ describe("ImapService", () => {
       expect(email.calendarParts?.[1].content).toContain("METHOD:REPLY");
     });
 
+    it("decodes content per the part's charset and uppercases the iTIP method", async () => {
+      const latin1Ics = Buffer.from(
+        "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nSUMMARY:Café à Paris\r\nEND:VCALENDAR",
+        "latin1",
+      );
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: latin1Ics.length,
+            content: latin1Ics,
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 96,
+              encoding: "quoted-printable",
+              parameters: { charset: "iso-8859-1", method: "request" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.calendarParts?.[0].content).toContain("Café à Paris");
+      expect(email.calendarParts?.[0].method).toBe("REQUEST");
+    });
+
+    it("correlates decoded content with real mailparser output for an inline invite", async () => {
+      const b64 = Buffer.from(ICS, "utf-8").toString("base64");
+      const raw = [
+        "From: organizer@test.com",
+        "To: attendee@test.com",
+        "Subject: Invitation",
+        "MIME-Version: 1.0",
+        'Content-Type: multipart/alternative; boundary="XYZ"',
+        "",
+        "--XYZ",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        "You are invited.",
+        "--XYZ",
+        "Content-Type: text/calendar; charset=utf-8; method=REQUEST",
+        "Content-Transfer-Encoding: base64",
+        "",
+        b64,
+        "--XYZ--",
+        "",
+      ].join("\r\n");
+
+      // Route the module mock to the real parser for this one call, so the
+      // document-order correlation is exercised against actual MIME parsing.
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockImplementationOnce(async (src: any) => {
+        const actual = await vi.importActual<typeof import("mailparser")>("mailparser");
+        return actual.simpleParser(src) as any;
+      });
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from(raw),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: b64.length,
+              encoding: "base64",
+              parameters: { charset: "utf-8", method: "REQUEST" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.textBody).toContain("You are invited.");
+      expect(email.hasAttachments).toBe(true);
+      expect(email.calendarParts).toHaveLength(1);
+      expect(email.calendarParts?.[0].partId).toBe("2");
+      expect(email.calendarParts?.[0].method).toBe("REQUEST");
+      expect(email.calendarParts?.[0].content).toContain("SUMMARY:Planning sync");
+    });
+
     it("omits calendarParts entirely for emails without calendar parts", async () => {
       mockFetchOne.mockResolvedValueOnce({
         source: Buffer.from("raw"),

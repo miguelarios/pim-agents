@@ -41,9 +41,10 @@ export interface EmailFull extends EmailSummary {
 export interface CalendarPart {
   partId: string;
   contentType: string;
-  /** iTIP method from the Content-Type parameters, e.g. "REQUEST". */
+  /** iTIP method from the Content-Type parameters, uppercased, e.g. "REQUEST". */
   method: string | null;
   filename: string | null;
+  /** Transfer-encoded size on the wire; may differ from `content.length`. */
   size: number;
   /** Decoded iCalendar text; absent when oversized or not correlatable. */
   content?: string;
@@ -553,6 +554,7 @@ interface BodyStructureAttachment {
   contentType: string;
   size: number;
   method?: string;
+  charset?: string;
 }
 
 function collectAttachmentParts(
@@ -579,6 +581,7 @@ function collectAttachmentParts(
       contentType: node.type || "application/octet-stream",
       size: node.size ?? 0,
       method: isCalendar ? (node.parameters?.method ?? undefined) : undefined,
+      charset: isCalendar ? (node.parameters?.charset ?? undefined) : undefined,
     });
   }
   return out;
@@ -605,7 +608,7 @@ function buildCalendarParts(
     const part: CalendarPart = {
       partId: att.part,
       contentType: att.contentType,
-      method: att.method ?? null,
+      method: att.method ? att.method.toUpperCase() : null,
       filename: att.filename ?? null,
       size: att.size,
     };
@@ -615,9 +618,24 @@ function buildCalendarParts(
         // A mid-file cut would be syntactically broken ICS, so withhold instead.
         part.truncated = true;
       } else {
-        part.content = content.toString("utf-8");
+        part.content = decodeText(content, att.charset);
       }
     }
     return part;
   });
+}
+
+/**
+ * mailparser leaves attachment bytes charset-undecoded, so honor the part's
+ * declared charset (e.g. ISO-8859-1 from older Exchange senders).
+ */
+function decodeText(buffer: Buffer, charset?: string): string {
+  if (charset) {
+    try {
+      return new TextDecoder(charset).decode(buffer);
+    } catch {
+      // Unknown charset label — fall through to UTF-8.
+    }
+  }
+  return buffer.toString("utf-8");
 }

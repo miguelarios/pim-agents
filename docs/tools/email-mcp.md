@@ -346,10 +346,12 @@ interface EmailFull extends EmailSummary {
   calendarParts?: Array<{          // present only when text/calendar parts exist
     partId: string;                // pass to download_attachment
     contentType: string;
-    method: string | null;         // iTIP method, e.g. "REQUEST", "REPLY", "CANCEL"
+    method: string | null;         // iTIP method, uppercased: "REQUEST", "REPLY", "CANCEL"
     filename: string | null;       // null for inline invitations
-    size: number;                  // bytes (transfer-encoded)
-    content?: string;              // decoded iCalendar text (≤ 256 KiB)
+    size: number;                  // bytes on the wire (transfer-encoded) — differs from
+                                   // content.length after decoding (e.g. base64 overhead)
+    content?: string;              // decoded iCalendar text (≤ 256 KiB), honoring the
+                                   // part's charset parameter
     truncated?: boolean;           // true → content withheld, download instead
   }>;
 }
