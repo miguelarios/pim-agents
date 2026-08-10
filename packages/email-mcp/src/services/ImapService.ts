@@ -7,7 +7,7 @@ import {
   toPimError,
 } from "@miguelarios/pim-core";
 import { ImapFlow } from "imapflow";
-import { simpleParser } from "mailparser";
+import { type Attachment, simpleParser } from "mailparser";
 import { type SearchParams, buildSearchCriteria } from "../search.js";
 
 export interface EmailSummary {
@@ -34,6 +34,22 @@ export interface EmailFull extends EmailSummary {
     size: number;
     partId: string;
   }>;
+  /** Present only when the message carries `text/calendar` MIME parts. */
+  calendarParts?: CalendarPart[];
+}
+
+export interface CalendarPart {
+  partId: string;
+  contentType: string;
+  /** iTIP method from the Content-Type parameters, uppercased, e.g. "REQUEST". */
+  method: string | null;
+  filename: string | null;
+  /** Transfer-encoded size on the wire; may differ from `content.length`. */
+  size: number;
+  /** Decoded iCalendar text; absent when oversized or not correlatable. */
+  content?: string;
+  /** True when `content` was withheld — fetch via `download_attachment`. */
+  truncated?: boolean;
 }
 
 export interface FolderInfo {
@@ -210,6 +226,7 @@ export class ImapService {
 
         const parsed = await simpleParser(fetchResult.source);
         const attachmentParts = collectAttachmentParts(fetchResult.bodyStructure);
+        const calendarParts = buildCalendarParts(attachmentParts, parsed.attachments ?? []);
         return {
           uid,
           messageId: parsed.messageId || "",
@@ -244,6 +261,7 @@ export class ImapService {
             size: att.size,
             partId: att.part,
           })),
+          ...(calendarParts.length > 0 ? { calendarParts } : {}),
         };
       } finally {
         lock.release();
@@ -535,6 +553,8 @@ interface BodyStructureAttachment {
   filename?: string;
   contentType: string;
   size: number;
+  method?: string;
+  charset?: string;
 }
 
 function collectAttachmentParts(
@@ -551,13 +571,71 @@ function collectAttachmentParts(
     node.dispositionParameters?.filename ?? node.parameters?.name;
   const type = String(node.type ?? "").toLowerCase();
   if (type.startsWith("multipart/")) return out;
-  if (disposition === "attachment" || (filename && disposition !== "inline")) {
+  // Calendar invitations are often delivered inline with no filename or
+  // disposition, so text/calendar collects unconditionally.
+  const isCalendar = type === "text/calendar";
+  if (disposition === "attachment" || (filename && disposition !== "inline") || isCalendar) {
     out.push({
       part: String(node.part ?? "1"),
       filename,
       contentType: node.type || "application/octet-stream",
       size: node.size ?? 0,
+      method: isCalendar ? (node.parameters?.method ?? undefined) : undefined,
+      charset: isCalendar ? (node.parameters?.charset ?? undefined) : undefined,
     });
   }
   return out;
+}
+
+const MAX_INLINE_CALENDAR_BYTES = 256 * 1024;
+
+function buildCalendarParts(
+  attachmentParts: BodyStructureAttachment[],
+  parsedAttachments: Attachment[],
+): CalendarPart[] {
+  const structureParts = attachmentParts.filter(
+    (att) => att.contentType.toLowerCase() === "text/calendar",
+  );
+  if (structureParts.length === 0) return [];
+  const decodedParts = parsedAttachments.filter(
+    (att) => (att.contentType ?? "").toLowerCase() === "text/calendar",
+  );
+  // Both the BODYSTRUCTURE walk and mailparser emit parts in document order,
+  // so equal counts pair up by index. On a mismatch, return metadata only and
+  // let download_attachment provide the bytes.
+  const correlated = decodedParts.length === structureParts.length;
+  return structureParts.map((att, index) => {
+    const part: CalendarPart = {
+      partId: att.part,
+      contentType: att.contentType,
+      method: att.method ? att.method.toUpperCase() : null,
+      filename: att.filename ?? null,
+      size: att.size,
+    };
+    if (correlated) {
+      const content = decodedParts[index].content;
+      if (content.length > MAX_INLINE_CALENDAR_BYTES) {
+        // A mid-file cut would be syntactically broken ICS, so withhold instead.
+        part.truncated = true;
+      } else {
+        part.content = decodeText(content, att.charset);
+      }
+    }
+    return part;
+  });
+}
+
+/**
+ * mailparser leaves attachment bytes charset-undecoded, so honor the part's
+ * declared charset (e.g. ISO-8859-1 from older Exchange senders).
+ */
+function decodeText(buffer: Buffer, charset?: string): string {
+  if (charset) {
+    try {
+      return new TextDecoder(charset).decode(buffer);
+    } catch {
+      // Unknown charset label — fall through to UTF-8.
+    }
+  }
+  return buffer.toString("utf-8");
 }

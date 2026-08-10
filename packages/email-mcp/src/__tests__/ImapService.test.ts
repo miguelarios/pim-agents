@@ -754,6 +754,464 @@ describe("ImapService", () => {
     });
   });
 
+  describe("fetchEmail calendar parts", () => {
+    const ICS = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "METHOD:REQUEST",
+      "BEGIN:VEVENT",
+      "UID:invite-1@test.com",
+      "DTSTART:20260815T140000Z",
+      "SUMMARY:Planning sync",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    /** Parsed-message shape with a decoded inline calendar part and no filename. */
+    function parsedWithCalendar(attachments: unknown[]) {
+      return {
+        messageId: "<invite@test.com>",
+        subject: "Invitation",
+        from: { value: [{ address: "organizer@test.com", name: "Organizer" }] },
+        to: { value: [{ address: "attendee@test.com", name: "Attendee" }] },
+        cc: null,
+        date: new Date("2026-08-10T12:00:00Z"),
+        text: "You are invited.",
+        html: null,
+        attachments,
+      } as any;
+    }
+
+    it("surfaces an inline base64 text/calendar part with no filename or disposition", async () => {
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: ICS.length,
+            content: Buffer.from(ICS, "utf-8"),
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 228,
+              encoding: "base64",
+              parameters: { charset: "utf-8", method: "REQUEST" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.hasAttachments).toBe(true);
+      expect(email.attachments).toEqual([
+        expect.objectContaining({ contentType: "text/calendar", partId: "2" }),
+      ]);
+      expect(email.calendarParts).toEqual([
+        {
+          partId: "2",
+          contentType: "text/calendar",
+          method: "REQUEST",
+          filename: null,
+          size: 228,
+          content: expect.stringContaining("BEGIN:VCALENDAR"),
+        },
+      ]);
+    });
+
+    it("surfaces a quoted-printable inline calendar part", async () => {
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: ICS.length,
+            content: Buffer.from(ICS, "utf-8"),
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 180,
+              encoding: "quoted-printable",
+              parameters: { charset: "utf-8", method: "REQUEST" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.hasAttachments).toBe(true);
+      expect(email.calendarParts?.[0].content).toContain("BEGIN:VCALENDAR");
+      expect(email.calendarParts?.[0].method).toBe("REQUEST");
+    });
+
+    it("lists a calendar part that is a proper attachment exactly once per array", async () => {
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: "invite.ics",
+            size: ICS.length,
+            content: Buffer.from(ICS, "utf-8"),
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 228,
+              disposition: "attachment",
+              dispositionParameters: { filename: "invite.ics" },
+              parameters: { method: "REQUEST" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.attachments).toEqual([
+        { filename: "invite.ics", contentType: "text/calendar", size: 228, partId: "2" },
+      ]);
+      expect(email.calendarParts).toHaveLength(1);
+      expect(email.calendarParts?.[0].filename).toBe("invite.ics");
+    });
+
+    it("handles a non-multipart message whose entire body is text/calendar", async () => {
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: ICS.length,
+            content: Buffer.from(ICS, "utf-8"),
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "text/calendar",
+          size: 228,
+          encoding: "base64",
+          parameters: { charset: "utf-8", method: "REQUEST" },
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.hasAttachments).toBe(true);
+      expect(email.calendarParts?.[0].partId).toBe("1");
+      expect(email.calendarParts?.[0].content).toContain("BEGIN:VCALENDAR");
+    });
+
+    it("omits content and sets truncated for oversized calendar parts", async () => {
+      const bigIcs = `BEGIN:VCALENDAR\r\nDESCRIPTION:${"x".repeat(300 * 1024)}\r\nEND:VCALENDAR`;
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: bigIcs.length,
+            content: Buffer.from(bigIcs, "utf-8"),
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 410_000,
+              encoding: "base64",
+              parameters: { method: "REQUEST" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.calendarParts?.[0].content).toBeUndefined();
+      expect(email.calendarParts?.[0].truncated).toBe(true);
+      expect(email.calendarParts?.[0].partId).toBe("2");
+      expect(email.calendarParts?.[0].method).toBe("REQUEST");
+    });
+
+    it("falls back to metadata-only entries when decoded parts cannot be correlated", async () => {
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: ICS.length,
+            content: Buffer.from(ICS, "utf-8"),
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            {
+              type: "text/calendar",
+              part: "1",
+              size: 228,
+              encoding: "base64",
+              parameters: { method: "REQUEST" },
+            },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 190,
+              encoding: "base64",
+              parameters: { method: "REPLY" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.calendarParts).toHaveLength(2);
+      for (const part of email.calendarParts ?? []) {
+        expect(part.content).toBeUndefined();
+      }
+    });
+
+    it("pairs decoded content with the right part when several calendar parts exist", async () => {
+      const replyIcs = ICS.replace("METHOD:REQUEST", "METHOD:REPLY");
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: ICS.length,
+            content: Buffer.from(ICS, "utf-8"),
+          },
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: replyIcs.length,
+            content: Buffer.from(replyIcs, "utf-8"),
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            {
+              type: "text/calendar",
+              part: "1",
+              size: 228,
+              encoding: "base64",
+              parameters: { method: "REQUEST" },
+            },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 226,
+              encoding: "base64",
+              parameters: { method: "REPLY" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.calendarParts).toHaveLength(2);
+      expect(email.calendarParts?.[0].method).toBe("REQUEST");
+      expect(email.calendarParts?.[0].content).toContain("METHOD:REQUEST");
+      expect(email.calendarParts?.[1].method).toBe("REPLY");
+      expect(email.calendarParts?.[1].content).toContain("METHOD:REPLY");
+    });
+
+    it("decodes content per the part's charset and uppercases the iTIP method", async () => {
+      const latin1Ics = Buffer.from(
+        "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nSUMMARY:Café à Paris\r\nEND:VCALENDAR",
+        "latin1",
+      );
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce(
+        parsedWithCalendar([
+          {
+            contentType: "text/calendar",
+            filename: undefined,
+            size: latin1Ics.length,
+            content: latin1Ics,
+          },
+        ]),
+      );
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: 96,
+              encoding: "quoted-printable",
+              parameters: { charset: "iso-8859-1", method: "request" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.calendarParts?.[0].content).toContain("Café à Paris");
+      expect(email.calendarParts?.[0].method).toBe("REQUEST");
+    });
+
+    it("correlates decoded content with real mailparser output for an inline invite", async () => {
+      const b64 = Buffer.from(ICS, "utf-8").toString("base64");
+      const raw = [
+        "From: organizer@test.com",
+        "To: attendee@test.com",
+        "Subject: Invitation",
+        "MIME-Version: 1.0",
+        'Content-Type: multipart/alternative; boundary="XYZ"',
+        "",
+        "--XYZ",
+        "Content-Type: text/plain; charset=utf-8",
+        "",
+        "You are invited.",
+        "--XYZ",
+        "Content-Type: text/calendar; charset=utf-8; method=REQUEST",
+        "Content-Transfer-Encoding: base64",
+        "",
+        b64,
+        "--XYZ--",
+        "",
+      ].join("\r\n");
+
+      // Route the module mock to the real parser for this one call, so the
+      // document-order correlation is exercised against actual MIME parsing.
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockImplementationOnce(async (src: any) => {
+        const actual = await vi.importActual<typeof import("mailparser")>("mailparser");
+        return actual.simpleParser(src) as any;
+      });
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from(raw),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "text/calendar",
+              part: "2",
+              size: b64.length,
+              encoding: "base64",
+              parameters: { charset: "utf-8", method: "REQUEST" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.textBody).toContain("You are invited.");
+      expect(email.hasAttachments).toBe(true);
+      expect(email.calendarParts).toHaveLength(1);
+      expect(email.calendarParts?.[0].partId).toBe("2");
+      expect(email.calendarParts?.[0].method).toBe("REQUEST");
+      expect(email.calendarParts?.[0].content).toContain("SUMMARY:Planning sync");
+    });
+
+    it("omits calendarParts entirely for emails without calendar parts", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "application/pdf",
+              part: "2",
+              size: 1024,
+              disposition: "attachment",
+              dispositionParameters: { filename: "doc.pdf" },
+            },
+          ],
+        },
+      });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.calendarParts).toBeUndefined();
+    });
+
+    it("search summaries report hasAttachments for inline calendar invitations", async () => {
+      mockSearch.mockResolvedValueOnce([7]);
+      mockFetch.mockReturnValueOnce(
+        (async function* () {
+          yield {
+            uid: 7,
+            envelope: {
+              messageId: "<invite@test.com>",
+              subject: "Invitation",
+              from: [{ address: "organizer@test.com", name: "Organizer" }],
+              to: [{ address: "attendee@test.com", name: "Attendee" }],
+              date: new Date("2026-08-10"),
+            },
+            flags: new Set([]),
+            bodyStructure: {
+              type: "multipart/alternative",
+              childNodes: [
+                { type: "text/plain", part: "1", size: 20 },
+                {
+                  type: "text/calendar",
+                  part: "2",
+                  size: 228,
+                  encoding: "base64",
+                  parameters: { method: "REQUEST" },
+                },
+              ],
+            },
+          };
+        })(),
+      );
+
+      const results = await service.searchEmails("INBOX", { subject: "Invitation" });
+      expect(results).toHaveLength(1);
+      expect(results[0].hasAttachments).toBe(true);
+    });
+  });
+
   describe("moveEmails", () => {
     it("moves emails to destination folder", async () => {
       mockMessageMove.mockResolvedValueOnce({ destination: "Archive" });
