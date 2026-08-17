@@ -55,6 +55,19 @@ Monorepo with 4 packages:
 ## Publishing
 
 - All 4 packages publish independently to npm under `@miguelarios` scope
-- Tag-triggered CI: push `<package>/v<version>` tag (e.g., `pim-core/v0.1.0`) to trigger publish
-- Publish order: core first, then MCP servers
+- **Merging the release PR is the release.** Bump the version in
+  `packages/<pkg>/package.json`, add the matching `## <version> (<date>)` section to that
+  package's `CHANGELOG.md`, and merge to `main`. `release.yml` detects the changed version,
+  publishes to npm, then pushes the `<package>/v<version>` tag and creates the GitHub Release
+  with the changelog section as its notes. No local git client is needed, so a release can be
+  finished entirely from the GitHub web UI or a cloud session.
+- Publish order is handled automatically: `pim-core` is sorted ahead of the MCP servers
+- Pushing a `<package>/v<version>` tag by hand still publishes, via `publish.yml`'s tag trigger.
+  Note this path publishes to npm only — the GitHub Release and changelog notes are written by
+  `release.yml`, so a hand-pushed tag leaves no Release behind
+- If one package in a batch fails to publish, the others are still tagged and released; the failed
+  one is skipped with a warning and the run goes red. Re-running the job resumes it, since each
+  step checks npm and the existing tag/release before acting
+- Publishing is idempotent: a version already on npm is skipped, so a failed run can be re-run
+- The version in the tag must match `package.json`, or the publish fails rather than shipping a mismatch
 - `.npmignore` excludes test files from published packages

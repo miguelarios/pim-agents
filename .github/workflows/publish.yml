@@ -1,6 +1,25 @@
 name: Publish to npm
 
+# Two ways in:
+#   * workflow_call — release.yml calls this once per package whose version
+#     changed on main. This is the path that makes merging a release PR
+#     sufficient to publish, with no terminal in the loop.
+#   * push of a `<package>/v<version>` tag — the original manual path, kept
+#     so an old-style `git push origin <tag>` still works.
 on:
+  workflow_call:
+    inputs:
+      package:
+        description: "Tag-style package name, e.g. email-mcp"
+        required: true
+        type: string
+      version:
+        description: "Version to publish, e.g. 0.12.0"
+        required: true
+        type: string
+    secrets:
+      NPM_TOKEN:
+        required: true
   push:
     tags:
       - "*/v*"
@@ -10,46 +29,95 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # required for npm provenance
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Use Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           registry-url: "https://registry.npmjs.org"
           cache: npm
 
-      - name: Parse tag
-        id: tag
+      # `inputs` is empty on a tag push, so its presence is what distinguishes
+      # the two entry points.
+      - name: Resolve release target
+        id: target
+        env:
+          INPUT_PACKAGE: ${{ inputs.package }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          PACKAGE="${TAG%%/v*}"
-          VERSION="${TAG#*/v}"
+          set -euo pipefail
+          if [ -n "${INPUT_PACKAGE}" ]; then
+            PACKAGE="${INPUT_PACKAGE}"
+            VERSION="${INPUT_VERSION}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            PACKAGE="${TAG%%/v*}"
+            VERSION="${TAG#*/v}"
+          fi
+
+          # Resolve the directory by matching the unscoped npm name rather than
+          # a hardcoded map, so adding a package needs no edit here. Note
+          # packages/core publishes as @miguelarios/pim-core.
+          DIR=""
+          for pj in packages/*/package.json; do
+            NAME=$(jq -r '.name // ""' "$pj")
+            if [ "${NAME##*/}" = "$PACKAGE" ]; then
+              DIR="$(dirname "$pj")"
+              break
+            fi
+          done
+          if [ -z "$DIR" ]; then
+            echo "::error::Unknown package '$PACKAGE' — no packages/*/package.json declares it"
+            exit 1
+          fi
+
           echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing $PACKAGE@$VERSION"
-
-      - name: Map package to directory
-        id: dir
-        run: |
-          case "${{ steps.tag.outputs.package }}" in
-            pim-core) DIR="packages/core" ;;
-            email-mcp) DIR="packages/email-mcp" ;;
-            cal-mcp) DIR="packages/cal-mcp" ;;
-            card-mcp) DIR="packages/card-mcp" ;;
-            *) echo "Unknown package: ${{ steps.tag.outputs.package }}" && exit 1 ;;
-          esac
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "name=$(jq -r .name "$DIR/package.json")" >> "$GITHUB_OUTPUT"
+          echo "Publishing $PACKAGE@$VERSION from $DIR"
+
+      # Without this, the version actually published comes from package.json
+      # while the tag says something else, and the two can silently disagree.
+      - name: Verify version matches the tag
+        env:
+          DIR: ${{ steps.target.outputs.dir }}
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          ACTUAL=$(jq -r .version "$DIR/package.json")
+          if [ "$ACTUAL" != "$VERSION" ]; then
+            echo "::error::Refusing to publish: asked for $VERSION but $DIR/package.json is $ACTUAL"
+            exit 1
+          fi
+
+      # Makes a re-run safe after a partial failure: the publish step is the
+      # one thing that cannot be repeated, so skip it if it already landed.
+      - name: Check npm for this version
+        id: exists
+        env:
+          NAME: ${{ steps.target.outputs.name }}
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${NAME}@${VERSION} is already on npm — skipping publish"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - run: npm ci
       - run: npm run build
       - run: npm test
 
       - name: Publish
-        run: npm publish --access public
-        working-directory: ${{ steps.dir.outputs.dir }}
+        if: steps.exists.outputs.already == 'false'
+        run: npm publish --access public --provenance
+        working-directory: ${{ steps.target.outputs.dir }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

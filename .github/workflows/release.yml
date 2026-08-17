@@ -1,0 +1,201 @@
+name: Release on merge
+
+# Merging a `chore(release):` PR is the release. This watches main for any
+# packages/*/package.json whose version changed, publishes each one, then
+# writes the tag and GitHub Release as the record.
+#
+# The tag is created *after* a successful publish rather than being the
+# trigger, so a release needs no local git client — which is what let a
+# cloud/web session get all the way to "PR opened" but no further.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      releases: ${{ steps.scan.outputs.releases }}
+      any: ${{ steps.scan.outputs.any }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # need history and tags to diff versions
+
+      - name: Find version bumps
+        id: scan
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # github.event.before spans the whole push, so a two-commit push that
+          # bumps then fixes is still compared against the right baseline.
+          BASE="$BEFORE"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE="HEAD^"
+          fi
+          echo "Comparing against $BASE"
+
+          RESULT='[]'
+          for pj in packages/*/package.json; do
+            DIR="$(dirname "$pj")"
+            NAME=$(jq -r '.name // ""' "$pj")
+            NEW=$(jq -r '.version // ""' "$pj")
+            PRIVATE=$(jq -r '.private // false' "$pj")
+
+            if [ "$PRIVATE" = "true" ] || [ -z "$NAME" ] || [ -z "$NEW" ]; then
+              continue
+            fi
+
+            # A package that did not exist at BASE reads as an empty version,
+            # which correctly counts as a first release.
+            if git cat-file -e "${BASE}:${pj}" 2>/dev/null; then
+              OLD=$(git show "${BASE}:${pj}" | jq -r '.version // ""')
+            else
+              OLD=""
+            fi
+
+            if [ "$NEW" = "$OLD" ]; then
+              continue
+            fi
+
+            PKG="${NAME##*/}"
+            if git rev-parse -q --verify "refs/tags/${PKG}/v${NEW}" >/dev/null; then
+              echo "::notice::${PKG}/v${NEW} is already tagged — skipping"
+              continue
+            fi
+
+            echo "release: ${PKG} ${OLD:-none} -> ${NEW}"
+            RESULT=$(printf '%s' "$RESULT" | jq -c \
+              --arg p "$PKG" --arg v "$NEW" --arg d "$DIR" \
+              '. + [{package: $p, version: $v, dir: $d}]')
+          done
+
+          # pim-core must reach npm before any server that depends on it, and
+          # directory order alone would put cal-mcp/card-mcp ahead of it.
+          RESULT=$(printf '%s' "$RESULT" | jq -c 'sort_by(.package != "pim-core")')
+
+          echo "releases=$RESULT" >> "$GITHUB_OUTPUT"
+          if [ "$(printf '%s' "$RESULT" | jq 'length')" -gt 0 ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+            echo "No version bumps in this push."
+          fi
+
+  publish:
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    strategy:
+      matrix:
+        release: ${{ fromJSON(needs.detect.outputs.releases) }}
+      # Serialized so a core bump lands on npm before a server that depends on it.
+      max-parallel: 1
+      fail-fast: false
+    # A reusable workflow cannot grant more than its caller holds, and this
+    # repo's default token permission is `read`. Without this block the
+    # --provenance publish would fail on the workflow_call path while still
+    # working on a manual tag push.
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      package: ${{ matrix.release.package }}
+      version: ${{ matrix.release.version }}
+    secrets: inherit
+
+  tag:
+    needs: [detect, publish]
+    # `always()` so a package that published cleanly still gets its tag and
+    # Release when a sibling in the same batch fails. Without it GitHub implies
+    # success() and one failed package would strand the others' records.
+    if: always() && needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push tags, create releases
+    # Tags pushed with GITHUB_TOKEN deliberately do not re-trigger publish.yml
+    # (GitHub suppresses workflow runs from token-authored events), so the
+    # record-keeping tag cannot cause a second publish of the same version.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tag and release
+        env:
+          RELEASES: ${{ needs.detect.outputs.releases }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Redirect from a file rather than a pipe so the loop is not a
+          # subshell and `set -e` inside it aborts the step as intended.
+          printf '%s' "$RELEASES" | jq -c '.[]' > /tmp/releases.ndjson
+
+          FAILED=0
+          while read -r row; do
+            PKG=$(printf '%s' "$row" | jq -r .package)
+            VERSION=$(printf '%s' "$row" | jq -r .version)
+            DIR=$(printf '%s' "$row" | jq -r .dir)
+            TAG="${PKG}/v${VERSION}"
+            NAME=$(jq -r .name "$DIR/package.json")
+
+            # npm is the source of truth for whether this actually shipped, so
+            # a partially failed batch tags exactly what published and no more.
+            if ! npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+              echo "::warning::${NAME}@${VERSION} is not on npm — not tagging $TAG"
+              FAILED=1
+              continue
+            fi
+
+            # Pull the matching CHANGELOG section for the release body. Headings
+            # look like `## 0.12.0 (2026-08-10)`. Dots are escaped so the
+            # version is matched literally rather than as a regex wildcard.
+            VER_RE=$(printf '%s' "$VERSION" | sed 's/[.[\*^$()+?{|]/\\&/g')
+            NOTES_FILE="$(mktemp)"
+            if [ -f "$DIR/CHANGELOG.md" ]; then
+              awk -v ver="$VER_RE" '
+                $0 ~ "^## " ver "([ (]|$)" { f = 1; next }
+                /^## / { f = 0 }
+                f
+              ' "$DIR/CHANGELOG.md" > "$NOTES_FILE"
+            fi
+            if [ ! -s "$NOTES_FILE" ]; then
+              echo "See $DIR/CHANGELOG.md" > "$NOTES_FILE"
+            fi
+
+            # Each step below is skipped if already done, so a re-run after a
+            # transient failure mid-batch resumes instead of aborting.
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::notice::$TAG is already pushed"
+            else
+              # git tag takes -F or -m, never both, so the subject goes in the file.
+              TAG_MSG="$(mktemp)"
+              printf '%s %s\n\n' "$PKG" "$VERSION" > "$TAG_MSG"
+              cat "$NOTES_FILE" >> "$TAG_MSG"
+              git tag -f -a "$TAG" -F "$TAG_MSG"
+              git push origin "$TAG"
+            fi
+
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "::notice::Release $TAG already exists"
+            else
+              gh release create "$TAG" \
+                --title "${PKG} ${VERSION}" \
+                --notes-file "$NOTES_FILE"
+            fi
+            echo "::notice::Released $TAG"
+          done < /tmp/releases.ndjson
+
+          # Surface a partial batch as a failure so it cannot look fully green.
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::At least one package did not publish; see warnings above"
+            exit 1
+          fi
