@@ -62,7 +62,12 @@ Monorepo with 4 packages:
   with the changelog section as its notes. No local git client is needed, so a release can be
   finished entirely from the GitHub web UI or a cloud session.
 - Publish order is handled automatically: `pim-core` is sorted ahead of the MCP servers
-- Pushing a `<package>/v<version>` tag by hand still publishes, via `publish.yml`'s tag trigger
+- Pushing a `<package>/v<version>` tag by hand still publishes, via `publish.yml`'s tag trigger.
+  Note this path publishes to npm only — the GitHub Release and changelog notes are written by
+  `release.yml`, so a hand-pushed tag leaves no Release behind
+- If one package in a batch fails to publish, the others are still tagged and released; the failed
+  one is skipped with a warning and the run goes red. Re-running the job resumes it, since each
+  step checks npm and the existing tag/release before acting
 - Publishing is idempotent: a version already on npm is skipped, so a failed run can be re-run
 - The version in the tag must match `package.json`, or the publish fails rather than shipping a mismatch
 - `.npmignore` excludes test files from published packages
