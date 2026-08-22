@@ -74,7 +74,14 @@ function fakeServices() {
 }
 
 type Era = "legacy" | "modern";
-type ElicitAnswer = { action: "accept"; content: { confirm: boolean } } | { action: "decline" };
+/**
+ * How the test client answers a confirmation. `unsupported` is not an answer
+ * but a client shape: one that never declared the `elicitation` capability.
+ */
+type ElicitAnswer =
+  | { action: "accept"; content: { confirm: boolean } }
+  | { action: "decline" }
+  | { action: "unsupported" };
 
 const open = async (
   era: Era,
@@ -99,17 +106,20 @@ const open = async (
   );
 
   const elicitations: string[] = [];
+  const elicitAnswer = answer.action === "unsupported" ? undefined : answer;
   const client = new Client(
     { name: "roundtrip-test", version: "0.0.0" },
     {
-      capabilities: { elicitation: {} },
+      capabilities: elicitAnswer ? { elicitation: {} } : {},
       versionNegotiation: { mode: era === "modern" ? { pin: "2026-07-28" } : "legacy" },
     },
   );
-  client.setRequestHandler("elicitation/create", async (req) => {
-    elicitations.push(req.params.message as string);
-    return answer;
-  });
+  if (elicitAnswer) {
+    client.setRequestHandler("elicitation/create", async (req) => {
+      elicitations.push(req.params.message as string);
+      return elicitAnswer;
+    });
+  }
   await client.connect(clientTransport);
 
   return { client, handle, elicitations };
@@ -248,6 +258,22 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(elicitations[0]).toContain("r@test.com");
     expect(result.isError).toBeFalsy();
     expect(services.smtp.sendRawMessage).toHaveBeenCalled();
+  });
+
+  it("fails with an actionable error when the client cannot be asked", async () => {
+    const services = fakeServices();
+    const { client, elicitations } = await connect(era, services, { action: "unsupported" });
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: { to: ["r@test.com"], subject: "Hi", text: "Hello" },
+    });
+
+    expect(elicitations).toHaveLength(0);
+    expect(result.isError).toBe(true);
+    const [block] = result.content as Array<{ text: string }>;
+    expect(JSON.parse(block.text).error).toBe("CONFIRMATION_UNSUPPORTED");
+    expect(block.text).toContain("PIM_MCP_CONFIRM=off");
+    expect(services.smtp.sendRawMessage).not.toHaveBeenCalled();
   });
 
   it("does not send when the user declines", async () => {

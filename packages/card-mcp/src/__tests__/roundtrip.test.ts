@@ -34,7 +34,14 @@ function fakeService() {
 }
 
 type Era = "legacy" | "modern";
-type ElicitAnswer = { action: "accept"; content: { confirm: boolean } } | { action: "decline" };
+/**
+ * How the test client answers a confirmation. `unsupported` is not an answer
+ * but a client shape: one that never declared the `elicitation` capability.
+ */
+type ElicitAnswer =
+  | { action: "accept"; content: { confirm: boolean } }
+  | { action: "decline" }
+  | { action: "unsupported" };
 
 const open = async (
   era: Era,
@@ -59,17 +66,20 @@ const open = async (
   );
 
   const elicitations: string[] = [];
+  const elicitAnswer = answer.action === "unsupported" ? undefined : answer;
   const client = new Client(
     { name: "roundtrip-test", version: "0.0.0" },
     {
-      capabilities: { elicitation: {} },
+      capabilities: elicitAnswer ? { elicitation: {} } : {},
       versionNegotiation: { mode: era === "modern" ? { pin: "2026-07-28" } : "legacy" },
     },
   );
-  client.setRequestHandler("elicitation/create", async (req) => {
-    elicitations.push(req.params.message as string);
-    return answer;
-  });
+  if (elicitAnswer) {
+    client.setRequestHandler("elicitation/create", async (req) => {
+      elicitations.push(req.params.message as string);
+      return elicitAnswer;
+    });
+  }
   await client.connect(clientTransport);
 
   return { client, handle, elicitations };
@@ -148,6 +158,19 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     expect(elicitations[0]).toContain("u1");
     expect(result.isError).toBeFalsy();
     expect(service.deleteContact).toHaveBeenCalledWith("book1", "u1");
+  });
+
+  it("fails with an actionable error when the client cannot be asked", async () => {
+    const service = fakeService();
+    const { client, elicitations } = await connect(era, service, { action: "unsupported" });
+    const result = await client.callTool({ name: "delete_contact", arguments: { uid: "u1" } });
+
+    expect(elicitations).toHaveLength(0);
+    expect(result.isError).toBe(true);
+    const [block] = result.content as Array<{ text: string }>;
+    expect(JSON.parse(block.text).error).toBe("CONFIRMATION_UNSUPPORTED");
+    expect(block.text).toContain("PIM_MCP_CONFIRM=off");
+    expect(service.deleteContact).not.toHaveBeenCalled();
   });
 
   it("does not delete when the user declines, and asks only once", async () => {

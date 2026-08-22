@@ -1,5 +1,6 @@
 import {
   type CallToolResult,
+  type ClientCapabilities,
   type InputRequiredResult,
   type JsonSchemaType,
   type McpServer,
@@ -23,7 +24,13 @@ export type ToolResult = CallToolResult | InputRequiredResult;
 
 // Re-exported so tool modules can type their results without importing the SDK
 // directly — this module is the servers' MCP facade.
-export type { CallToolResult, InputRequiredResult, ServerContext, ToolAnnotations };
+export type {
+  CallToolResult,
+  ClientCapabilities,
+  InputRequiredResult,
+  ServerContext,
+  ToolAnnotations,
+};
 
 /**
  * A declarative tool definition.
@@ -79,7 +86,8 @@ export function registerTools<Service>(
       },
       // the SDK infers handler args from the
       // schema generic; the per-tool `Args` type is asserted by each tool module instead.
-      (args: any, ctx: ServerContext) => def.handler(args, service, ctx),
+      (args: any, ctx: ServerContext) =>
+        def.handler(args, service, withClientCapabilities(server, ctx)),
     );
   }
 }
@@ -147,6 +155,42 @@ export function toolError(err: unknown, mapCode?: (error: PimError) => string): 
   return fail(mapCode ? mapCode(pimError) : pimError.code, pimError.message, pimError.isRetryable);
 }
 
+/** The `_meta` envelope key carrying the client's declared capabilities (2026-07-28). */
+const CLIENT_CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
+
+/** Where {@link withClientCapabilities} parks the 2025-era capabilities on a context. */
+const CAPABILITIES = Symbol("pim.clientCapabilities");
+
+type CapabilityCarrier = { [CAPABILITIES]?: ClientCapabilities };
+
+/**
+ * Records the client's declared capabilities on a 2025-era context.
+ *
+ * On that era capabilities are negotiated once, at `initialize`, and never
+ * reach the per-request context — so the server's view of them is attached
+ * here for {@link clientCapabilities} to read back. 2026-07-28 requests carry
+ * their own copy in the `_meta` envelope and take precedence.
+ */
+function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerContext {
+  (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES] = server.server.getClientCapabilities();
+  return ctx;
+}
+
+/**
+ * The client capabilities in force for this request, or `undefined` when they
+ * cannot be determined — as is the case for {@link dispatchTool}, which has no
+ * client at all.
+ *
+ * A client that declares nothing yields `{}`, which is a determination: it
+ * means the client supports no optional capability, not that we failed to look.
+ */
+function clientCapabilities(ctx: ServerContext): ClientCapabilities | undefined {
+  const { envelope } = ctx.mcpReq as { envelope?: Record<string, unknown> };
+  const declared = envelope?.[CLIENT_CAPABILITIES_KEY];
+  if (declared) return declared as ClientCapabilities;
+  return (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES];
+}
+
 /** The outcome of a {@link confirmDestructive} gate. */
 export type ConfirmOutcome =
   | { status: "proceed" }
@@ -162,6 +206,11 @@ export type ConfirmOutcome =
  * Works on 2025-era connections too — the SDK's legacy shim turns the
  * `input_required` return into a real server-to-client `elicitation/create`
  * and re-enters the handler, so this needs no era branching.
+ *
+ * A client that never declared the `elicitation` capability cannot answer, so
+ * it is failed with `CONFIRMATION_UNSUPPORTED` rather than handed a question
+ * that goes nowhere. Capabilities we cannot read at all are gated as usual —
+ * unknown is not the same as unsupported, and the safe reading is to ask.
  *
  * Set `PIM_MCP_CONFIRM=off` to skip confirmation entirely (headless use).
  */
@@ -183,6 +232,21 @@ export function confirmDestructive(
     return {
       status: "interrupt",
       result: fail("CONFIRMATION_DECLINED", "Cancelled: the user did not confirm this operation."),
+    };
+  }
+
+  const capabilities = clientCapabilities(ctx);
+  if (capabilities !== undefined && capabilities.elicitation === undefined) {
+    // Asking would return an `input_required` the client can never answer, so
+    // the operation would simply be unusable. Fail with a way out instead.
+    return {
+      status: "interrupt",
+      result: fail(
+        "CONFIRMATION_UNSUPPORTED",
+        "This operation is irreversible and requires confirmation, but the client did not " +
+          'declare the "elicitation" capability, so it cannot be asked. Set PIM_MCP_CONFIRM=off ' +
+          "to run irreversible operations without confirmation.",
+      ),
     };
   }
 
