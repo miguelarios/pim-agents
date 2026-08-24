@@ -183,11 +183,19 @@ function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerCo
  *
  * A client that declares nothing yields `{}`, which is a determination: it
  * means the client supports no optional capability, not that we failed to look.
+ * Anything that is not an object is not a determination — the spec says
+ * capabilities are one — so a malformed value falls through to `undefined`
+ * rather than being read as "declared, and empty".
+ *
+ * Both lookups read SDK surface that the published type declarations erase, so
+ * an SDK upgrade should re-check them. A regression there degrades to
+ * `undefined`, which restores the previous always-ask behaviour rather than
+ * skipping a confirmation.
  */
 function clientCapabilities(ctx: ServerContext): ClientCapabilities | undefined {
   const { envelope } = ctx.mcpReq as { envelope?: Record<string, unknown> };
   const declared = envelope?.[CLIENT_CAPABILITIES_KEY];
-  if (declared) return declared as ClientCapabilities;
+  if (typeof declared === "object" && declared !== null) return declared as ClientCapabilities;
   return (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES];
 }
 

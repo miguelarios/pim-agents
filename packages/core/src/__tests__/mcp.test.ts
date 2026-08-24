@@ -24,7 +24,6 @@ const unknownCtx = (inputResponses?: unknown) =>
 const gate = (ctx: ServerContext) => confirmDestructive(ctx, "confirm_delete", "Delete it?");
 
 afterEach(() => {
-  process.env.PIM_MCP_CONFIRM = undefined;
   delete process.env.PIM_MCP_CONFIRM;
 });
 
@@ -40,6 +39,16 @@ describe("confirmDestructive", () => {
 
   it("asks when the client's capabilities are unknown", () => {
     const outcome = gate(unknownCtx());
+    expect(outcome.status).toBe("interrupt");
+    if (outcome.status !== "interrupt") return;
+    expect((outcome.result as { inputRequests?: unknown }).inputRequests).toBeDefined();
+  });
+
+  it("asks when the envelope's capabilities are malformed", () => {
+    // Not an object, so not a determination — treating it as "declared, and
+    // empty" would refuse an irreversible operation on a client that may well
+    // support elicitation.
+    const outcome = gate(modernCtx(null as unknown as Record<string, unknown>));
     expect(outcome.status).toBe("interrupt");
     if (outcome.status !== "interrupt") return;
     expect((outcome.result as { inputRequests?: unknown }).inputRequests).toBeDefined();
