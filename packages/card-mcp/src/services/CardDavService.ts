@@ -298,6 +298,64 @@ export class CardDavService {
   }
 
   /**
+   * Renames an address book and/or updates its description via PROPPATCH.
+   * At least one of the two must be given — an empty update is a caller bug,
+   * not a no-op worth a round trip.
+   */
+  async renameAddressBook(
+    url: string,
+    opts: { displayName?: string; description?: string },
+  ): Promise<void> {
+    if (opts.displayName === undefined && opts.description === undefined) {
+      throw new ValidationError(
+        "Nothing to change — provide a displayName and/or a description",
+      );
+    }
+    const client = await this.ensureConnected();
+    try {
+      const [response] = await client.davRequest({
+        url,
+        init: {
+          method: "PROPPATCH",
+          headers: {},
+          body: {
+            "d:propertyupdate": {
+              _attributes: {
+                "xmlns:d": "DAV:",
+                "xmlns:card": "urn:ietf:params:xml:ns:carddav",
+              },
+              "d:set": {
+                "d:prop": {
+                  ...(opts.displayName !== undefined ? { "d:displayname": opts.displayName } : {}),
+                  ...(opts.description !== undefined
+                    ? { "card:addressbook-description": opts.description }
+                    : {}),
+                },
+              },
+            },
+          },
+        },
+      });
+      this.checkCollectionResponse(response, "rename", url);
+    } catch (error) {
+      if (error instanceof ContactError || error instanceof ValidationError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** Deletes an address book collection — and with it every contact inside. */
+  async deleteAddressBook(url: string): Promise<void> {
+    const client = await this.ensureConnected();
+    try {
+      const response = await client.deleteObject({ url });
+      this.checkCollectionResponse(response, "delete", url);
+    } catch (error) {
+      if (error instanceof ContactError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
    * Judges a collection-level DAV response. Never trusts `ok` — tsdav computes
    * it as `!responseBody.error`, so a 207 wrapping a failed propstat reports
    * `ok: true` — and for PROPPATCH not the mapped `status` alone either: a
