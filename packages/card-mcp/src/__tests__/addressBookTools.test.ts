@@ -27,9 +27,7 @@ const fakeService = () => ({
     { displayName: "Work", url: "/dav/work/", ctag: "c2", contactCount: 3 },
   ]),
   findAddressBook: vi.fn().mockResolvedValue("/dav/work/"),
-  createAddressBook: vi
-    .fn()
-    .mockResolvedValue({ url: "/dav/team/", displayName: "Team" }),
+  createAddressBook: vi.fn().mockResolvedValue({ url: "/dav/team/", displayName: "Team" }),
   renameAddressBook: vi.fn().mockResolvedValue(undefined),
   deleteAddressBook: vi.fn().mockResolvedValue(undefined),
   countContacts: vi.fn().mockResolvedValue(128),

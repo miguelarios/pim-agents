@@ -307,9 +307,7 @@ export class CardDavService {
     opts: { displayName?: string; description?: string },
   ): Promise<void> {
     if (opts.displayName === undefined && opts.description === undefined) {
-      throw new ValidationError(
-        "Nothing to change — provide a displayName and/or a description",
-      );
+      throw new ValidationError("Nothing to change — provide a displayName and/or a description");
     }
     const client = await this.ensureConnected();
     try {
@@ -387,10 +385,7 @@ export class CardDavService {
         throw new ContactError(`Address book not found: ${url}`, ErrorCode.ADDRESSBOOK_NOT_FOUND);
       }
       if (action === "create" && status === 405) {
-        throw new ContactError(
-          `A collection already exists at ${url}`,
-          ErrorCode.OPERATION_FAILED,
-        );
+        throw new ContactError(`A collection already exists at ${url}`, ErrorCode.OPERATION_FAILED);
       }
       if (action === "create" && (status === 403 || status === 501)) {
         throw new ContactError(

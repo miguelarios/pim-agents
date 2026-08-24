@@ -172,9 +172,9 @@ describe("CardDavService", () => {
       async (slug) => {
         const { __mockClient } = (await import("tsdav")) as any;
         __mockClient.davRequest.mockClear();
-        await expect(service.createAddressBook({ displayName: "Team", slug })).rejects.toMatchObject(
-          { code: "VALIDATION_FAILED" },
-        );
+        await expect(
+          service.createAddressBook({ displayName: "Team", slug }),
+        ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
         expect(__mockClient.davRequest).not.toHaveBeenCalled();
       },
     );

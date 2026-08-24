@@ -11,7 +11,7 @@ import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CardDavService } from "../services/CardDavService.js";
-import { CONTACT_TOOLS } from "../tools/contactTools.js";
+import { CARD_TOOLS } from "../tools/index.js";
 
 const CONTACT = {
   uid: "u1",
@@ -26,9 +26,14 @@ const CONTACT = {
 function fakeService() {
   return {
     listAddressBooks: vi.fn().mockResolvedValue([{ url: "book1", displayName: "Personal" }]),
+    findAddressBook: vi.fn().mockImplementation(async (ref: string) => ref),
     fetchContacts: vi.fn().mockResolvedValue([CONTACT]),
     searchContacts: vi.fn().mockResolvedValue([CONTACT]),
     deleteContact: vi.fn().mockResolvedValue(undefined),
+    createAddressBook: vi.fn().mockResolvedValue({ url: "/dav/team/", displayName: "Team" }),
+    renameAddressBook: vi.fn().mockResolvedValue(undefined),
+    deleteAddressBook: vi.fn().mockResolvedValue(undefined),
+    countContacts: vi.fn().mockResolvedValue(2),
     disconnect: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -59,7 +64,7 @@ const open = async (
           cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
         },
       );
-      registerTools(server, CONTACT_TOOLS, service as unknown as CardDavService);
+      registerTools(server, CARD_TOOLS, service as unknown as CardDavService);
       return server;
     },
     { transport: serverTransport },
@@ -109,7 +114,7 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     const { client } = await connect(era, fakeService());
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(CONTACT_TOOLS.length);
+    expect(tools).toHaveLength(CARD_TOOLS.length);
     for (const tool of tools) {
       expect(tool.title, tool.name).toBeTruthy();
       expect(tool.outputSchema, tool.name).toBeDefined();
@@ -127,7 +132,7 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     const first = (await client.listTools()).tools.map((t) => t.name);
     const second = (await client.listTools()).tools.map((t) => t.name);
     expect(second).toEqual(first);
-    expect(first).toEqual(CONTACT_TOOLS.map((t) => t.name));
+    expect(first).toEqual(CARD_TOOLS.map((t) => t.name));
   });
 
   it("returns structuredContent matching the advertised outputSchema", async () => {
@@ -158,6 +163,33 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     expect(elicitations[0]).toContain("u1");
     expect(result.isError).toBeFalsy();
     expect(service.deleteContact).toHaveBeenCalledWith("book1", "u1");
+  });
+
+  it("confirms before deleting an address book, then deletes it", async () => {
+    const service = fakeService();
+    const { client, elicitations } = await connect(era, service);
+    const result = await client.callTool({
+      name: "delete_address_book",
+      arguments: { addressBook: "Team" },
+    });
+
+    expect(elicitations).toHaveLength(1);
+    expect(elicitations[0]).toContain("Team");
+    expect(result.isError).toBeFalsy();
+    expect(service.deleteAddressBook).toHaveBeenCalledWith("Team");
+  });
+
+  it("does not delete an address book when the user declines", async () => {
+    const service = fakeService();
+    const { client, elicitations } = await connect(era, service, { action: "decline" });
+    const result = await client.callTool({
+      name: "delete_address_book",
+      arguments: { addressBook: "Team" },
+    });
+
+    expect(elicitations).toHaveLength(1);
+    expect(result.isError).toBe(true);
+    expect(service.deleteAddressBook).not.toHaveBeenCalled();
   });
 
   it("fails with an actionable error when the client cannot be asked", async () => {
