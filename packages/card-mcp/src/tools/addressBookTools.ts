@@ -131,7 +131,7 @@ export const ADDRESS_BOOK_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "delete_address_book",
     title: "Delete Address Book",
     description:
-      "Delete an address book and every contact in it. This cannot be undone, and asks the user to confirm before deleting.",
+      "Delete an address book and every contact in it. This cannot be undone, and asks the user to confirm before deleting. The contact count in the confirmation is read when the prompt is built, so it describes the book at that moment rather than guaranteeing what the delete will remove.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,

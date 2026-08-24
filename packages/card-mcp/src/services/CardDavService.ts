@@ -193,7 +193,7 @@ export class CardDavService {
    * picking one of two similar books is a data-loss shape on the write paths.
    */
   async findAddressBook(ref: string): Promise<string> {
-    if (isUrlRef(ref)) return ref;
+    if (isUrlRef(ref.trim())) return ref.trim();
     return (await this.findAddressBookEntry(ref)).url;
   }
 
@@ -209,12 +209,16 @@ export class CardDavService {
    * from a name.
    */
   async findAddressBookEntry(ref: string): Promise<AddressBook> {
+    // Trimmed before matching: a trailing space is an easy thing for a model
+    // to produce, and reporting "no book named 'Work '" while listing `Work`
+    // as a known name reads as self-contradictory to whoever receives it.
+    const trimmed = ref.trim();
     const books = await this.listAddressBooks();
-    if (isUrlRef(ref)) {
-      const match = books.find((b) => collectionPath(b.url) === collectionPath(ref));
-      return match ?? { displayName: "", url: ref };
+    if (isUrlRef(trimmed)) {
+      const match = books.find((b) => collectionPath(b.url) === collectionPath(trimmed));
+      return match ?? { displayName: "", url: trimmed };
     }
-    const wanted = ref.toLowerCase();
+    const wanted = trimmed.toLowerCase();
     const matches = books.filter((b) => b.displayName.toLowerCase() === wanted);
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
@@ -293,6 +297,15 @@ export class CardDavService {
     }
     const base = homeUrl.endsWith("/") ? homeUrl : `${homeUrl}/`;
     const taken = new Set(books.map((b) => collectionPath(b.url)));
+    if (opts.slug !== undefined && taken.has(collectionPath(base + opts.slug))) {
+      // An explicit slug is a request for a specific URL. Suffixing it would
+      // hand back a different one than was asked for, observable only by
+      // reading the result, so this refuses instead.
+      throw new ContactError(
+        `A collection already exists at the requested slug "${opts.slug}" (${base}${opts.slug}/)`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
     const slug = opts.slug ?? slugify(opts.displayName);
     let candidate = slug;
     for (let n = 2; taken.has(collectionPath(base + candidate)); n++) {
@@ -372,7 +385,10 @@ export class CardDavService {
       });
       this.checkCollectionResponse(response, "rename", url);
     } catch (error) {
-      if (error instanceof ContactError || error instanceof ValidationError) throw error;
+      // No ValidationError branch: the only one this method throws happens
+      // before the try, so a branch for it here would be dead code implying a
+      // path that does not exist.
+      if (error instanceof ContactError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
   }
@@ -424,8 +440,29 @@ export class CardDavService {
       );
     }
 
+    // A 207 is not itself a verdict — it is a wrapper saying "the answer is
+    // inside". If the propstat statuses did not parse, the only status left is
+    // that wrapper, and treating a 2xx envelope as success is exactly the
+    // failure this walk exists to prevent. Not being able to look inside is a
+    // reason to refuse, not to assume.
+    if (res?.status === 207 && statuses.every((s) => s.status === 207)) {
+      throw new ContactError(
+        `The server returned a 207 for the ${action} of ${url} with no readable per-property status — cannot confirm it succeeded`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
+
     for (const { status, statusText } of statuses) {
       if (status >= 200 && status <= 299) continue;
+      if (action === "create" && status === 404) {
+        // RFC 5689 §3: a 404 here is about a missing parent collection, not
+        // about the book being created — saying "not found" would name the
+        // wrong thing.
+        throw new ContactError(
+          `Cannot create ${url}: the parent collection does not exist`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
       if (status === 404) {
         throw new ContactError(`Address book not found: ${url}`, ErrorCode.ADDRESSBOOK_NOT_FOUND);
       }

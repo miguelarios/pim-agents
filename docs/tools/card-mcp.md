@@ -212,7 +212,7 @@ Rename an address book and/or update its description (PROPPATCH). At least one o
 
 Delete an address book **and every contact in it**.
 
-> **Asks for confirmation.** The prompt names the book and its contact count, so the user confirms what is actually being destroyed. Declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
+> **Asks for confirmation.** The prompt names the book — by its display name even when the reference given was a URL — and its contact count. The count is read when the prompt is built, so it describes the book at that moment rather than guaranteeing what the delete removes. Declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
