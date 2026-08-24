@@ -168,9 +168,15 @@ type CapabilityCarrier = { [CAPABILITIES]?: ClientCapabilities };
  * Writing to the context is safe because the SDK builds a fresh one per
  * request: two calls in flight at once were confirmed to receive distinct
  * `ctx` and `ctx.mcpReq` objects on both eras, so this cannot race.
+ *
+ * The value is validated on the way in, for the same reason the envelope is:
+ * it comes from the SDK unchecked, and a non-object stored here would reach
+ * the gate as a capabilities map it could dereference.
  */
 function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerContext {
-  (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES] = server.server.getClientCapabilities();
+  (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES] = asObject(
+    server.server.getClientCapabilities(),
+  ) as ClientCapabilities | undefined;
   return ctx;
 }
 

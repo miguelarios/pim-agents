@@ -221,6 +221,20 @@ describe("client capabilities reaching the gate", () => {
     expect((result as { inputRequests?: unknown }).inputRequests).toBeDefined();
   });
 
+  it.each([
+    ["null", null],
+    ["an array", [] as unknown],
+    ["a primitive", 7 as unknown],
+  ])("asks when the negotiated capabilities are %s", async (_label, negotiated) => {
+    // The 2025-era value arrives from the SDK unvalidated, exactly like the
+    // envelope does, so it has to clear the same bar before it is trusted.
+    const result = await callThroughRegisterTools(
+      negotiated as Record<string, unknown> | undefined,
+      undefined,
+    );
+    expect((result as { inputRequests?: unknown }).inputRequests).toBeDefined();
+  });
+
   it("keeps concurrent requests from seeing each other's capabilities", async () => {
     // registerTools records capabilities on the context it is handed. The SDK
     // builds a fresh one per request — verified against
