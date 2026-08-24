@@ -51,16 +51,6 @@ describe("confirmDestructive", () => {
     expect((outcome.result as { inputRequests?: unknown }).inputRequests).toBeDefined();
   });
 
-  it("asks when the client declares a malformed elicitation capability", () => {
-    // Same reasoning one level down: `elicitation: null` is not a statement of
-    // support, and asking would strand the call exactly as issue #22 describes.
-    const outcome = gate(modernCtx({ elicitation: null }));
-    expect(outcome.status).toBe("interrupt");
-    if (outcome.status !== "interrupt") return;
-    const [block] = (outcome.result as { content: Array<{ text: string }> }).content;
-    expect(JSON.parse(block.text).error).toBe("CONFIRMATION_UNSUPPORTED");
-  });
-
   it.each([
     ["an array", [] as unknown],
     ["a primitive", "elicitation" as unknown],
@@ -119,6 +109,17 @@ describe("confirmDestructive", () => {
       if (outcome.status !== "interrupt") throw new Error("expected an interrupt");
       const [block] = (outcome.result as { content: Array<{ text: string }> }).content;
       expect(block.text).toContain("PIM_MCP_CONFIRM=off");
+    });
+
+    it("fails when the client declares a malformed elicitation capability", () => {
+      // The same reasoning one level down: `elicitation: null` is not a
+      // statement of support, and asking would strand the call exactly as
+      // issue #22 describes.
+      const outcome = gate(modernCtx({ elicitation: null }));
+      expect(outcome.status).toBe("interrupt");
+      if (outcome.status !== "interrupt") return;
+      const [block] = (outcome.result as { content: Array<{ text: string }> }).content;
+      expect(JSON.parse(block.text).error).toBe("CONFIRMATION_UNSUPPORTED");
     });
 
     it("reports a distinct error code", () => {
