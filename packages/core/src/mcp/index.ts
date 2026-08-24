@@ -24,13 +24,7 @@ export type ToolResult = CallToolResult | InputRequiredResult;
 
 // Re-exported so tool modules can type their results without importing the SDK
 // directly — this module is the servers' MCP facade.
-export type {
-  CallToolResult,
-  ClientCapabilities,
-  InputRequiredResult,
-  ServerContext,
-  ToolAnnotations,
-};
+export type { CallToolResult, InputRequiredResult, ServerContext, ToolAnnotations };
 
 /**
  * A declarative tool definition.

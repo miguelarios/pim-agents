@@ -137,10 +137,7 @@ describe("client capabilities reaching the gate", () => {
    * pinned through the public surface rather than by reaching for the private
    * symbol the 2025-era capabilities are parked under.
    */
-  const callThroughRegisterTools = async (
-    negotiated: Record<string, unknown> | undefined,
-    envelope: Record<string, unknown> | undefined,
-  ) => {
+  const registerOneTool = (negotiated: Record<string, unknown> | undefined) => {
     let handler: ((args: unknown, ctx: ServerContext) => Promise<ToolResult>) | undefined;
     const server = {
       registerTool: (_name: string, _config: unknown, fn: typeof handler) => {
@@ -173,8 +170,21 @@ describe("client capabilities reaching the gate", () => {
     );
 
     if (!handler) throw new Error("registerTools never registered the tool");
-    const ctx = { mcpReq: { ...(envelope ? { envelope } : {}), inputResponses: undefined } };
-    return handler({}, ctx as unknown as ServerContext);
+    return { handler, request: requestCtx };
+  };
+
+  /** A request context, optionally carrying a 2026-07-28 `_meta` envelope. */
+  const requestCtx = (envelope?: Record<string, unknown>) =>
+    ({
+      mcpReq: { ...(envelope ? { envelope } : {}), inputResponses: undefined },
+    }) as unknown as ServerContext;
+
+  const callThroughRegisterTools = async (
+    negotiated: Record<string, unknown> | undefined,
+    envelope: Record<string, unknown> | undefined,
+  ) => {
+    const { handler } = registerOneTool(negotiated);
+    return handler({}, requestCtx(envelope));
   };
 
   const refused = (result: ToolResult) => {
@@ -197,6 +207,34 @@ describe("client capabilities reaching the gate", () => {
       { [CLIENT_CAPABILITIES]: { elicitation: {} } },
     );
     expect((result as { inputRequests?: unknown }).inputRequests).toBeDefined();
+  });
+
+  it("falls back to the negotiated capabilities when the envelope is malformed", async () => {
+    // The reason the lookup reads two sources: an unreadable envelope is not a
+    // dead end while the negotiated value still says something.
+    const result = await callThroughRegisterTools({}, { [CLIENT_CAPABILITIES]: null });
+    expect(refused(result)).toBe(true);
+  });
+
+  it("asks when a malformed envelope has no negotiated value behind it", async () => {
+    const result = await callThroughRegisterTools(undefined, { [CLIENT_CAPABILITIES]: null });
+    expect((result as { inputRequests?: unknown }).inputRequests).toBeDefined();
+  });
+
+  it("keeps concurrent requests from seeing each other's capabilities", async () => {
+    // registerTools records capabilities on the context it is handed. The SDK
+    // builds a fresh one per request — verified against
+    // `@modelcontextprotocol/server` 2.0.0, where two calls in flight at once
+    // receive distinct `ctx` and `ctx.mcpReq` objects on both eras — so this
+    // pins the half we own: the wrapper must hold no state of its own between
+    // calls, or requests would answer with each other's capabilities.
+    const { handler } = registerOneTool({});
+    const [supported, unsupported] = await Promise.all([
+      handler({}, requestCtx({ [CLIENT_CAPABILITIES]: { elicitation: {} } })),
+      handler({}, requestCtx({ [CLIENT_CAPABILITIES]: {} })),
+    ]);
+    expect((supported as { inputRequests?: unknown }).inputRequests).toBeDefined();
+    expect(refused(unsupported)).toBe(true);
   });
 
   it("falls back to the negotiated capabilities when there is no envelope", async () => {
