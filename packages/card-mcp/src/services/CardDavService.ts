@@ -100,6 +100,39 @@ export class CardDavService {
     }
   }
 
+  /**
+   * Resolves an address-book reference — a URL or a display name — to a URL.
+   *
+   * URLs pass through verbatim with no round-trip. Names match case-insensitively
+   * and exactly against the account's books; anything else fails with the known
+   * names (or, on a duplicate name, the matching URLs) so the caller can correct
+   * itself in one step. Fuzzy matching is deliberately absent: "work" silently
+   * picking one of two similar books is a data-loss shape on the write paths.
+   */
+  async findAddressBook(ref: string): Promise<string> {
+    if (/^(https?:\/\/|\/)/.test(ref)) return ref;
+    const books = await this.listAddressBooks();
+    const wanted = ref.toLowerCase();
+    const matches = books.filter((b) => b.displayName.toLowerCase() === wanted);
+    if (matches.length === 1) return matches[0].url;
+    if (matches.length === 0) {
+      const known = books
+        .map((b) => b.displayName)
+        .filter(Boolean)
+        .join(", ");
+      throw new ContactError(
+        `No address book named "${ref}". Known address books: ${known || "(none)"}`,
+        ErrorCode.ADDRESSBOOK_NOT_FOUND,
+      );
+    }
+    throw new ContactError(
+      `Multiple address books are named "${ref}" — pass one of these URLs instead: ${matches
+        .map((b) => b.url)
+        .join(", ")}`,
+      ErrorCode.ADDRESSBOOK_NOT_FOUND,
+    );
+  }
+
   async fetchContacts(
     addressBookUrl: string,
     opts: { detailLevel?: DetailLevel } = {},

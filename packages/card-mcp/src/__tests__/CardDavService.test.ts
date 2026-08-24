@@ -21,6 +21,10 @@ vi.mock("tsdav", () => {
     createVCard: vi.fn().mockResolvedValue({ ok: true }),
     updateVCard: vi.fn().mockResolvedValue({ ok: true }),
     deleteVCard: vi.fn().mockResolvedValue({ ok: true }),
+    account: { homeUrl: "/dav/addressbooks/users/miguel/", rootUrl: "/dav/" },
+    davRequest: vi.fn().mockResolvedValue([{ ok: true, status: 201, statusText: "Created" }]),
+    deleteObject: vi.fn().mockResolvedValue({ ok: true, status: 204, statusText: "No Content" }),
+    propfind: vi.fn().mockResolvedValue([]),
   };
   return {
     DAVClient: vi.fn().mockImplementation(() => mockClient),
@@ -64,6 +68,52 @@ describe("CardDavService", () => {
     it("auto-connects if not connected", async () => {
       const books = await service.listAddressBooks();
       expect(books).toHaveLength(2);
+    });
+  });
+
+  describe("findAddressBook", () => {
+    it("resolves a display name to its URL", async () => {
+      await expect(service.findAddressBook("Work")).resolves.toBe(
+        "/dav/addressbooks/users/miguel/work/",
+      );
+    });
+
+    it("matches names case-insensitively", async () => {
+      await expect(service.findAddressBook("work")).resolves.toBe(
+        "/dav/addressbooks/users/miguel/work/",
+      );
+    });
+
+    it("returns URLs verbatim without listing books", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      await service.connect();
+      __mockClient.fetchAddressBooks.mockClear();
+      await expect(service.findAddressBook("/dav/addressbooks/users/miguel/other/")).resolves.toBe(
+        "/dav/addressbooks/users/miguel/other/",
+      );
+      await expect(service.findAddressBook("https://dav.example.com/books/a/")).resolves.toBe(
+        "https://dav.example.com/books/a/",
+      );
+      expect(__mockClient.fetchAddressBooks).not.toHaveBeenCalled();
+    });
+
+    it("lists the known names when no book matches", async () => {
+      await expect(service.findAddressBook("Personal")).rejects.toMatchObject({
+        code: "ADDRESSBOOK_NOT_FOUND",
+        message: expect.stringContaining("Contacts, Work"),
+      });
+    });
+
+    it("lists the matching URLs when two books share the name", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchAddressBooks.mockResolvedValueOnce([
+        { displayName: "Work", url: "/dav/a/work/", ctag: "1" },
+        { displayName: "work", url: "/dav/b/work/", ctag: "2" },
+      ]);
+      await expect(service.findAddressBook("Work")).rejects.toMatchObject({
+        code: "ADDRESSBOOK_NOT_FOUND",
+        message: expect.stringMatching(/\/dav\/a\/work\/.*\/dav\/b\/work\//s),
+      });
     });
   });
 
