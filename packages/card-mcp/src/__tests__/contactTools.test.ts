@@ -227,6 +227,57 @@ describe("resolve_contact handler new shape", () => {
   });
 });
 
+describe("address book name resolution", () => {
+  it("resolves a display name through the service", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue([]);
+    const fakeService = {
+      findAddressBook: vi.fn().mockResolvedValue("/dav/work/"),
+      fetchContacts: fetchSpy,
+    };
+    await callTool("list_contacts", { addressBook: "Work" }, fakeService);
+    expect(fakeService.findAddressBook).toHaveBeenCalledWith("Work");
+    expect(fetchSpy).toHaveBeenCalledWith("/dav/work/", { detailLevel: "summary" });
+  });
+
+  it("passes a URL through the same resolution path", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue([]);
+    const fakeService = {
+      findAddressBook: vi.fn().mockImplementation(async (ref: string) => ref),
+      fetchContacts: fetchSpy,
+    };
+    await callTool("list_contacts", { addressBook: "/dav/other/" }, fakeService);
+    expect(fetchSpy).toHaveBeenCalledWith("/dav/other/", { detailLevel: "summary" });
+  });
+
+  it("still falls back to the first book when omitted", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue([]);
+    const fakeService = {
+      listAddressBooks: vi.fn().mockResolvedValue([{ url: "book1", displayName: "x" }]),
+      findAddressBook: vi.fn(),
+      fetchContacts: fetchSpy,
+    };
+    await callTool("list_contacts", {}, fakeService);
+    expect(fakeService.findAddressBook).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith("book1", { detailLevel: "summary" });
+  });
+
+  it("surfaces an unknown name as ADDRESSBOOK_NOT_FOUND", async () => {
+    const { ContactError, ErrorCode } = await import("@miguelarios/pim-core");
+    const fakeService = {
+      findAddressBook: vi
+        .fn()
+        .mockRejectedValue(
+          new ContactError('No address book named "Nope"', ErrorCode.ADDRESSBOOK_NOT_FOUND),
+        ),
+      fetchContacts: vi.fn(),
+    };
+    const res = await callTool("list_contacts", { addressBook: "Nope" }, fakeService);
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).error).toBe("ADDRESSBOOK_NOT_FOUND");
+    expect(fakeService.fetchContacts).not.toHaveBeenCalled();
+  });
+});
+
 describe("delete_contact confirmation gate", () => {
   const fakeService = () => ({
     listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "x" }]),
