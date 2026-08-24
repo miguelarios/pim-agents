@@ -1,9 +1,11 @@
+import { randomBytes } from "node:crypto";
 import {
   type CardDavConfig,
   ConnectionError,
   type Contact,
   ContactError,
   ErrorCode,
+  ValidationError,
   buildVCard,
   parseVCard,
   toPimError,
@@ -17,6 +19,38 @@ export interface AddressBook {
   description?: string;
   syncToken?: string;
   contactCount?: number;
+}
+
+/** Derives a URL slug from a display name; falls back to a random one when nothing survives. */
+function slugify(displayName: string): string {
+  const slug = displayName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `addressbook-${randomBytes(4).toString("hex")}`;
+}
+
+/**
+ * Collects the propstat-level status lines from a raw tsdav multistatus, in
+ * which keys arrive camelCased with namespace prefixes stripped.
+ */
+function propstatStatusLines(raw: unknown): string[] {
+  const multistatus = (raw as { multistatus?: { response?: unknown } } | null | undefined)
+    ?.multistatus;
+  if (!multistatus) return [];
+  const responses = Array.isArray(multistatus.response)
+    ? multistatus.response
+    : [multistatus.response];
+  const lines: string[] = [];
+  for (const entry of responses) {
+    const propstat = (entry as { propstat?: unknown } | null | undefined)?.propstat;
+    if (!propstat) continue;
+    for (const ps of Array.isArray(propstat) ? propstat : [propstat]) {
+      const status = (ps as { status?: unknown } | null | undefined)?.status;
+      if (typeof status === "string") lines.push(status);
+    }
+  }
+  return lines;
 }
 
 /** Normalises a URL or href to a comparable path: origin stripped, trailing slashes trimmed. */
@@ -175,6 +209,148 @@ export class CardDavService {
         .join(", ")}`,
       ErrorCode.ADDRESSBOOK_NOT_FOUND,
     );
+  }
+
+  /**
+   * Creates an address book via extended MKCOL (RFC 5689).
+   *
+   * tsdav's `makeCollection` cannot be used: it passes no `attributes`, and
+   * `davRequest` drops document-level attributes, so its MKCOL body carries
+   * undeclared `d:`/`card:` prefixes that a conformant server rejects. The
+   * request therefore goes through `davRequest` directly, with the namespace
+   * declarations as `_attributes` inside the root element — the same pattern
+   * tsdav's own `makeCalendar` uses.
+   */
+  async createAddressBook(opts: {
+    displayName: string;
+    description?: string;
+    slug?: string;
+  }): Promise<{ url: string; displayName: string }> {
+    const client = await this.ensureConnected();
+    if (opts.slug !== undefined && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(opts.slug)) {
+      throw new ValidationError(
+        `Invalid slug "${opts.slug}" — use lowercase letters, digits and hyphens, starting with a letter or digit`,
+        "slug",
+      );
+    }
+
+    const books = await this.listAddressBooks();
+    // A second book with the same display name would make that name ambiguous
+    // to findAddressBook on every subsequent call, so duplicates are refused
+    // rather than suffixed — that also keeps a retried create from minting one.
+    const duplicate = books.find(
+      (b) => b.displayName.toLowerCase() === opts.displayName.toLowerCase(),
+    );
+    if (duplicate) {
+      throw new ContactError(
+        `An address book named "${duplicate.displayName}" already exists at ${duplicate.url}`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
+
+    const homeUrl = (client as { account?: { homeUrl?: string } }).account?.homeUrl;
+    if (!homeUrl) {
+      throw new ContactError(
+        "The account has no address book home URL — cannot derive a location for the new book",
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
+    const base = homeUrl.endsWith("/") ? homeUrl : `${homeUrl}/`;
+    const taken = new Set(books.map((b) => collectionPath(b.url)));
+    const slug = opts.slug ?? slugify(opts.displayName);
+    let candidate = slug;
+    for (let n = 2; taken.has(collectionPath(base + candidate)); n++) {
+      candidate = `${slug}-${n}`;
+    }
+    const url = `${base}${candidate}/`;
+
+    try {
+      const [response] = await client.davRequest({
+        url,
+        init: {
+          method: "MKCOL",
+          headers: {},
+          body: {
+            "d:mkcol": {
+              _attributes: {
+                "xmlns:d": "DAV:",
+                "xmlns:card": "urn:ietf:params:xml:ns:carddav",
+              },
+              "d:set": {
+                "d:prop": {
+                  "d:resourcetype": { "d:collection": {}, "card:addressbook": {} },
+                  "d:displayname": opts.displayName,
+                  ...(opts.description !== undefined
+                    ? { "card:addressbook-description": opts.description }
+                    : {}),
+                },
+              },
+            },
+          },
+        },
+      });
+      this.checkCollectionResponse(response, "create", url);
+      return { url, displayName: opts.displayName };
+    } catch (error) {
+      if (error instanceof ContactError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Judges a collection-level DAV response. Never trusts `ok` — tsdav computes
+   * it as `!responseBody.error`, so a 207 wrapping a failed propstat reports
+   * `ok: true` — and for PROPPATCH not the mapped `status` alone either: a
+   * propstat-level failure leaves it at the transport's 207 (a 2xx), with the
+   * real statuses surviving only under `raw`. So this walks the raw propstat
+   * statuses too.
+   */
+  private checkCollectionResponse(
+    response: unknown,
+    action: "create" | "rename" | "delete",
+    url: string,
+  ): void {
+    const res = response as
+      | { status?: number; statusText?: string; raw?: unknown }
+      | null
+      | undefined;
+    const statuses: Array<{ status: number; statusText: string }> = [];
+    if (res && typeof res.status === "number") {
+      statuses.push({ status: res.status, statusText: res.statusText ?? "" });
+    }
+    for (const line of propstatStatusLines(res?.raw)) {
+      const match = /\b(\d{3})\b\s*(.*)$/.exec(line);
+      if (match) statuses.push({ status: Number(match[1]), statusText: match[2] ?? "" });
+    }
+
+    for (const { status, statusText } of statuses) {
+      if (status >= 200 && status <= 299) continue;
+      if (status === 404) {
+        throw new ContactError(`Address book not found: ${url}`, ErrorCode.ADDRESSBOOK_NOT_FOUND);
+      }
+      if (action === "create" && status === 405) {
+        throw new ContactError(
+          `A collection already exists at ${url}`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+      if (action === "create" && (status === 403 || status === 501)) {
+        throw new ContactError(
+          `The provider does not allow creating address books here (HTTP ${status})`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+      if (status === 403) {
+        throw new ContactError(
+          `The server refused to ${action} ${url} — the address book may be read-only (HTTP 403)`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+      throw new ContactError(
+        `Failed to ${action} address book ${url}: HTTP ${status} ${statusText}`.trim(),
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
   }
 
   async fetchContacts(
