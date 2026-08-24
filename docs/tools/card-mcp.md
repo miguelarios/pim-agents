@@ -1,8 +1,8 @@
 # Contacts MCP Tools
 
-`@miguelarios/card-mcp` — CardDAV contacts server with 6 tools.
+`@miguelarios/card-mcp` — CardDAV contacts server with 10 tools.
 
-> Definitions are pulled directly from `packages/card-mcp/src/tools/contactTools.ts`. Output shapes from `packages/card-mcp/src/services/CardDavService.ts` and `packages/core/src/vcard.ts`.
+> Definitions are pulled directly from `packages/card-mcp/src/tools/contactTools.ts` and `packages/card-mcp/src/tools/addressBookTools.ts`. Output shapes from `packages/card-mcp/src/services/CardDavService.ts` and `packages/core/src/vcard.ts`.
 
 > All results carry validated `structuredContent` matching the tool's advertised `outputSchema`, with the same JSON serialized into a text block for clients that do not read structured output. Errors are returned as `isError: true` with a `{ error, message, retryable }` body.
 
@@ -15,7 +15,7 @@ List or search contacts. Returns all contacts if no query provided, or filters b
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | | Optional search query to filter contacts by name, email, phone, or organization. |
-| `addressBook` | string | | Address book URL. If omitted, uses the first available address book. |
+| `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, uses the first available address book. |
 | `detail_level` | `"summary"` \| `"full"` | | Level of detail. `summary` (default) omits photo binary and raw `otherProperties`. `full` returns the complete parsed vCard shape. |
 
 **Output**
@@ -38,7 +38,7 @@ Get full details of a single contact by UID.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `uid` | string | yes | The unique identifier (UID) of the contact. |
-| `addressBook` | string | | Address book URL. If omitted, uses the first available address book. |
+| `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, uses the first available address book. |
 | `detail_level` | `"summary"` \| `"full"` | | Level of detail. `summary` (default) omits photo binary and raw `otherProperties`. `full` returns the complete parsed vCard shape. |
 
 **Output**
@@ -67,7 +67,7 @@ Create a new contact with the specified details.
 | `birthday` | string | | Birthday (YYYY-MM-DD). |
 | `categories` | string[] | | Contact categories/tags. |
 | `note` | string | | Free-text note. |
-| `addressBook` | string | | Address book URL. If omitted, uses the first available address book. |
+| `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, uses the first available address book. |
 
 **Output**
 
@@ -98,7 +98,7 @@ Update an existing contact. Only provided fields are changed (merge update). Omi
 | `birthday` | string | | New birthday (YYYY-MM-DD). |
 | `categories` | string[] | | New contact categories/tags (replaces existing). |
 | `note` | string | | New note. |
-| `addressBook` | string | | Address book URL. If omitted, uses the first available address book. |
+| `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, uses the first available address book. |
 
 **Output**
 
@@ -117,7 +117,7 @@ Delete a contact by UID. This action cannot be undone.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `uid` | string | yes | The UID of the contact to delete. |
-| `addressBook` | string | | Address book URL. If omitted, uses the first available address book. |
+| `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, uses the first available address book. |
 
 **Output**
 
@@ -134,7 +134,7 @@ Given a person's name, resolve to email. Returns `{ status: 'resolved', fullName
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | string | yes | Name to search for (partial matches allowed). |
-| `addressBook` | string | | Address book URL. If omitted, uses the first available address book. |
+| `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, uses the first available address book. |
 
 **Output** — `ResolveContactResult` discriminated union:
 
@@ -142,6 +142,88 @@ Given a person's name, resolve to email. Returns `{ status: 'resolved', fullName
 | { status: "resolved";  fullName: string; email: string }
 | { status: "ambiguous"; candidates: Array<{ fullName: string; email: string; uid: string }> }
 | { status: "not_found"; message: string }
+```
+
+## list_address_books
+
+List the account's address books — name, URL, and metadata. Pass the returned name (or URL) as `addressBook` to any contact tool.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `include_counts` | boolean | | Also count the contacts in each book (one extra request per book). Default `false`. |
+
+**Output**
+
+```ts
+{
+  addressBooks: Array<{
+    displayName: string;
+    url: string;
+    description?: string;
+    ctag?: string;
+    syncToken?: string;
+    contactCount?: number; // only with include_counts: true
+  }>;
+  count: number;
+}
+```
+
+## create_address_book
+
+Create a new address book via extended MKCOL (RFC 5689). The URL is derived from the display name unless an explicit `slug` is given.
+
+Creation is refused when a book with the same display name already exists (case-insensitive) — a duplicate name would make that name ambiguous to every later `addressBook` reference. Providers vary: Baikal, Nextcloud, Radicale, Fastmail and iCloud support this; Google's CardDAV endpoint does not, and the error says so.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `displayName` | string | yes | Display name for the new address book. |
+| `description` | string | | Optional address book description. |
+| `slug` | string | | Optional URL path segment (lowercase letters, digits, hyphens). Derived from `displayName` when omitted. |
+
+**Output**
+
+```ts
+{ status: "created"; url: string; displayName?: string }
+```
+
+## rename_address_book
+
+Rename an address book and/or update its description (PROPPATCH). At least one of `displayName` or `description` must be given.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `addressBook` | string | yes | Address book URL or display name (e.g. `Work`). |
+| `displayName` | string | | New display name. |
+| `description` | string | | New description. |
+
+**Output**
+
+```ts
+{ status: "renamed"; url: string; displayName?: string }
+```
+
+## delete_address_book
+
+Delete an address book **and every contact in it**.
+
+> **Asks for confirmation.** The prompt names the book and its contact count, so the user confirms what is actually being destroyed. Declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `addressBook` | string | yes | Address book URL or display name (e.g. `Work`). |
+
+**Output**
+
+```ts
+{ status: "deleted"; url: string; displayName?: string }
 ```
 
 ## Contact shape

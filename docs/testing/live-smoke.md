@@ -73,9 +73,22 @@ serialization) can differ between the two.
 
 ## 4. Contacts write matrix
 
-Run against the Nextcloud `PIM-Test` address book. Pass the address book URL explicitly
-on every call — `card-mcp` defaults to the first address book it finds, which may not be
-`PIM-Test`.
+Run against the Nextcloud `PIM-Test` address book. Pass `addressBook: "PIM-Test"` on
+every call — the parameter takes the display name directly; omitting it falls back to the
+first address book the account lists, which may not be `PIM-Test`.
+
+0. **Address book lifecycle** (run first, in its own scratch book):
+   1. `list_address_books` with `include_counts: true` — verify `PIM-Test` appears with a
+      plausible count.
+   2. `create_address_book` `PIM-Test-Books` — verify it appears in a fresh listing, and
+      that creating it a second time is refused naming the existing URL.
+   3. `create_contact` with `addressBook: "PIM-Test-Books"` — the new book addressed by
+      **name**, never URL.
+   4. `rename_address_book` to `PIM-Test-Books-2`, then verify the old name no longer
+      resolves and the new one does.
+   5. `delete_address_book` `PIM-Test-Books-2` — verify the confirmation prompt names the
+      book **and its contact count** before you confirm, and that the book is gone from a
+      fresh listing afterwards.
 
 1. **Create** a contact — `Alice Smith`, with a phone number (`+1-555-0100`), an email
    (`alice@example.com`), a postal address, and a note containing an embedded newline.
