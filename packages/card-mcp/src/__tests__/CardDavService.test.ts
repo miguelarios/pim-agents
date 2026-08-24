@@ -267,6 +267,52 @@ describe("CardDavService", () => {
     });
   });
 
+  describe("XML metacharacters in user-supplied values", () => {
+    /**
+     * The MKCOL and PROPPATCH bodies are hand-built and carry caller-supplied
+     * text, so escaping is tsdav's serializer's job. This drives the real
+     * serializer over the exact body we hand `davRequest` and round-trips it,
+     * which is the property that matters: a name with `&` or `<` reaches the
+     * server as text rather than breaking the document.
+     */
+    const roundTrip = async (body: unknown) => {
+      const convert = await import("xml-js");
+      const xml = convert.js2xml(
+        { _declaration: { _attributes: { version: "1.0" } }, ...(body as object) },
+        { compact: true, spaces: 2 },
+      );
+      return { xml, parsed: convert.xml2js(xml, { compact: true }) as any };
+    };
+
+    it("escapes a display name containing & and <> through MKCOL", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const name = 'Ben & Jerry <Work> "x"';
+      await service.createAddressBook({ displayName: name, description: "a & b" });
+
+      const { xml, parsed } = await roundTrip(
+        __mockClient.davRequest.mock.calls.at(-1)[0].init.body,
+      );
+      expect(xml).toContain("&amp;");
+      expect(xml).not.toMatch(/<d:displayname>[^<]*<Work>/);
+      const prop = parsed["d:mkcol"]["d:set"]["d:prop"];
+      expect(prop["d:displayname"]._text).toBe(name);
+      expect(prop["card:addressbook-description"]._text).toBe("a & b");
+    });
+
+    it("escapes a new name containing & and <> through PROPPATCH", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([{ ok: true, status: 207 }]);
+      const name = "R&D <team>";
+      await service.renameAddressBook("/dav/a/work/", { displayName: name });
+
+      const { xml, parsed } = await roundTrip(
+        __mockClient.davRequest.mock.calls.at(-1)[0].init.body,
+      );
+      expect(xml).toContain("&amp;");
+      expect(parsed["d:propertyupdate"]["d:set"]["d:prop"]["d:displayname"]._text).toBe(name);
+    });
+  });
+
   describe("renameAddressBook", () => {
     it("issues a namespaced PROPPATCH setting displayname", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
