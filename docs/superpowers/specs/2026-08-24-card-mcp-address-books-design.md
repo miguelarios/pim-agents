@@ -88,9 +88,17 @@ MKCOL <homeUrl><slug>/
 **URL derivation.** `client.account.homeUrl` (populated by `login()`) is the address book
 home. The new collection URL is `homeUrl` + slug + `/`. The slug is derived from
 `displayName` — lowercased, non-alphanumerics collapsed to `-`, trimmed — falling back to
-`addressbook-<8 hex>` when that leaves nothing. If the slug collides with an existing
-book's URL, `-2`, `-3`, … is appended. Callers who care can pass `slug` explicitly
-(validated `^[a-z0-9][a-z0-9-]{0,62}$`).
+`addressbook-<8 hex>` when that leaves nothing. Callers who care can pass `slug`
+explicitly (validated `^[a-z0-9][a-z0-9-]{0,62}$`). The join guards the home URL's
+trailing slash rather than assuming it.
+
+**Duplicate names are refused, not suffixed.** If a book whose display name
+case-insensitively equals the requested one already exists, creation fails with
+`OPERATION_FAILED` naming the existing book's URL — because a second book displaying
+"Work" would make `addressBook: "Work"` ambiguous on *every subsequent call* under the
+resolution rules above, and because an agent retrying a timed-out create must not mint
+duplicates. Slug suffixing (`-2`, `-3`, …) applies only to the remaining case: books with
+*different* display names that happen to slugify identically.
 
 **Provider support varies.** Baikal, Nextcloud, Radicale, Fastmail and iCloud implement
 extended MKCOL; Google's CardDAV endpoint does not. A `403`/`405`/`501` is mapped to an
@@ -111,15 +119,28 @@ every contact in the book, so:
   prompt reads *"Permanently delete address book 'Work' (<url>) and all 128 contacts in
   it? This cannot be undone."* — a confirmation that names what is being destroyed.
 - The gate is `confirmDestructive`, identical in mechanics to `delete_contact`
-  (`PIM_MCP_CONFIRM=off` bypasses it).
+  (`PIM_MCP_CONFIRM=off` bypasses it). The confirmation is a multi round trip, so the
+  handler re-enters and re-resolves + re-counts on the confirmed retry — two cheap
+  PROPFINDs per delete, accepted for the simplicity of a stateless handler.
 
 ### Response validation
 
-`DAVResponse.ok` is computed as `!responseBody.error` — a `207 Multi-Status` whose
-propstat carries `HTTP/1.1 403 Forbidden` still arrives with `ok: true`. Every DAV
-response in this suite is therefore judged on the numeric `status` (success = 2xx), never
-on `ok` alone. A single `checkCollectionResponse` helper in the service does this and maps
-status to `PimError`:
+tsdav's `davRequest` returns responses through two branches, and each lies differently:
+
+- **Plain failures** (a 403/405/501 to MKCOL, a PROPPATCH rejected outright) take the
+  non-XML branch: one entry carrying the transport's real `status`. Judging on the
+  numeric status works here.
+- **A `207 Multi-Status` is `davResponse.ok`**, so it takes the parsed branch, where the
+  mapped `ok` is merely `!responseBody.error` — and worse, when the failure lives only in
+  `propstat/status` (the normal PROPPATCH failure shape, RFC 4918 §9.2), the mapped
+  `status` falls back to the transport's **207**, which is 2xx. tsdav's propstat mapping
+  keeps only the `prop` contents; each propstat's own status survives only under `raw`.
+
+So "success = 2xx" alone cannot catch a refused rename. The rule this suite applies:
+judge on the numeric `status`, and for PROPPATCH **also walk
+`raw.multistatus.response[].propstat[].status`** (tsdav camelCases keys and strips
+namespace prefixes) — any propstat status outside 2xx fails the call. A single
+`checkCollectionResponse` helper in the service does both and maps to `PimError`:
 
 | Status | Error |
 |--------|-------|
@@ -173,6 +194,7 @@ case-insensitive matching with an explicit ambiguity error keeps the failure leg
 ## Out of scope
 
 - Move/copy contacts between books (#58, #59) — unblocked by this, delivered separately.
-- Server-side `addressbook-query` search (#52) — `list_address_books` surfaces the
-  `reports` set that work will key off, but nothing here changes the search path.
+- Server-side `addressbook-query` search (#52) — tsdav already fetches each book's
+  supported-report set; surfacing it in `list_address_books` output can ride along with
+  that work. Nothing here changes the search path.
 - Sharing/ACLs, and per-book colour or ordering properties.

@@ -17,7 +17,9 @@ the existing `ErrorCode` vocabulary and MCP facade cover everything.
 
 ## Global Constraints
 
-- **Branch:** `claude/v1-roadmap-planning-t3kzob`. Commit after every green test cycle.
+- **Branch:** `claude/v1-roadmap-planning-t3kzob`, restarted from `origin/main` after
+  PR #63's squash-merge (this plan's docs commit rebased on top). Commit after every
+  green test cycle.
 - **Before pushing:** `npm test && npm run lint && npm run typecheck` from the repo root,
   all green.
 - **TDD:** failing test first, then implementation. No exceptions.
@@ -28,7 +30,10 @@ the existing `ErrorCode` vocabulary and MCP facade cover everything.
   declarations (see the design doc). Use `client.davRequest()` with `_attributes` inside
   the root element.
 - **Never judge a DAV response on `ok` alone** — `ok` is `!responseBody.error`, so a 207
-  wrapping a 403 propstat reports `ok: true`. Check the numeric `status`.
+  wrapping a 403 propstat reports `ok: true`. Check the numeric `status` — and for
+  PROPPATCH not the mapped `status` alone either: a propstat-level failure leaves it at
+  207 (a 2xx), so walk `raw.multistatus.response[].propstat[].status` too (see the
+  design doc's response-validation section).
 
 ## File Structure
 
@@ -92,7 +97,10 @@ the existing `ErrorCode` vocabulary and MCP facade cover everything.
   - A `description` adds `card:addressbook-description`.
   - An explicit `slug` is used as given; an invalid slug (`"Bad Slug"`, `"../escape"`) throws `ValidationError` before any request.
   - A displayName that slugifies to nothing (`"!!!"`) falls back to `addressbook-<hex>`.
-  - A slug colliding with an existing book's URL becomes `…-2`.
+  - A displayName that case-insensitively equals an existing book's (`"work"` vs `Work`)
+    → `OPERATION_FAILED` naming the existing book's URL, and **no request is issued** —
+    a duplicate name would make name resolution ambiguous forever.
+  - A *differently named* book that slugifies to an existing book's slug becomes `…-2`.
   - Status 405 → `OPERATION_FAILED` mentioning that a collection already exists; 403/501 → `OPERATION_FAILED` naming the provider limitation; both without `ok: false` being present on the response (the 207-lies case).
   - Returns `{ url, displayName }`.
 - [ ] **Step 5.2:** Implement, including a `checkCollectionResponse(status, statusText, action, url)` helper used by tasks 5–7.
@@ -102,7 +110,7 @@ the existing `ErrorCode` vocabulary and MCP facade cover everything.
 
 **Files:** `CardDavService.ts`, `CardDavService.test.ts`
 
-- [ ] **Step 6.1: Failing tests.** `PROPPATCH` to the book URL with a namespaced `d:propertyupdate` body setting `displayname`; `description` sets `card:addressbook-description`; neither given → `ValidationError`, no request; a 207 response whose propstat status is 403 → `OPERATION_FAILED` **even though `ok` is `true`**; 404 → `ADDRESSBOOK_NOT_FOUND`.
+- [ ] **Step 6.1: Failing tests.** `PROPPATCH` to the book URL with a namespaced `d:propertyupdate` body setting `displayname`; `description` sets `card:addressbook-description`; neither given → `ValidationError`, no request; 404 → `ADDRESSBOOK_NOT_FOUND`. The propstat-failure case must use the shape tsdav actually produces — `{ ok: true, status: 207, raw: { multistatus: { response: { propstat: { status: "HTTP/1.1 403 Forbidden" } } } } }` (keys camelCased, namespaces stripped) — and expect `OPERATION_FAILED`: the mapped `status` stays 207 (a 2xx) in this shape, so the implementation has to walk the raw propstat statuses, and a mock with `status: 403` would pass against code that misses exactly this case.
 - [ ] **Step 6.2:** Implement.
 - [ ] **Step 6.3:** Commit — `feat(card-mcp): rename an address book via PROPPATCH`.
 
@@ -133,7 +141,7 @@ the existing `ErrorCode` vocabulary and MCP facade cover everything.
   - `delete_address_book`'s elicitation message names the book and its contact count.
   - `create_address_book`/`rename_address_book`/`delete_address_book` all require their target — omitting it is a schema rejection, not a first-book fallback.
 - [ ] **Step 9.2:** Implement the four `ToolDef`s. Annotations: list = `readOnlyHint: true, destructiveHint: false, idempotentHint: true`; create = all-write, `idempotentHint: false`; rename = write, `idempotentHint: true`; delete = `destructiveHint: true, idempotentHint: true`. `openWorldHint: true` throughout.
-- [ ] **Step 9.3:** For delete: resolve the book and count its contacts **before** `confirmDestructive`, so the prompt names both.
+- [ ] **Step 9.3:** For delete: resolve the book and count its contacts **before** `confirmDestructive`, so the prompt names both. (The confirmed retry re-enters the handler and re-resolves + re-counts — accepted, per the design doc.)
 - [ ] **Step 9.4:** Commit — `feat(card-mcp): add the address book management tools`.
 
 ## Task 10: Registration and wire conformance
