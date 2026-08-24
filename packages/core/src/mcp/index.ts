@@ -191,9 +191,12 @@ function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerCo
  * rather than being read as "declared, and empty".
  *
  * Both lookups read SDK surface that the published type declarations erase, so
- * an SDK upgrade should re-check them. A regression there degrades to
- * `undefined`, which restores the previous always-ask behaviour rather than
- * skipping a confirmation.
+ * an SDK upgrade should re-check them — last verified against
+ * `@modelcontextprotocol/server` 2.0.0, where the 2026-07-28 era carries
+ * capabilities in the envelope and returns `undefined` from
+ * `getClientCapabilities()`, and the 2025 era does the reverse. A regression
+ * there degrades to `undefined`, which restores the previous always-ask
+ * behaviour rather than skipping a confirmation.
  */
 function clientCapabilities(ctx: ServerContext): ClientCapabilities | undefined {
   const { envelope } = ctx.mcpReq as { envelope?: Record<string, unknown> };
