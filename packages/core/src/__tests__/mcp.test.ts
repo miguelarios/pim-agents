@@ -1,10 +1,17 @@
+import type { McpServer } from "@modelcontextprotocol/server";
 /**
  * Unit coverage for the shared MCP facade's confirmation gate. The wire-level
  * behaviour is proven by each server's roundtrip test; this pins the decision
  * table the gate applies to a request's client capabilities.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { type ServerContext, confirmDestructive } from "../mcp/index.js";
+import {
+  type ServerContext,
+  type ToolResult,
+  confirmDestructive,
+  ok,
+  registerTools,
+} from "../mcp/index.js";
 
 const CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 
@@ -39,6 +46,26 @@ describe("confirmDestructive", () => {
 
   it("asks when the client's capabilities are unknown", () => {
     const outcome = gate(unknownCtx());
+    expect(outcome.status).toBe("interrupt");
+    if (outcome.status !== "interrupt") return;
+    expect((outcome.result as { inputRequests?: unknown }).inputRequests).toBeDefined();
+  });
+
+  it("asks when the client declares a malformed elicitation capability", () => {
+    // Same reasoning one level down: `elicitation: null` is not a statement of
+    // support, and asking would strand the call exactly as issue #22 describes.
+    const outcome = gate(modernCtx({ elicitation: null }));
+    expect(outcome.status).toBe("interrupt");
+    if (outcome.status !== "interrupt") return;
+    const [block] = (outcome.result as { content: Array<{ text: string }> }).content;
+    expect(JSON.parse(block.text).error).toBe("CONFIRMATION_UNSUPPORTED");
+  });
+
+  it.each([
+    ["an array", [] as unknown],
+    ["a primitive", "elicitation" as unknown],
+  ])("asks when the envelope's capabilities are %s", (_label, value) => {
+    const outcome = gate(modernCtx(value as Record<string, unknown>));
     expect(outcome.status).toBe("interrupt");
     if (outcome.status !== "interrupt") return;
     expect((outcome.result as { inputRequests?: unknown }).inputRequests).toBeDefined();
@@ -100,5 +127,84 @@ describe("confirmDestructive", () => {
       const [block] = (outcome.result as { content: Array<{ text: string }> }).content;
       expect(JSON.parse(block.text).error).toBe("CONFIRMATION_UNSUPPORTED");
     });
+  });
+});
+
+describe("client capabilities reaching the gate", () => {
+  /**
+   * Drives the real `registerTools` wiring so the era-bridging precedence is
+   * pinned through the public surface rather than by reaching for the private
+   * symbol the 2025-era capabilities are parked under.
+   */
+  const callThroughRegisterTools = async (
+    negotiated: Record<string, unknown> | undefined,
+    envelope: Record<string, unknown> | undefined,
+  ) => {
+    let handler: ((args: unknown, ctx: ServerContext) => Promise<ToolResult>) | undefined;
+    const server = {
+      registerTool: (_name: string, _config: unknown, fn: typeof handler) => {
+        handler = fn;
+      },
+      server: { getClientCapabilities: () => negotiated },
+    } as unknown as McpServer;
+
+    registerTools(
+      server,
+      [
+        {
+          name: "erase_it",
+          title: "Erase it",
+          description: "an irreversible operation",
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: false,
+            openWorldHint: true,
+          },
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          handler: async (_args: unknown, _service: unknown, ctx: ServerContext) => {
+            const outcome = confirmDestructive(ctx, "confirm_erase", "Erase it?");
+            return outcome.status === "proceed" ? ok("erased") : outcome.result;
+          },
+        },
+      ],
+      {},
+    );
+
+    if (!handler) throw new Error("registerTools never registered the tool");
+    const ctx = { mcpReq: { ...(envelope ? { envelope } : {}), inputResponses: undefined } };
+    return handler({}, ctx as unknown as ServerContext);
+  };
+
+  const refused = (result: ToolResult) => {
+    const [block] = (result as { content?: Array<{ text: string }> }).content ?? [];
+    return block !== undefined && JSON.parse(block.text).error === "CONFIRMATION_UNSUPPORTED";
+  };
+
+  it("prefers the per-request envelope over the negotiated capabilities", async () => {
+    // The 2025-era value is stale here: the envelope is what this request carried.
+    const result = await callThroughRegisterTools(
+      { elicitation: {} },
+      { [CLIENT_CAPABILITIES]: {} },
+    );
+    expect(refused(result)).toBe(true);
+  });
+
+  it("asks when the envelope declares elicitation but the negotiated value does not", async () => {
+    const result = await callThroughRegisterTools(
+      {},
+      { [CLIENT_CAPABILITIES]: { elicitation: {} } },
+    );
+    expect((result as { inputRequests?: unknown }).inputRequests).toBeDefined();
+  });
+
+  it("falls back to the negotiated capabilities when there is no envelope", async () => {
+    // The 2025 era, where capabilities are settled once at `initialize`.
+    expect(refused(await callThroughRegisterTools({}, undefined))).toBe(true);
+  });
+
+  it("asks when neither source knows anything", async () => {
+    const result = await callThroughRegisterTools(undefined, undefined);
+    expect((result as { inputRequests?: unknown }).inputRequests).toBeDefined();
   });
 });

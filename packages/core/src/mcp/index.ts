@@ -183,8 +183,7 @@ function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerCo
  *
  * A client that declares nothing yields `{}`, which is a determination: it
  * means the client supports no optional capability, not that we failed to look.
- * Anything that is not an object is not a determination — the spec says
- * capabilities are one — so a malformed value falls through to `undefined`
+ * A malformed value is not a determination, and falls through to `undefined`
  * rather than being read as "declared, and empty".
  *
  * Both lookups read SDK surface that the published type declarations erase, so
@@ -194,9 +193,21 @@ function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerCo
  */
 function clientCapabilities(ctx: ServerContext): ClientCapabilities | undefined {
   const { envelope } = ctx.mcpReq as { envelope?: Record<string, unknown> };
-  const declared = envelope?.[CLIENT_CAPABILITIES_KEY];
-  if (typeof declared === "object" && declared !== null) return declared as ClientCapabilities;
+  const declared = asObject(envelope?.[CLIENT_CAPABILITIES_KEY]);
+  if (declared) return declared as ClientCapabilities;
   return (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES];
+}
+
+/**
+ * `value` as a plain object, or `undefined` when it is not one.
+ *
+ * The capabilities map and the `elicitation` capability inside it are both
+ * objects per the spec, so anything else — `null`, an array, a primitive — is
+ * malformed rather than something the client stated, and is read as silence.
+ */
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
 }
 
 /** The outcome of a {@link confirmDestructive} gate. */
@@ -244,7 +255,7 @@ export function confirmDestructive(
   }
 
   const capabilities = clientCapabilities(ctx);
-  if (capabilities !== undefined && capabilities.elicitation === undefined) {
+  if (capabilities !== undefined && asObject(capabilities.elicitation) === undefined) {
     // Asking would return an `input_required` the client can never answer, so
     // the operation would simply be unusable. Fail with a way out instead.
     return {
