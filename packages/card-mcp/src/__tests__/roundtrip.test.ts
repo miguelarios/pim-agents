@@ -27,6 +27,9 @@ function fakeService() {
   return {
     listAddressBooks: vi.fn().mockResolvedValue([{ url: "book1", displayName: "Personal" }]),
     findAddressBook: vi.fn().mockImplementation(async (ref: string) => ref),
+    findAddressBookEntry: vi
+      .fn()
+      .mockImplementation(async (ref: string) => ({ displayName: ref, url: ref })),
     fetchContacts: vi.fn().mockResolvedValue([CONTACT]),
     searchContacts: vi.fn().mockResolvedValue([CONTACT]),
     deleteContact: vi.fn().mockResolvedValue(undefined),

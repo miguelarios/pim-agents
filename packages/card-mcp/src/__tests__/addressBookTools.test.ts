@@ -27,6 +27,9 @@ const fakeService = () => ({
     { displayName: "Work", url: "/dav/work/", ctag: "c2", contactCount: 3 },
   ]),
   findAddressBook: vi.fn().mockResolvedValue("/dav/work/"),
+  findAddressBookEntry: vi
+    .fn()
+    .mockResolvedValue({ displayName: "Work", url: "/dav/work/", ctag: "c2" }),
   createAddressBook: vi.fn().mockResolvedValue({ url: "/dav/team/", displayName: "Team" }),
   renameAddressBook: vi.fn().mockResolvedValue(undefined),
   deleteAddressBook: vi.fn().mockResolvedValue(undefined),
@@ -178,6 +181,42 @@ describe("delete_address_book confirmation gate", () => {
     );
     expect(res.isError).toBe(true);
     expect(service.deleteAddressBook).not.toHaveBeenCalled();
+  });
+
+  it("names the book by its display name when the caller passed a URL", async () => {
+    const service = fakeService();
+    const res = await callTool("delete_address_book", { addressBook: "/dav/work/" }, service);
+    const serialized = JSON.stringify(res.inputRequests.confirm_delete_address_book);
+    // The prompt must name the book, not echo the URL twice.
+    expect(serialized).toContain("Work");
+    expect(serialized).not.toMatch(/"\/dav\/work\/".*\(\/dav\/work\/\)/);
+  });
+
+  it("reports the book's real display name, never the URL, in the result", async () => {
+    const service = fakeService();
+    const res = await callTool(
+      "delete_address_book",
+      { addressBook: "/dav/work/" },
+      service,
+      confirmCtx("confirm_delete_address_book", { action: "accept", content: { confirm: true } }),
+    );
+    expect(res.structuredContent).toEqual({
+      status: "deleted",
+      url: "/dav/work/",
+      displayName: "Work",
+    });
+  });
+
+  it("omits displayName rather than inventing one for an unlisted URL", async () => {
+    const service = fakeService();
+    service.findAddressBookEntry.mockResolvedValue({ displayName: "", url: "/dav/unknown/" });
+    const res = await callTool(
+      "delete_address_book",
+      { addressBook: "/dav/unknown/" },
+      service,
+      confirmCtx("confirm_delete_address_book", { action: "accept", content: { confirm: true } }),
+    );
+    expect(res.structuredContent).toEqual({ status: "deleted", url: "/dav/unknown/" });
   });
 
   it("still prompts, without a number, when the count is unavailable", async () => {

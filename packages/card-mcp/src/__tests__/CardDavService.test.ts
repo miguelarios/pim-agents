@@ -122,6 +122,52 @@ describe("CardDavService", () => {
     });
   });
 
+  describe("findAddressBookEntry", () => {
+    it("returns the whole entry for a name", async () => {
+      await expect(service.findAddressBookEntry("Work")).resolves.toMatchObject({
+        displayName: "Work",
+        url: "/dav/addressbooks/users/miguel/work/",
+      });
+    });
+
+    it("recovers the display name for a URL the account lists", async () => {
+      await expect(
+        service.findAddressBookEntry("/dav/addressbooks/users/miguel/work/"),
+      ).resolves.toMatchObject({ displayName: "Work" });
+    });
+
+    it("leaves displayName empty for a URL the account does not list", async () => {
+      await expect(service.findAddressBookEntry("/dav/elsewhere/book/")).resolves.toEqual({
+        displayName: "",
+        url: "/dav/elsewhere/book/",
+      });
+    });
+
+    it("fails the same way as findAddressBook on an unknown name", async () => {
+      await expect(service.findAddressBookEntry("Nope")).rejects.toMatchObject({
+        code: "ADDRESSBOOK_NOT_FOUND",
+      });
+    });
+  });
+
+  describe("response judging with nothing to judge", () => {
+    it("fails rather than succeeding when davRequest yields no response", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([]);
+      await expect(service.createAddressBook({ displayName: "Team" })).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+      });
+    });
+
+    it("fails rather than succeeding when a delete response carries no status", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.deleteObject.mockResolvedValueOnce({});
+      await expect(service.deleteAddressBook("/dav/a/work/")).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+      });
+    });
+  });
+
   describe("createAddressBook", () => {
     it("issues an extended MKCOL with namespaces on the root element", async () => {
       const { __mockClient } = (await import("tsdav")) as any;

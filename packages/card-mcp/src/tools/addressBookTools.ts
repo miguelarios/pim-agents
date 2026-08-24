@@ -147,30 +147,39 @@ export const ADDRESS_BOOK_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     },
     outputSchema: addressBookWriteResultSchema,
     handler: async (args: DeleteArgs, service, ctx) => {
-      let url: string;
+      let book: { displayName: string; url: string };
       let count: number | undefined;
       try {
         // Resolved and counted before the gate, so the confirmation names what
-        // is actually being destroyed. The confirmed retry re-enters here and
-        // repeats both — two cheap PROPFINDs, accepted for a stateless handler.
-        url = await service.findAddressBook(args.addressBook);
-        count = await service.countContacts(url);
+        // is actually being destroyed. The whole entry is resolved rather than
+        // just the URL: echoing back the caller's own reference would name a
+        // URL twice when the caller passed one, which is the case where a
+        // human most needs to be told what the thing is called. The confirmed
+        // retry re-enters here and repeats both — two cheap requests, accepted
+        // for a stateless handler.
+        book = await service.findAddressBookEntry(args.addressBook);
+        count = await service.countContacts(book.url);
       } catch (err) {
         return toolError(err);
       }
 
       const contactsClause =
         count !== undefined ? `all ${count} contacts in it` : "every contact in it";
+      const label = book.displayName ? `"${book.displayName}" (${book.url})` : book.url;
       const gate = confirmDestructive(
         ctx,
         "confirm_delete_address_book",
-        `Permanently delete address book "${args.addressBook}" (${url}) and ${contactsClause}? This cannot be undone.`,
+        `Permanently delete address book ${label} and ${contactsClause}? This cannot be undone.`,
       );
       if (gate.status === "interrupt") return gate.result;
 
       try {
-        await service.deleteAddressBook(url);
-        return structured({ status: "deleted" as const, url, displayName: args.addressBook });
+        await service.deleteAddressBook(book.url);
+        return structured({
+          status: "deleted" as const,
+          url: book.url,
+          ...(book.displayName ? { displayName: book.displayName } : {}),
+        });
       } catch (err) {
         return toolError(err);
       }

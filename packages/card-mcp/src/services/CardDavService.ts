@@ -21,6 +21,11 @@ export interface AddressBook {
   contactCount?: number;
 }
 
+/** Whether an address-book reference is a URL rather than a display name. */
+function isUrlRef(ref: string): boolean {
+  return /^(https?:\/\/|\/)/.test(ref);
+}
+
 /** Derives a URL slug from a display name; falls back to a random one when nothing survives. */
 function slugify(displayName: string): string {
   const slug = displayName
@@ -188,11 +193,30 @@ export class CardDavService {
    * picking one of two similar books is a data-loss shape on the write paths.
    */
   async findAddressBook(ref: string): Promise<string> {
-    if (/^(https?:\/\/|\/)/.test(ref)) return ref;
+    if (isUrlRef(ref)) return ref;
+    return (await this.findAddressBookEntry(ref)).url;
+  }
+
+  /**
+   * Resolves a reference to the book's whole entry, so a caller can name what
+   * it is about to act on rather than echoing back whatever string it was
+   * given. Unlike {@link findAddressBook} this always lists, including for a
+   * URL — recovering the display name is the point.
+   *
+   * A URL the account does not list still resolves: the caller may know about
+   * a book we cannot see. It comes back with an empty `displayName` rather
+   * than the URL standing in for one, so callers can tell "no name known"
+   * from a name.
+   */
+  async findAddressBookEntry(ref: string): Promise<AddressBook> {
     const books = await this.listAddressBooks();
+    if (isUrlRef(ref)) {
+      const match = books.find((b) => collectionPath(b.url) === collectionPath(ref));
+      return match ?? { displayName: "", url: ref };
+    }
     const wanted = ref.toLowerCase();
     const matches = books.filter((b) => b.displayName.toLowerCase() === wanted);
-    if (matches.length === 1) return matches[0].url;
+    if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
       const known = books
         .map((b) => b.displayName)
@@ -238,6 +262,12 @@ export class CardDavService {
     // A second book with the same display name would make that name ambiguous
     // to findAddressBook on every subsequent call, so duplicates are refused
     // rather than suffixed — that also keeps a retried create from minting one.
+    //
+    // This snapshot predates the MKCOL, which looks racy but is not: the slug
+    // is derived deterministically from the display name, so two concurrent
+    // creates of the same name target the same URL and the server fails the
+    // loser with 405. The check is a legible early error, not the guard.
+
     const duplicate = books.find(
       (b) => b.displayName.toLowerCase() === opts.displayName.toLowerCase(),
     );
@@ -377,6 +407,15 @@ export class CardDavService {
     for (const line of propstatStatusLines(res?.raw)) {
       const match = /\b(\d{3})\b\s*(.*)$/.exec(line);
       if (match) statuses.push({ status: Number(match[1]), statusText: match[2] ?? "" });
+    }
+
+    // This helper exists to distrust tsdav's response shapes, so a response
+    // carrying no status at all is a failure to judge, not a success.
+    if (statuses.length === 0) {
+      throw new ContactError(
+        `The server returned no usable status for the ${action} of ${url}`,
+        ErrorCode.OPERATION_FAILED,
+      );
     }
 
     for (const { status, statusText } of statuses) {
