@@ -14,6 +14,18 @@ export interface AddressBook {
   displayName: string;
   url: string;
   ctag?: string;
+  description?: string;
+  syncToken?: string;
+  contactCount?: number;
+}
+
+/** Normalises a URL or href to a comparable path: origin stripped, trailing slashes trimmed. */
+function collectionPath(ref: string): string {
+  try {
+    return new URL(ref, "http://placeholder.invalid").pathname.replace(/\/+$/, "");
+  } catch {
+    return ref.replace(/\/+$/, "");
+  }
 }
 
 export type DetailLevel = "summary" | "full";
@@ -86,17 +98,49 @@ export class CardDavService {
     return this.client;
   }
 
-  async listAddressBooks(): Promise<AddressBook[]> {
+  async listAddressBooks(opts: { includeCounts?: boolean } = {}): Promise<AddressBook[]> {
     const client = await this.ensureConnected();
     try {
       const books = await client.fetchAddressBooks();
-      return books.map((book) => ({
+      const mapped: AddressBook[] = books.map((book) => ({
         displayName: (typeof book.displayName === "string" ? book.displayName : "") ?? "",
         url: book.url,
         ctag: book.ctag,
+        ...(typeof book.description === "string" ? { description: book.description } : {}),
+        ...(typeof book.syncToken === "string" ? { syncToken: book.syncToken } : {}),
       }));
+      if (opts.includeCounts) {
+        await Promise.all(
+          mapped.map(async (book) => {
+            const count = await this.countContacts(book.url);
+            if (count !== undefined) book.contactCount = count;
+          }),
+        );
+      }
+      return mapped;
     } catch (error) {
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Counts the resources in a collection with a single depth-1 PROPFIND asking
+   * only for etags — no vCard bodies cross the wire. Returns `undefined` rather
+   * than failing when the server refuses, so an unreadable book degrades to a
+   * missing count instead of a failed listing.
+   */
+  async countContacts(url: string): Promise<number | undefined> {
+    const client = await this.ensureConnected();
+    try {
+      const responses = await client.propfind({
+        url,
+        props: { "d:getetag": {} },
+        depth: "1",
+      });
+      const self = collectionPath(url);
+      return responses.filter((r) => r.href && collectionPath(r.href) !== self).length;
+    } catch {
+      return undefined;
     }
   }
 

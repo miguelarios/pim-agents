@@ -71,6 +71,57 @@ describe("CardDavService", () => {
     });
   });
 
+  describe("listAddressBooks metadata and counts", () => {
+    it("surfaces description and syncToken when tsdav supplies them", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchAddressBooks.mockResolvedValueOnce([
+        {
+          displayName: "Contacts",
+          url: "/dav/a/contacts/",
+          ctag: "c1",
+          description: "Team contacts",
+          syncToken: "sync-9",
+        },
+      ]);
+      const [book] = await service.listAddressBooks();
+      expect(book.description).toBe("Team contacts");
+      expect(book.syncToken).toBe("sync-9");
+    });
+
+    it("does not issue count PROPFINDs unless asked", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.propfind.mockClear();
+      const books = await service.listAddressBooks();
+      expect(books[0].contactCount).toBeUndefined();
+      expect(__mockClient.propfind).not.toHaveBeenCalled();
+    });
+
+    it("counts contacts per book with one depth-1 getetag PROPFIND each", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.propfind.mockClear();
+      __mockClient.propfind.mockResolvedValue([
+        { href: "/dav/addressbooks/users/miguel/contacts/" },
+        { href: "/dav/addressbooks/users/miguel/contacts/a.vcf" },
+        { href: "/dav/addressbooks/users/miguel/contacts/b.vcf" },
+      ]);
+      const books = await service.listAddressBooks({ includeCounts: true });
+      expect(books[0].contactCount).toBe(2);
+      expect(__mockClient.propfind).toHaveBeenCalledTimes(2);
+      const call = __mockClient.propfind.mock.calls[0][0];
+      expect(call.depth).toBe("1");
+      expect(Object.keys(call.props)).toEqual(["d:getetag"]);
+    });
+
+    it("leaves contactCount undefined for a book whose count PROPFIND rejects", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.propfind.mockClear();
+      __mockClient.propfind.mockRejectedValue(new Error("boom"));
+      const books = await service.listAddressBooks({ includeCounts: true });
+      expect(books).toHaveLength(2);
+      expect(books[0].contactCount).toBeUndefined();
+    });
+  });
+
   describe("findAddressBook", () => {
     it("resolves a display name to its URL", async () => {
       await expect(service.findAddressBook("Work")).resolves.toBe(
