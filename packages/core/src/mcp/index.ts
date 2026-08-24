@@ -170,6 +170,10 @@ type CapabilityCarrier = { [CAPABILITIES]?: ClientCapabilities };
  * reach the per-request context — so the server's view of them is attached
  * here for {@link clientCapabilities} to read back. 2026-07-28 requests carry
  * their own copy in the `_meta` envelope and take precedence.
+ *
+ * Writing to the context is safe because the SDK builds a fresh one per
+ * request: two calls in flight at once were confirmed to receive distinct
+ * `ctx` and `ctx.mcpReq` objects on both eras, so this cannot race.
  */
 function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerContext {
   (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES] = server.server.getClientCapabilities();
@@ -258,6 +262,12 @@ export function confirmDestructive(
   if (capabilities !== undefined && asObject(capabilities.elicitation) === undefined) {
     // Asking would return an `input_required` the client can never answer, so
     // the operation would simply be unusable. Fail with a way out instead.
+    //
+    // Note the deliberate asymmetry with `clientCapabilities`, which treats a
+    // malformed capabilities map as silence and asks: there, nothing legible
+    // was said at all. Here a legible map simply does not carry elicitation,
+    // which is a statement. Making the two symmetric would send the second
+    // case back to asking a client that cannot answer — the hang in #22.
     return {
       status: "interrupt",
       result: fail(
