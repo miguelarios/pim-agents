@@ -1,5 +1,6 @@
 import {
   type CallToolResult,
+  type ClientCapabilities,
   type InputRequiredResult,
   type JsonSchemaType,
   type McpServer,
@@ -79,7 +80,8 @@ export function registerTools<Service>(
       },
       // the SDK infers handler args from the
       // schema generic; the per-tool `Args` type is asserted by each tool module instead.
-      (args: any, ctx: ServerContext) => def.handler(args, service, ctx),
+      (args: any, ctx: ServerContext) =>
+        def.handler(args, service, withClientCapabilities(server, ctx)),
     );
   }
 }
@@ -147,6 +149,74 @@ export function toolError(err: unknown, mapCode?: (error: PimError) => string): 
   return fail(mapCode ? mapCode(pimError) : pimError.code, pimError.message, pimError.isRetryable);
 }
 
+/** The `_meta` envelope key carrying the client's declared capabilities (2026-07-28). */
+const CLIENT_CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
+
+/** Where {@link withClientCapabilities} parks the 2025-era capabilities on a context. */
+const CAPABILITIES = Symbol("pim.clientCapabilities");
+
+type CapabilityCarrier = { [CAPABILITIES]?: ClientCapabilities };
+
+/**
+ * Records the client's declared capabilities on a 2025-era context.
+ *
+ * On that era capabilities are negotiated once, at `initialize`, and never
+ * reach the per-request context — so the server's view of them is attached
+ * here for {@link clientCapabilities} to read back. 2026-07-28 requests carry
+ * their own copy in the `_meta` envelope and take precedence.
+ *
+ * Writing to the context is safe because the SDK builds a fresh one per
+ * request: two calls in flight at once were confirmed to receive distinct
+ * `ctx` and `ctx.mcpReq` objects on both eras, so this cannot race.
+ *
+ * The value is validated on the way in, for the same reason the envelope is:
+ * it comes from the SDK unchecked, and a non-object stored here would reach
+ * the gate as a capabilities map it could dereference.
+ */
+function withClientCapabilities(server: McpServer, ctx: ServerContext): ServerContext {
+  (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES] = asObject(
+    server.server.getClientCapabilities(),
+  ) as ClientCapabilities | undefined;
+  return ctx;
+}
+
+/**
+ * The client capabilities in force for this request, or `undefined` when they
+ * cannot be determined — as is the case for {@link dispatchTool}, which has no
+ * client at all.
+ *
+ * A client that declares nothing yields `{}`, which is a determination: it
+ * means the client supports no optional capability, not that we failed to look.
+ * A malformed value is not a determination, and falls through to `undefined`
+ * rather than being read as "declared, and empty".
+ *
+ * Both lookups read SDK surface that the published type declarations erase, so
+ * an SDK upgrade should re-check them — last verified against
+ * `@modelcontextprotocol/server` 2.0.0, where the 2026-07-28 era carries
+ * capabilities in the envelope and returns `undefined` from
+ * `getClientCapabilities()`, and the 2025 era does the reverse. A regression
+ * there degrades to `undefined`, which restores the previous always-ask
+ * behaviour rather than skipping a confirmation.
+ */
+function clientCapabilities(ctx: ServerContext): ClientCapabilities | undefined {
+  const { envelope } = ctx.mcpReq as { envelope?: Record<string, unknown> };
+  const declared = asObject(envelope?.[CLIENT_CAPABILITIES_KEY]);
+  if (declared) return declared as ClientCapabilities;
+  return (ctx as ServerContext & CapabilityCarrier)[CAPABILITIES];
+}
+
+/**
+ * `value` as a plain object, or `undefined` when it is not one.
+ *
+ * The capabilities map and the `elicitation` capability inside it are both
+ * objects per the spec, so anything else — `null`, an array, a primitive — is
+ * malformed rather than something the client stated, and is read as silence.
+ */
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
 /** The outcome of a {@link confirmDestructive} gate. */
 export type ConfirmOutcome =
   | { status: "proceed" }
@@ -162,6 +232,11 @@ export type ConfirmOutcome =
  * Works on 2025-era connections too — the SDK's legacy shim turns the
  * `input_required` return into a real server-to-client `elicitation/create`
  * and re-enters the handler, so this needs no era branching.
+ *
+ * A client that never declared the `elicitation` capability cannot answer, so
+ * it is failed with `CONFIRMATION_UNSUPPORTED` rather than handed a question
+ * that goes nowhere. Capabilities we cannot read at all are gated as usual —
+ * unknown is not the same as unsupported, and the safe reading is to ask.
  *
  * Set `PIM_MCP_CONFIRM=off` to skip confirmation entirely (headless use).
  */
@@ -183,6 +258,27 @@ export function confirmDestructive(
     return {
       status: "interrupt",
       result: fail("CONFIRMATION_DECLINED", "Cancelled: the user did not confirm this operation."),
+    };
+  }
+
+  const capabilities = clientCapabilities(ctx);
+  if (capabilities !== undefined && asObject(capabilities.elicitation) === undefined) {
+    // Asking would return an `input_required` the client can never answer, so
+    // the operation would simply be unusable. Fail with a way out instead.
+    //
+    // Note the deliberate asymmetry with `clientCapabilities`, which treats a
+    // malformed capabilities map as silence and asks: there, nothing legible
+    // was said at all. Here a legible map simply does not carry elicitation,
+    // which is a statement. Making the two symmetric would send the second
+    // case back to asking a client that cannot answer — the hang in #22.
+    return {
+      status: "interrupt",
+      result: fail(
+        "CONFIRMATION_UNSUPPORTED",
+        "This operation is irreversible and requires confirmation, but the client did not " +
+          'declare the "elicitation" capability, so it cannot be asked. Set PIM_MCP_CONFIRM=off ' +
+          "to run irreversible operations without confirmation.",
+      ),
     };
   }
 

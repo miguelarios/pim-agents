@@ -10,6 +10,8 @@ Every tool declares a `title`, a full set of behaviour annotations (`readOnlyHin
 
 Irreversible operations — `send_email`, `send_draft`, a permanent `delete_email`, `delete_contact`, and any `delete_event` that removes the calendar object — ask the user to confirm before they run, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
 
+A client that does not support elicitation cannot answer the prompt, so those tools fail fast with `CONFIRMATION_UNSUPPORTED` and point at `PIM_MCP_CONFIRM=off` — rather than returning a question that never reaches anyone.
+
 ## Packages
 
 | Package | Description | Install |
