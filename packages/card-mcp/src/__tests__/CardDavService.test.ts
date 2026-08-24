@@ -225,6 +225,18 @@ describe("CardDavService", () => {
       },
     );
 
+    it.each([[""], ["   "]])(
+      "refuses the unusable display name %j before any request",
+      async (displayName) => {
+        const { __mockClient } = (await import("tsdav")) as any;
+        __mockClient.davRequest.mockClear();
+        await expect(service.createAddressBook({ displayName })).rejects.toMatchObject({
+          code: "VALIDATION_FAILED",
+        });
+        expect(__mockClient.davRequest).not.toHaveBeenCalled();
+      },
+    );
+
     it("falls back to a generated slug when the name slugifies to nothing", async () => {
       const result = await service.createAddressBook({ displayName: "!!!" });
       expect(result.url).toMatch(/\/addressbook-[0-9a-f]{8}\/$/);

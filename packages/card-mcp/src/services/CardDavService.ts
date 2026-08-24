@@ -251,6 +251,12 @@ export class CardDavService {
     slug?: string;
   }): Promise<{ url: string; displayName: string }> {
     const client = await this.ensureConnected();
+    // A book with no display name cannot be addressed by name — which is the
+    // point of this whole surface — so creating one is refused rather than
+    // quietly given a generated slug and left unreachable.
+    if (opts.displayName.trim() === "") {
+      throw new ValidationError("displayName cannot be empty", "displayName");
+    }
     if (opts.slug !== undefined && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(opts.slug)) {
       throw new ValidationError(
         `Invalid slug "${opts.slug}" — use lowercase letters, digits and hyphens, starting with a letter or digit`,
