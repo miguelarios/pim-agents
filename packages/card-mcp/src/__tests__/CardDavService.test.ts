@@ -21,6 +21,10 @@ vi.mock("tsdav", () => {
     createVCard: vi.fn().mockResolvedValue({ ok: true }),
     updateVCard: vi.fn().mockResolvedValue({ ok: true }),
     deleteVCard: vi.fn().mockResolvedValue({ ok: true }),
+    account: { homeUrl: "/dav/addressbooks/users/miguel/", rootUrl: "/dav/" },
+    davRequest: vi.fn().mockResolvedValue([{ ok: true, status: 201, statusText: "Created" }]),
+    deleteObject: vi.fn().mockResolvedValue({ ok: true, status: 204, statusText: "No Content" }),
+    propfind: vi.fn().mockResolvedValue([]),
   };
   return {
     DAVClient: vi.fn().mockImplementation(() => mockClient),
@@ -64,6 +68,503 @@ describe("CardDavService", () => {
     it("auto-connects if not connected", async () => {
       const books = await service.listAddressBooks();
       expect(books).toHaveLength(2);
+    });
+  });
+
+  describe("listAddressBooks metadata and counts", () => {
+    it("surfaces description and syncToken when tsdav supplies them", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchAddressBooks.mockResolvedValueOnce([
+        {
+          displayName: "Contacts",
+          url: "/dav/a/contacts/",
+          ctag: "c1",
+          description: "Team contacts",
+          syncToken: "sync-9",
+        },
+      ]);
+      const [book] = await service.listAddressBooks();
+      expect(book.description).toBe("Team contacts");
+      expect(book.syncToken).toBe("sync-9");
+    });
+
+    it("does not issue count PROPFINDs unless asked", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.propfind.mockClear();
+      const books = await service.listAddressBooks();
+      expect(books[0].contactCount).toBeUndefined();
+      expect(__mockClient.propfind).not.toHaveBeenCalled();
+    });
+
+    it("counts contacts per book with one depth-1 getetag PROPFIND each", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.propfind.mockClear();
+      __mockClient.propfind.mockResolvedValue([
+        { href: "/dav/addressbooks/users/miguel/contacts/" },
+        { href: "/dav/addressbooks/users/miguel/contacts/a.vcf" },
+        { href: "/dav/addressbooks/users/miguel/contacts/b.vcf" },
+      ]);
+      const books = await service.listAddressBooks({ includeCounts: true });
+      expect(books[0].contactCount).toBe(2);
+      expect(__mockClient.propfind).toHaveBeenCalledTimes(2);
+      const call = __mockClient.propfind.mock.calls[0][0];
+      expect(call.depth).toBe("1");
+      expect(Object.keys(call.props)).toEqual(["d:getetag"]);
+    });
+
+    it("leaves contactCount undefined for a book whose count PROPFIND rejects", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.propfind.mockClear();
+      __mockClient.propfind.mockRejectedValue(new Error("boom"));
+      const books = await service.listAddressBooks({ includeCounts: true });
+      expect(books).toHaveLength(2);
+      expect(books[0].contactCount).toBeUndefined();
+    });
+  });
+
+  describe("explicit slug collisions and reference trimming", () => {
+    it("fails rather than silently suffixing an explicit slug that is taken", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockClear();
+      // "work" is the existing Work book's slug.
+      await expect(
+        service.createAddressBook({ displayName: "Something Else", slug: "work" }),
+      ).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringContaining("work"),
+      });
+      expect(__mockClient.davRequest).not.toHaveBeenCalled();
+    });
+
+    it("trims a name reference before matching", async () => {
+      await expect(service.findAddressBook("  Work  ")).resolves.toBe(
+        "/dav/addressbooks/users/miguel/work/",
+      );
+    });
+
+    it("says the parent is missing when create gets a 404", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([{ ok: false, status: 404 }]);
+      await expect(service.createAddressBook({ displayName: "Team" })).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringMatching(/parent|home/i),
+      });
+    });
+  });
+
+  describe("findAddressBookEntry", () => {
+    it("returns the whole entry for a name", async () => {
+      await expect(service.findAddressBookEntry("Work")).resolves.toMatchObject({
+        displayName: "Work",
+        url: "/dav/addressbooks/users/miguel/work/",
+      });
+    });
+
+    it("recovers the display name for a URL the account lists", async () => {
+      await expect(
+        service.findAddressBookEntry("/dav/addressbooks/users/miguel/work/"),
+      ).resolves.toMatchObject({ displayName: "Work" });
+    });
+
+    it("leaves displayName empty for a URL the account does not list", async () => {
+      await expect(service.findAddressBookEntry("/dav/elsewhere/book/")).resolves.toEqual({
+        displayName: "",
+        url: "/dav/elsewhere/book/",
+      });
+    });
+
+    it("fails the same way as findAddressBook on an unknown name", async () => {
+      await expect(service.findAddressBookEntry("Nope")).rejects.toMatchObject({
+        code: "ADDRESSBOOK_NOT_FOUND",
+      });
+    });
+  });
+
+  describe("response judging with nothing to judge", () => {
+    it("fails rather than succeeding when davRequest yields no response", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([]);
+      await expect(service.createAddressBook({ displayName: "Team" })).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+      });
+    });
+
+    it("fails rather than succeeding when a delete response carries no status", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.deleteObject.mockResolvedValueOnce({});
+      await expect(service.deleteAddressBook("/dav/a/work/")).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+      });
+    });
+  });
+
+  describe("a 207 that cannot be unpacked", () => {
+    it.each([
+      ["no raw at all", { ok: true, status: 207, statusText: "Multi-Status" }],
+      [
+        "a propstat with no status",
+        {
+          ok: true,
+          status: 207,
+          raw: { multistatus: { response: { propstat: { prop: {} } } } },
+        },
+      ],
+      [
+        "a status string in an unexpected shape",
+        {
+          ok: true,
+          status: 207,
+          raw: { multistatus: { response: { propstat: { status: 403 } } } },
+        },
+      ],
+    ])("fails rather than passing a 207 with %s as success", async (_label, response) => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([response]);
+      await expect(
+        service.renameAddressBook("/dav/a/work/", { displayName: "X" }),
+      ).rejects.toMatchObject({ code: "OPERATION_FAILED" });
+    });
+
+    it("still accepts a 207 whose propstat statuses are all 2xx", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([
+        {
+          ok: true,
+          status: 207,
+          raw: { multistatus: { response: { propstat: { status: "HTTP/1.1 200 OK" } } } },
+        },
+      ]);
+      await expect(
+        service.renameAddressBook("/dav/a/work/", { displayName: "X" }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("createAddressBook", () => {
+    it("issues an extended MKCOL with namespaces on the root element", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const result = await service.createAddressBook({ displayName: "Work Contacts" });
+
+      expect(result.url).toBe("/dav/addressbooks/users/miguel/work-contacts/");
+      expect(result.displayName).toBe("Work Contacts");
+      expect(__mockClient.davRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "/dav/addressbooks/users/miguel/work-contacts/",
+          init: expect.objectContaining({
+            method: "MKCOL",
+            body: {
+              "d:mkcol": {
+                _attributes: {
+                  "xmlns:d": "DAV:",
+                  "xmlns:card": "urn:ietf:params:xml:ns:carddav",
+                },
+                "d:set": {
+                  "d:prop": {
+                    "d:resourcetype": { "d:collection": {}, "card:addressbook": {} },
+                    "d:displayname": "Work Contacts",
+                  },
+                },
+              },
+            },
+          }),
+        }),
+      );
+    });
+
+    it("adds addressbook-description when a description is given", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      await service.createAddressBook({ displayName: "Team", description: "Shared team book" });
+      const body = __mockClient.davRequest.mock.calls.at(-1)[0].init.body;
+      expect(body["d:mkcol"]["d:set"]["d:prop"]["card:addressbook-description"]).toBe(
+        "Shared team book",
+      );
+    });
+
+    it("uses an explicit slug as given", async () => {
+      const result = await service.createAddressBook({ displayName: "Team", slug: "team-x" });
+      expect(result.url).toBe("/dav/addressbooks/users/miguel/team-x/");
+    });
+
+    it.each([["Bad Slug"], ["../escape"], ["-leading"]])(
+      "rejects the invalid slug %s before any request",
+      async (slug) => {
+        const { __mockClient } = (await import("tsdav")) as any;
+        __mockClient.davRequest.mockClear();
+        await expect(
+          service.createAddressBook({ displayName: "Team", slug }),
+        ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+        expect(__mockClient.davRequest).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([[""], ["   "]])(
+      "refuses the unusable display name %j before any request",
+      async (displayName) => {
+        const { __mockClient } = (await import("tsdav")) as any;
+        __mockClient.davRequest.mockClear();
+        await expect(service.createAddressBook({ displayName })).rejects.toMatchObject({
+          code: "VALIDATION_FAILED",
+        });
+        expect(__mockClient.davRequest).not.toHaveBeenCalled();
+      },
+    );
+
+    it("falls back to a generated slug when the name slugifies to nothing", async () => {
+      const result = await service.createAddressBook({ displayName: "!!!" });
+      expect(result.url).toMatch(/\/addressbook-[0-9a-f]{8}\/$/);
+    });
+
+    it("refuses a display name that already exists, case-insensitively, without a request", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockClear();
+      await expect(service.createAddressBook({ displayName: "work" })).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringContaining("/dav/addressbooks/users/miguel/work/"),
+      });
+      expect(__mockClient.davRequest).not.toHaveBeenCalled();
+    });
+
+    it("suffixes the slug when a differently named book slugifies to it", async () => {
+      // "Work!" slugifies to "work", colliding with the existing Work book's URL.
+      const result = await service.createAddressBook({ displayName: "Work!" });
+      expect(result.url).toBe("/dav/addressbooks/users/miguel/work-2/");
+    });
+
+    it("maps 405 to a collection-already-exists failure", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([
+        { ok: true, status: 405, statusText: "Method Not Allowed" },
+      ]);
+      await expect(service.createAddressBook({ displayName: "Team" })).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringContaining("already exists"),
+      });
+    });
+
+    it.each([[403], [501]])("maps %s to a provider-limitation failure", async (status) => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([{ ok: true, status, statusText: "Nope" }]);
+      await expect(service.createAddressBook({ displayName: "Team" })).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringContaining("does not allow creating address books"),
+      });
+    });
+  });
+
+  describe("XML metacharacters in user-supplied values", () => {
+    /**
+     * The MKCOL and PROPPATCH bodies are hand-built and carry caller-supplied
+     * text, so escaping is tsdav's serializer's job. This drives the real
+     * serializer over the exact body we hand `davRequest` and round-trips it,
+     * which is the property that matters: a name with `&` or `<` reaches the
+     * server as text rather than breaking the document.
+     */
+    const roundTrip = async (body: unknown) => {
+      const convert = await import("xml-js");
+      const xml = convert.js2xml(
+        { _declaration: { _attributes: { version: "1.0" } }, ...(body as object) },
+        { compact: true, spaces: 2 },
+      );
+      return { xml, parsed: convert.xml2js(xml, { compact: true }) as any };
+    };
+
+    it("escapes a display name containing & and <> through MKCOL", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const name = 'Ben & Jerry <Work> "x"';
+      await service.createAddressBook({ displayName: name, description: "a & b" });
+
+      const { xml, parsed } = await roundTrip(
+        __mockClient.davRequest.mock.calls.at(-1)[0].init.body,
+      );
+      expect(xml).toContain("&amp;");
+      expect(xml).not.toMatch(/<d:displayname>[^<]*<Work>/);
+      const prop = parsed["d:mkcol"]["d:set"]["d:prop"];
+      expect(prop["d:displayname"]._text).toBe(name);
+      expect(prop["card:addressbook-description"]._text).toBe("a & b");
+    });
+
+    it("escapes a new name containing & and <> through PROPPATCH", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([
+        {
+          ok: true,
+          status: 207,
+          raw: { multistatus: { response: { propstat: { status: "HTTP/1.1 200 OK" } } } },
+        },
+      ]);
+      const name = "R&D <team>";
+      await service.renameAddressBook("/dav/a/work/", { displayName: name });
+
+      const { xml, parsed } = await roundTrip(
+        __mockClient.davRequest.mock.calls.at(-1)[0].init.body,
+      );
+      expect(xml).toContain("&amp;");
+      expect(parsed["d:propertyupdate"]["d:set"]["d:prop"]["d:displayname"]._text).toBe(name);
+    });
+  });
+
+  describe("renameAddressBook", () => {
+    it("issues a namespaced PROPPATCH setting displayname", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([
+        {
+          ok: true,
+          status: 207,
+          raw: { multistatus: { response: { propstat: { status: "HTTP/1.1 200 OK" } } } },
+        },
+      ]);
+      await service.renameAddressBook("/dav/a/work/", { displayName: "Clients" });
+      expect(__mockClient.davRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "/dav/a/work/",
+          init: expect.objectContaining({
+            method: "PROPPATCH",
+            body: {
+              "d:propertyupdate": {
+                _attributes: {
+                  "xmlns:d": "DAV:",
+                  "xmlns:card": "urn:ietf:params:xml:ns:carddav",
+                },
+                "d:set": { "d:prop": { "d:displayname": "Clients" } },
+              },
+            },
+          }),
+        }),
+      );
+    });
+
+    it("sets addressbook-description when given", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([
+        {
+          ok: true,
+          status: 207,
+          raw: { multistatus: { response: { propstat: { status: "HTTP/1.1 200 OK" } } } },
+        },
+      ]);
+      await service.renameAddressBook("/dav/a/work/", { description: "Client book" });
+      const body = __mockClient.davRequest.mock.calls.at(-1)[0].init.body;
+      expect(body["d:propertyupdate"]["d:set"]["d:prop"]).toEqual({
+        "card:addressbook-description": "Client book",
+      });
+    });
+
+    it("rejects a call with nothing to change, without a request", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockClear();
+      await expect(service.renameAddressBook("/dav/a/work/", {})).rejects.toMatchObject({
+        code: "VALIDATION_FAILED",
+      });
+      expect(__mockClient.davRequest).not.toHaveBeenCalled();
+    });
+
+    it("fails on a 207 whose failure lives only in propstat, where ok is true and status is 207", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      // The shape tsdav actually produces: mapped status falls back to the
+      // transport's 207, and the real status survives only under raw.
+      __mockClient.davRequest.mockResolvedValueOnce([
+        {
+          ok: true,
+          status: 207,
+          statusText: "Multi-Status",
+          raw: {
+            multistatus: {
+              response: { propstat: { status: "HTTP/1.1 403 Forbidden" } },
+            },
+          },
+        },
+      ]);
+      await expect(
+        service.renameAddressBook("/dav/a/work/", { displayName: "X" }),
+      ).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringContaining("read-only"),
+      });
+    });
+
+    it("maps 404 to ADDRESSBOOK_NOT_FOUND", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([{ ok: false, status: 404 }]);
+      await expect(
+        service.renameAddressBook("/dav/a/gone/", { displayName: "X" }),
+      ).rejects.toMatchObject({ code: "ADDRESSBOOK_NOT_FOUND" });
+    });
+  });
+
+  describe("deleteAddressBook", () => {
+    it("deletes the collection URL", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      await service.deleteAddressBook("/dav/a/work/");
+      expect(__mockClient.deleteObject).toHaveBeenCalledWith({ url: "/dav/a/work/" });
+    });
+
+    it.each([[204], [200]])("accepts a %s response", async (status) => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.deleteObject.mockResolvedValueOnce({ ok: true, status });
+      await expect(service.deleteAddressBook("/dav/a/work/")).resolves.toBeUndefined();
+    });
+
+    it("maps 404 to ADDRESSBOOK_NOT_FOUND", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.deleteObject.mockResolvedValueOnce({ ok: false, status: 404 });
+      await expect(service.deleteAddressBook("/dav/a/gone/")).rejects.toMatchObject({
+        code: "ADDRESSBOOK_NOT_FOUND",
+      });
+    });
+
+    it("maps 403 to a read-only failure", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.deleteObject.mockResolvedValueOnce({ ok: false, status: 403 });
+      await expect(service.deleteAddressBook("/dav/a/work/")).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringContaining("read-only"),
+      });
+    });
+  });
+
+  describe("findAddressBook", () => {
+    it("resolves a display name to its URL", async () => {
+      await expect(service.findAddressBook("Work")).resolves.toBe(
+        "/dav/addressbooks/users/miguel/work/",
+      );
+    });
+
+    it("matches names case-insensitively", async () => {
+      await expect(service.findAddressBook("work")).resolves.toBe(
+        "/dav/addressbooks/users/miguel/work/",
+      );
+    });
+
+    it("returns URLs verbatim without listing books", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      await service.connect();
+      __mockClient.fetchAddressBooks.mockClear();
+      await expect(service.findAddressBook("/dav/addressbooks/users/miguel/other/")).resolves.toBe(
+        "/dav/addressbooks/users/miguel/other/",
+      );
+      await expect(service.findAddressBook("https://dav.example.com/books/a/")).resolves.toBe(
+        "https://dav.example.com/books/a/",
+      );
+      expect(__mockClient.fetchAddressBooks).not.toHaveBeenCalled();
+    });
+
+    it("lists the known names when no book matches", async () => {
+      await expect(service.findAddressBook("Personal")).rejects.toMatchObject({
+        code: "ADDRESSBOOK_NOT_FOUND",
+        message: expect.stringContaining("Contacts, Work"),
+      });
+    });
+
+    it("lists the matching URLs when two books share the name", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchAddressBooks.mockResolvedValueOnce([
+        { displayName: "Work", url: "/dav/a/work/", ctag: "1" },
+        { displayName: "work", url: "/dav/b/work/", ctag: "2" },
+      ]);
+      await expect(service.findAddressBook("Work")).rejects.toMatchObject({
+        code: "ADDRESSBOOK_NOT_FOUND",
+        message: expect.stringMatching(/\/dav\/a\/work\/.*\/dav\/b\/work\//s),
+      });
     });
   });
 

@@ -17,7 +17,8 @@ import {
 
 const ADDRESS_BOOK_PROP = {
   type: "string",
-  description: "Address book URL. If omitted, uses the first available address book.",
+  description:
+    "Address book URL or display name (e.g. 'Work'). If omitted, uses the first available address book.",
 } as const;
 
 const DETAIL_LEVEL_PROP = {
@@ -394,7 +395,7 @@ async function resolveAddressBook(
   explicit: string | undefined,
   service: CardDavService,
 ): Promise<string> {
-  if (explicit) return explicit;
+  if (explicit) return service.findAddressBook(explicit);
   const books = await service.listAddressBooks();
   if (books.length === 0) {
     throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);

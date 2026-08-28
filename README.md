@@ -8,7 +8,7 @@ All three servers speak MCP revision **2026-07-28** over stdio, and continue to 
 
 Every tool declares a `title`, a full set of behaviour annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), and an `outputSchema`; results carry validated `structuredContent` alongside the serialized JSON.
 
-Irreversible operations — `send_email`, `send_draft`, a permanent `delete_email`, `delete_contact`, and any `delete_event` that removes the calendar object — ask the user to confirm before they run, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
+Irreversible operations — `send_email`, `send_draft`, a permanent `delete_email`, `delete_contact`, `delete_address_book`, and any `delete_event` that removes the calendar object — ask the user to confirm before they run, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
 
 A client that does not support elicitation cannot answer the prompt, so those tools fail fast with `CONFIRMATION_UNSUPPORTED` and point at `PIM_MCP_CONFIRM=off` — rather than returning a question that never reaches anyone.
 
@@ -56,7 +56,9 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `import_ics` | Import events from .ics content |
 | `find_free_slots` | Find available time slots across calendars |
 
-### [Contacts (6 tools)](docs/tools/card-mcp.md)
+### [Contacts (10 tools)](docs/tools/card-mcp.md)
+
+Every `addressBook` parameter takes a display name (e.g. `Work`) as well as a URL.
 
 | Tool | Description |
 |------|-------------|
@@ -66,6 +68,10 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `update_contact` | Update an existing contact (merge-based) |
 | `delete_contact` | Delete a contact by UID (confirms first) |
 | `resolve_contact` | Given a name, return email address |
+| `list_address_books` | List address books with metadata and opt-in contact counts |
+| `create_address_book` | Create an address book (extended MKCOL) |
+| `rename_address_book` | Rename an address book or update its description |
+| `delete_address_book` | Delete an address book and its contacts (confirms first) |
 
 ## Configuration
 
