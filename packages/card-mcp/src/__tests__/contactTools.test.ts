@@ -1,6 +1,6 @@
 import type { ServerContext } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
-import { CONTACT_TOOLS } from "../tools/contactTools.js";
+import { CONTACT_TOOLS, UPDATABLE_FIELDS } from "../tools/contactTools.js";
 
 /** Minimal handler context: no multi-round-trip input responses carried. */
 const emptyCtx = { mcpReq: { inputResponses: undefined } } as unknown as ServerContext;
@@ -275,6 +275,75 @@ describe("address book name resolution", () => {
     expect(res.isError).toBe(true);
     expect(JSON.parse(res.content[0].text).error).toBe("ADDRESSBOOK_NOT_FOUND");
     expect(fakeService.fetchContacts).not.toHaveBeenCalled();
+  });
+});
+
+describe("update_contact field forwarding", () => {
+  const fakeService = () => ({
+    listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "x" }]),
+    findAddressBook: vi.fn().mockResolvedValue("b"),
+    updateContact: vi.fn().mockResolvedValue(undefined),
+  });
+
+  it("forwards exactly the supplied fields and nothing else", async () => {
+    const service = fakeService();
+    const res = await callTool(
+      "update_contact",
+      { uid: "u1", note: "", emails: [{ type: "work", value: "a@b.c" }] },
+      service,
+    );
+
+    expect(res.structuredContent).toEqual({ status: "updated", uid: "u1" });
+    expect(service.updateContact).toHaveBeenCalledTimes(1);
+    const [, uid, updates] = service.updateContact.mock.calls[0];
+    expect(uid).toBe("u1");
+    // Exact key set: an omitted field must not reach the merge as `undefined`,
+    // and a supplied-but-falsy one (note: "") must survive.
+    expect(Object.keys(updates).sort()).toEqual(["emails", "note"]);
+    expect(updates).toEqual({ note: "", emails: [{ type: "work", value: "a@b.c" }] });
+  });
+
+  it("carries every updatable field through when all are supplied", async () => {
+    const service = fakeService();
+    const args = {
+      uid: "u1",
+      fullName: "Ada Lovelace",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      emails: [{ value: "ada@example.com" }],
+      phones: [{ type: "cell", value: "+1 555 0100" }],
+      addresses: [{ type: "home", street: "1 Analytical Way", city: "London" }],
+      urls: [{ value: "https://example.com" }],
+      organization: "Analytical Engines",
+      title: "Countess",
+      role: "Mathematician",
+      nickname: "Ada",
+      birthday: "1815-12-10",
+      categories: ["friends"],
+      note: "First programmer",
+    };
+    await callTool("update_contact", args, service);
+
+    const { uid: _uid, ...expected } = args;
+    expect(service.updateContact.mock.calls[0][2]).toEqual(expected);
+  });
+
+  it("never forwards addressBook — it selects the book, it is not a contact field", async () => {
+    const service = fakeService();
+    await callTool("update_contact", { uid: "u1", addressBook: "b", note: "n" }, service);
+    expect(service.updateContact.mock.calls[0][2]).toEqual({ note: "n" });
+  });
+
+  it("every writable property in the input schema is an updatable field", () => {
+    const tool = CONTACT_TOOLS.find((t) => t.name === "update_contact")!;
+    const properties = Object.keys(
+      (tool.inputSchema as { properties: Record<string, unknown> }).properties,
+    );
+    // uid identifies the contact and addressBook selects the book; every other
+    // advertised property has to be one the handler actually copies, or the
+    // tool accepts input it silently drops.
+    const advertised = properties.filter((p) => p !== "uid" && p !== "addressBook").sort();
+    expect(advertised).toEqual([...UPDATABLE_FIELDS].sort());
   });
 });
 
