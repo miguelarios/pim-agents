@@ -1,11 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  type Contact,
-  ContactError,
-  ErrorCode,
-  type PostalAddress,
-  type TypedValue,
-} from "@miguelarios/pim-core";
+import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import type { CardDavService } from "../services/CardDavService.js";
 import {
@@ -52,27 +46,52 @@ const ADDRESS_ITEMS = {
 
 type ListArgs = { query?: string; addressBook?: string; detail_level?: "summary" | "full" };
 type GetArgs = { uid: string; addressBook?: string; detail_level?: "summary" | "full" };
-type ContactFields = {
-  fullName?: string;
-  firstName?: string;
-  lastName?: string;
-  emails?: TypedValue[];
-  phones?: TypedValue[];
-  addresses?: PostalAddress[];
-  urls?: TypedValue[];
-  organization?: string;
-  title?: string;
-  role?: string;
-  nickname?: string;
-  birthday?: string;
-  categories?: string[];
-  note?: string;
-  addressBook?: string;
-};
+/**
+ * The `Contact` fields `update_contact` can write, and the single source of
+ * truth for both the arg type and the copy loop in its handler. Deriving the
+ * types from `Contact` through `Pick` is what makes drift a compile error: a
+ * name that is not a `Contact` key, or a field whose type changes there, stops
+ * the build instead of being silently swallowed by a cast.
+ */
+export const UPDATABLE_FIELDS = [
+  "fullName",
+  "firstName",
+  "lastName",
+  "emails",
+  "phones",
+  "addresses",
+  "urls",
+  "organization",
+  "title",
+  "role",
+  "nickname",
+  "birthday",
+  "categories",
+  "note",
+] as const;
+
+type UpdatableField = (typeof UPDATABLE_FIELDS)[number];
+
+/** `addressBook` is not a contact field — it selects which book to act on. */
+type ContactFields = Partial<Pick<Contact, UpdatableField>> & { addressBook?: string };
+
+type ContactUpdates = Partial<Omit<Contact, "uid" | "otherProperties">>;
+
 type CreateArgs = ContactFields & { fullName: string };
 type UpdateArgs = ContactFields & { uid: string };
 type DeleteArgs = { uid: string; addressBook?: string };
 type ResolveArgs = { name: string; addressBook?: string };
+
+/**
+ * Copies one field across when the caller supplied it. The generic `K` is what
+ * types this: inside the function both sides are the same `T[K]`, where a loop
+ * over a union of keys would widen them to unrelated value types and force a
+ * cast.
+ */
+function copyDefined<T, K extends keyof T>(target: Partial<T>, source: Partial<T>, key: K): void {
+  const value = source[key];
+  if (value !== undefined) target[key] = value;
+}
 
 export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
   {
@@ -292,28 +311,9 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     handler: async (args: UpdateArgs, service) => {
       try {
         const addressBookUrl = await resolveAddressBook(args.addressBook, service);
-        const updates: Partial<Omit<Contact, "uid" | "otherProperties">> = {};
-        const fields = [
-          "fullName",
-          "firstName",
-          "lastName",
-          "emails",
-          "phones",
-          "addresses",
-          "urls",
-          "organization",
-          "title",
-          "role",
-          "nickname",
-          "birthday",
-          "categories",
-          "note",
-        ] as const;
-        for (const field of fields) {
-          if (args[field] !== undefined) {
-            // field-by-field copy across a union of value types
-            (updates as any)[field] = args[field];
-          }
+        const updates: ContactUpdates = {};
+        for (const field of UPDATABLE_FIELDS) {
+          copyDefined(updates, args, field);
         }
 
         await service.updateContact(addressBookUrl, args.uid, updates);
