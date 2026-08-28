@@ -73,7 +73,8 @@ Merges are **squash merges**, so:
 - The squash **body is built from the branch's commit messages**, not from the PR body. So
   commit messages are permanent and worth writing properly; the PR body is for reviewers.
 
-One PR is one concern. Repo-wide convention changes do not ride along with a feature.
+One PR is one concern, because that title has to describe a single change — so repo-wide
+convention changes do not ride along with a feature.
 
 ## What not to commit
 

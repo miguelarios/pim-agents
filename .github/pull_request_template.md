@@ -37,6 +37,7 @@ version bump publishes it — see CLAUDE.md > Publishing.
 
 ## Related
 
-<!-- `Closes #N` for each issue this finishes. Reference, don't close, for partial work. -->
-
-Closes #
+<!--
+`Closes #N` for each issue this finishes, one per line. Reference without
+closing for partial work. Delete this section if nothing is related.
+-->
