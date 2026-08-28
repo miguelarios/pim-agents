@@ -149,8 +149,24 @@ jobs:
 
             # npm is the source of truth for whether this actually shipped, so
             # a partially failed batch tags exactly what published and no more.
-            if ! npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
-              echo "::warning::${NAME}@${VERSION} is not on npm — not tagging $TAG"
+            #
+            # But npm's own publish output says the package "may take a few
+            # minutes to become available", so a single immediate check races
+            # the registry and reports a successful publish as a failure. That
+            # is exactly what stranded card-mcp 0.6.0: published at :36:36,
+            # visible at :37:51 — 75s later, long after this job had given up.
+            # --prefer-online because a 404 answered here is otherwise cached
+            # for the rest of the loop.
+            SEEN=0
+            for _ in $(seq 1 30); do
+              if npm view --prefer-online "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+                SEEN=1
+                break
+              fi
+              sleep 10
+            done
+            if [ "$SEEN" -eq 0 ]; then
+              echo "::warning::${NAME}@${VERSION} did not appear on npm within 5m — not tagging $TAG"
               FAILED=1
               continue
             fi
