@@ -23,7 +23,7 @@
     "start": "node dist/bin/cli.js"
   },
   "dependencies": {
-    "@miguelarios/pim-core": "^0.8.0",
+    "@miguelarios/pim-core": "^0.9.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "tsdav": "^2.1.0"
   },

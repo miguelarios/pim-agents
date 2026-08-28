@@ -39,7 +39,7 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `get_email_raw` | Export email as raw .eml, as an embedded `message/rfc822` resource |
 | `get_folder_status` | Get total and unread message counts for a folder |
 
-### [Calendar (12 tools)](docs/tools/cal-mcp.md)
+### [Calendar (15 tools)](docs/tools/cal-mcp.md)
 
 | Tool | Description |
 |------|-------------|
@@ -55,6 +55,9 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `create_events_batch` | Create multiple events at once |
 | `import_ics` | Import events from .ics content |
 | `find_free_slots` | Find available time slots across calendars |
+| `create_calendar` | Create a calendar on a provider, with colour and description |
+| `update_calendar` | Rename a calendar or change its colour/description |
+| `delete_calendar` | Delete a calendar and every event in it (confirms first) |
 
 ### [Contacts (10 tools)](docs/tools/card-mcp.md)
 

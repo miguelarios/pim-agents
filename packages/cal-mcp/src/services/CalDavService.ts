@@ -1,8 +1,11 @@
+import { randomBytes } from "node:crypto";
 import {
   type CalDavAccount,
   type CalDavConfig,
   CalendarError,
   ErrorCode,
+  ValidationError,
+  checkDavCollectionResponse,
   formatInTimezone,
   getLocalDateParts,
   getTimezone,
@@ -16,7 +19,13 @@ import {
   parseIcsEvents,
 } from "@miguelarios/pim-core/ics";
 import { DAVClient } from "tsdav";
-import { deleteCachedObject, getCachedObject, setCachedObject } from "./urlCache.js";
+import {
+  deleteCachedObject,
+  getCachedObject,
+  moveCachedCalendar,
+  purgeCachedCalendar,
+  setCachedObject,
+} from "./urlCache.js";
 
 export interface CalendarInfo {
   calendar_id: string;
@@ -26,6 +35,14 @@ export interface CalendarInfo {
   read_only: boolean;
   url: string;
   ctag?: string;
+}
+
+/** A calendar collection as the management tools name it. */
+export interface CalendarCollection {
+  calendar_id: string;
+  display_name: string;
+  url: string;
+  provider: string;
 }
 
 export interface EventSummary {
@@ -79,6 +96,69 @@ export interface CalendarObjectMeta {
   url: string;
   etag?: string;
 }
+
+/** Derives a URL slug from a display name; falls back to a random one when nothing survives. */
+function slugify(displayName: string): string {
+  const slug = displayName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `calendar-${randomBytes(4).toString("hex")}`;
+}
+
+/** Normalises a URL or href to a comparable path: origin stripped, trailing slashes trimmed. */
+function collectionPath(ref: string): string {
+  try {
+    return new URL(ref, "http://placeholder.invalid").pathname.replace(/\/+$/, "");
+  } catch {
+    return ref.replace(/\/+$/, "");
+  }
+}
+
+/**
+ * Namespace declarations for every collection-level request this service makes.
+ * `ical` is Apple's, and is where `calendar-color` lives — the same property
+ * tsdav's `fetchCalendars` reads back as `calendarColor`, so a colour written
+ * here is what `list_calendars` reports.
+ */
+const CALENDAR_DAV_NAMESPACES = {
+  "xmlns:d": "DAV:",
+  "xmlns:cal": "urn:ietf:params:xml:ns:caldav",
+  "xmlns:ical": "http://apple.com/ns/ical/",
+} as const;
+
+/** tsdav types `displayName` loosely; calendars without one read as "". */
+function displayNameOf(calendar: unknown): string {
+  const name = (calendar as { displayName?: unknown } | null | undefined)?.displayName;
+  return typeof name === "string" ? name : "";
+}
+
+/**
+ * Validates a calendar colour and returns it unchanged. Apple clients write the
+ * 8-digit form, so both are accepted; the value is passed through verbatim
+ * rather than reformatted, since it is what reads back out of `calendarColor`.
+ */
+function normalizeCalendarColor(color: string): string {
+  const trimmed = color.trim();
+  if (!/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed)) {
+    throw new ValidationError(
+      `Invalid color "${color}" — use #RRGGBB or #RRGGBBAA (e.g. #3B82F6)`,
+      "color",
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * Wiring for the shared DAV collection response checker, so every collection
+ * verb in this service speaks CalendarError rather than a generic failure.
+ */
+const CALENDAR_DAV_CHECK = {
+  resource: "calendar",
+  notFound: (url: string) =>
+    new CalendarError(`Calendar not found: ${url}`, ErrorCode.CALENDAR_NOT_FOUND),
+  failed: (message: string) => new CalendarError(message, ErrorCode.OPERATION_FAILED),
+};
 
 // Build the conventional CalDAV href for an event: <calendar-url>/<uid>.ics.
 // Accepts absolute (https://host/path/) or relative (/path/) calendar URLs;
@@ -169,14 +249,8 @@ export class CalDavService {
     calendarName: string,
     providerId: string,
   ): Promise<any> {
-    let calendars = this.calendarsCache.get(providerId);
-    if (!calendars) {
-      calendars = await client.fetchCalendars();
-      this.calendarsCache.set(providerId, calendars);
-    }
-    const calendar = calendars.find(
-      (c) => (typeof c.displayName === "string" ? c.displayName : "") === calendarName,
-    );
+    const calendars = await this.fetchCalendarsFor(client, providerId);
+    const calendar = calendars.find((c) => displayNameOf(c) === calendarName);
     if (!calendar) {
       throw new CalendarError(
         `Calendar "${calendarName}" not found on provider "${providerId}"`,
@@ -365,7 +439,7 @@ export class CalDavService {
         const calendars = await client.fetchCalendars();
         this.calendarsCache.set(providerId, calendars);
         for (const cal of calendars) {
-          const displayName = (typeof cal.displayName === "string" ? cal.displayName : "") || "";
+          const displayName = displayNameOf(cal);
           const canWrite = await this.fetchPrivileges(client, cal.url);
           allCalendars.push({
             calendar_id: `${providerId}/${displayName}`,
@@ -383,6 +457,340 @@ export class CalDavService {
     }
 
     return allCalendars;
+  }
+
+  /** The configured provider IDs — the prefix half of every `calendar_id`. */
+  listProviders(): string[] {
+    return [...this.accounts.keys()];
+  }
+
+  /**
+   * Picks the account a new calendar is created on.
+   *
+   * Omitting `provider` is only allowed when it cannot be ambiguous. With
+   * several accounts configured there is no sensible default — creating on
+   * "whichever account sorts first" is not a thing a caller can mean — so it
+   * is refused with the list of IDs rather than guessed.
+   */
+  private resolveProvider(provider?: string): CalDavAccount {
+    const known = this.listProviders();
+    if (provider !== undefined) {
+      const account = this.accounts.get(provider);
+      if (!account) {
+        throw new ValidationError(
+          `Unknown provider "${provider}" — configured providers: ${known.join(", ")}`,
+          "provider",
+        );
+      }
+      return account;
+    }
+    if (known.length === 1) {
+      const only = this.accounts.get(known[0]);
+      if (only) return only;
+    }
+    throw new ValidationError(
+      `provider is required when several accounts are configured — choose one of: ${known.join(", ")}`,
+      "provider",
+    );
+  }
+
+  /**
+   * Resolves a calendar_id to the entry it names, so a caller can say what it
+   * is about to act on rather than echoing back the string it was handed.
+   */
+  async findCalendarEntry(calendarId: string): Promise<CalendarCollection> {
+    const { account, calendarName } = this.resolveAccount(calendarId);
+    try {
+      const client = await this.getClient(account);
+      const calendar = await this.findCalendar(client, calendarName, account.id);
+      return {
+        calendar_id: calendarId,
+        display_name: calendarName,
+        url: (calendar as { url: string }).url,
+        provider: account.id,
+      };
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Counts the objects in a calendar with a single depth-1 PROPFIND asking only
+   * for etags — no ICS bodies cross the wire. Counts calendar *objects*, so a
+   * whole recurring series counts once, which is the honest unit for "what is
+   * about to be destroyed".
+   *
+   * Returns `undefined` rather than failing when the server refuses: a count is
+   * there to make a confirmation concrete, and losing it should not block the
+   * operation.
+   */
+  async countCalendarObjects(calendarId: string): Promise<number | undefined> {
+    try {
+      const { account, calendarName } = this.resolveAccount(calendarId);
+      const client = await this.getClient(account);
+      const calendar = await this.findCalendar(client, calendarName, account.id);
+      const url = (calendar as { url: string }).url;
+      const responses = await (client as any).propfind({
+        url,
+        props: { "d:getetag": {} },
+        depth: "1",
+      });
+      const self = collectionPath(url);
+      return (responses as Array<{ href?: string }>).filter(
+        (r) => r.href && collectionPath(r.href) !== self,
+      ).length;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Creates a calendar collection with MKCALENDAR (RFC 4791 §5.3.1).
+   *
+   * Unlike CardDAV's extended MKCOL the resourcetype is implied by the method,
+   * and the request is atomic — if any property in the body is refused the
+   * calendar is not created — so name, description and colour all ride in the
+   * one request rather than needing a follow-up PROPPATCH that could half-fail.
+   *
+   * The request goes through `davRequest` rather than tsdav's `makeCalendar`:
+   * that helper's namespace set is fixed and carries no Apple `ical` namespace,
+   * so a colour could not ride along. Namespace declarations go in
+   * `_attributes` on the root element, where `davRequest` keeps them —
+   * document-level attributes are silently dropped.
+   */
+  async createCalendar(opts: {
+    provider?: string;
+    displayName: string;
+    description?: string;
+    color?: string;
+    slug?: string;
+  }): Promise<CalendarCollection> {
+    const account = this.resolveProvider(opts.provider);
+
+    // A calendar with no display name has no addressable calendar_id at all —
+    // `provider/` resolves to nothing — so creating one is refused rather than
+    // quietly made unreachable.
+    if (opts.displayName.trim() === "") {
+      throw new ValidationError("display_name cannot be empty", "display_name");
+    }
+    if (opts.slug !== undefined && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(opts.slug)) {
+      throw new ValidationError(
+        `Invalid slug "${opts.slug}" — use lowercase letters, digits and hyphens, starting with a letter or digit`,
+        "slug",
+      );
+    }
+    const color = opts.color !== undefined ? normalizeCalendarColor(opts.color) : undefined;
+
+    const client = await this.getClient(account);
+    const existing = await this.fetchCalendarsFor(client, account.id);
+
+    // A second calendar with the same display name on the same provider would
+    // make its calendar_id ambiguous on *every subsequent call* — the name is
+    // not a convenience alias here, it is half the ID, and findCalendar
+    // resolves every event operation by exact display-name match. So duplicates
+    // are refused rather than suffixed; that also keeps a retried create from
+    // minting one.
+    const duplicate = existing.find(
+      (c) => displayNameOf(c).toLowerCase() === opts.displayName.trim().toLowerCase(),
+    );
+    if (duplicate) {
+      throw new CalendarError(
+        `A calendar named "${displayNameOf(duplicate)}" already exists on provider "${account.id}" (${(duplicate as { url: string }).url})`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
+
+    const homeUrl = (client as { account?: { homeUrl?: string } }).account?.homeUrl;
+    if (!homeUrl) {
+      throw new CalendarError(
+        `Provider "${account.id}" has no calendar home URL — cannot derive a location for the new calendar`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
+    const base = homeUrl.endsWith("/") ? homeUrl : `${homeUrl}/`;
+    const taken = new Set(existing.map((c) => collectionPath((c as { url: string }).url)));
+    if (opts.slug !== undefined && taken.has(collectionPath(base + opts.slug))) {
+      // An explicit slug is a request for a specific URL. Suffixing it would
+      // hand back a different one than was asked for, observable only by
+      // reading the result, so this refuses instead.
+      throw new CalendarError(
+        `A collection already exists at the requested slug "${opts.slug}" (${base}${opts.slug}/)`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
+    const slug = opts.slug ?? slugify(opts.displayName);
+    let candidate = slug;
+    for (let n = 2; taken.has(collectionPath(base + candidate)); n++) {
+      candidate = `${slug}-${n}`;
+    }
+    const url = `${base}${candidate}/`;
+
+    try {
+      const [response] = await (client as any).davRequest({
+        url,
+        init: {
+          method: "MKCALENDAR",
+          headers: {},
+          body: {
+            "cal:mkcalendar": {
+              _attributes: CALENDAR_DAV_NAMESPACES,
+              "d:set": {
+                "d:prop": {
+                  "d:displayname": opts.displayName,
+                  ...(opts.description !== undefined
+                    ? { "cal:calendar-description": opts.description }
+                    : {}),
+                  ...(color !== undefined ? { "ical:calendar-color": color } : {}),
+                },
+              },
+            },
+          },
+        },
+      });
+      checkDavCollectionResponse(response, "create", url, CALENDAR_DAV_CHECK);
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+
+    // The new collection is not in the cached listing, and findCalendar reads
+    // that cache — so drop it or the calendar stays invisible to this process.
+    this.calendarsCache.delete(account.id);
+    return {
+      calendar_id: `${account.id}/${opts.displayName}`,
+      display_name: opts.displayName,
+      url,
+      provider: account.id,
+    };
+  }
+
+  /**
+   * Updates a calendar's display name, description and/or colour via PROPPATCH.
+   *
+   * Renaming changes the calendar's identity: `calendar_id` is
+   * `provider/DisplayName`, so the old ID stops resolving and the *new* one
+   * comes back in the result. The collection URL is untouched — display name
+   * and slug are allowed to drift, exactly as in every CalDAV client.
+   */
+  async updateCalendarMeta(
+    calendarId: string,
+    opts: { displayName?: string; description?: string; color?: string },
+  ): Promise<CalendarCollection> {
+    if (
+      opts.displayName === undefined &&
+      opts.description === undefined &&
+      opts.color === undefined
+    ) {
+      throw new ValidationError(
+        "Nothing to change — provide a display_name, color and/or description",
+      );
+    }
+    if (opts.displayName !== undefined && opts.displayName.trim() === "") {
+      throw new ValidationError("display_name cannot be empty", "display_name");
+    }
+    const color = opts.color !== undefined ? normalizeCalendarColor(opts.color) : undefined;
+
+    const { account, calendarName } = this.resolveAccount(calendarId);
+    const client = await this.getClient(account);
+    const calendar = await this.findCalendar(client, calendarName, account.id);
+    const url = (calendar as { url: string }).url;
+
+    // Renaming onto a name already in use would make that calendar_id ambiguous
+    // — the same reason create refuses duplicates. The calendar being renamed is
+    // excluded so re-applying its own name stays a no-op rather than an error.
+    if (opts.displayName !== undefined) {
+      const existing = await this.fetchCalendarsFor(client, account.id);
+      const clash = existing.find(
+        (c) =>
+          displayNameOf(c).toLowerCase() === opts.displayName!.trim().toLowerCase() &&
+          collectionPath((c as { url: string }).url) !== collectionPath(url),
+      );
+      if (clash) {
+        throw new CalendarError(
+          `A calendar named "${displayNameOf(clash)}" already exists on provider "${account.id}" (${(clash as { url: string }).url})`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+    }
+
+    try {
+      const [response] = await (client as any).davRequest({
+        url,
+        init: {
+          method: "PROPPATCH",
+          headers: {},
+          body: {
+            "d:propertyupdate": {
+              _attributes: CALENDAR_DAV_NAMESPACES,
+              "d:set": {
+                "d:prop": {
+                  ...(opts.displayName !== undefined ? { "d:displayname": opts.displayName } : {}),
+                  ...(opts.description !== undefined
+                    ? { "cal:calendar-description": opts.description }
+                    : {}),
+                  ...(color !== undefined ? { "ical:calendar-color": color } : {}),
+                },
+              },
+            },
+          },
+        },
+      });
+      checkDavCollectionResponse(response, "update", url, CALENDAR_DAV_CHECK);
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      this.calendarsCache.delete(account.id);
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+
+    const newDisplayName = opts.displayName ?? calendarName;
+    const newCalendarId = `${account.id}/${newDisplayName}`;
+    this.calendarsCache.delete(account.id);
+    // The UID→URL cache is keyed by calendar_id; a rename leaves its entries
+    // valid but filed under a key nothing looks up again.
+    moveCachedCalendar(calendarId, newCalendarId);
+
+    return {
+      calendar_id: newCalendarId,
+      display_name: newDisplayName,
+      url,
+      provider: account.id,
+    };
+  }
+
+  /** Deletes a calendar collection — and with it every event inside. */
+  async deleteCalendar(calendarId: string): Promise<CalendarCollection> {
+    const { account, calendarName } = this.resolveAccount(calendarId);
+    const client = await this.getClient(account);
+    const calendar = await this.findCalendar(client, calendarName, account.id);
+    const url = (calendar as { url: string }).url;
+
+    try {
+      const response = await client.deleteObject({ url });
+      checkDavCollectionResponse(response, "delete", url, CALENDAR_DAV_CHECK);
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      this.calendarsCache.delete(account.id);
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+
+    this.calendarsCache.delete(account.id);
+    purgeCachedCalendar(calendarId);
+    return {
+      calendar_id: calendarId,
+      display_name: calendarName,
+      url,
+      provider: account.id,
+    };
+  }
+
+  /** Fetches a provider's calendars, populating the shared listing cache. */
+  private async fetchCalendarsFor(client: DAVClient, providerId: string): Promise<any[]> {
+    const cached = this.calendarsCache.get(providerId);
+    if (cached) return cached;
+    const calendars = await client.fetchCalendars();
+    this.calendarsCache.set(providerId, calendars);
+    return calendars;
   }
 
   async listEvents(calendarId: string, start: string, end: string): Promise<EventSummary[]> {

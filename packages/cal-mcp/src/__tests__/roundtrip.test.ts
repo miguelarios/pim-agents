@@ -8,7 +8,11 @@ import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalDavService } from "../services/CalDavService.js";
+import { CALENDAR_MANAGEMENT_TOOLS } from "../tools/calendarManagementTools.js";
 import { CALENDAR_TOOLS } from "../tools/calendarTools.js";
+
+/** Everything the real server registers, in the order it registers it. */
+const ALL_TOOLS = [...CALENDAR_TOOLS, ...CALENDAR_MANAGEMENT_TOOLS];
 
 const EVENT = {
   uid: "evt-1",
@@ -62,6 +66,32 @@ function fakeService() {
     fetchRawCalendarObject: vi.fn().mockResolvedValue({ data: RECURRING_ICS, url: "u", etag: "e" }),
     findFreeSlots: vi.fn().mockResolvedValue([]),
     getAccountEmail: vi.fn(() => "user@example.com"),
+    listProviders: vi.fn(() => ["mailbox"]),
+    findCalendarEntry: vi.fn().mockResolvedValue({
+      calendar_id: "mailbox/Work",
+      display_name: "Work",
+      url: "https://example.test/work",
+      provider: "mailbox",
+    }),
+    countCalendarObjects: vi.fn().mockResolvedValue(214),
+    createCalendar: vi.fn().mockResolvedValue({
+      calendar_id: "mailbox/Team",
+      display_name: "Team",
+      url: "https://example.test/team",
+      provider: "mailbox",
+    }),
+    updateCalendarMeta: vi.fn().mockResolvedValue({
+      calendar_id: "mailbox/Team",
+      display_name: "Team",
+      url: "https://example.test/work",
+      provider: "mailbox",
+    }),
+    deleteCalendar: vi.fn().mockResolvedValue({
+      calendar_id: "mailbox/Work",
+      display_name: "Work",
+      url: "https://example.test/work",
+      provider: "mailbox",
+    }),
   };
 }
 
@@ -91,7 +121,7 @@ const open = async (
           cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
         },
       );
-      registerTools(server, CALENDAR_TOOLS, service as unknown as CalDavService);
+      registerTools(server, ALL_TOOLS, service as unknown as CalDavService);
       return server;
     },
     { transport: serverTransport },
@@ -138,7 +168,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     const { client } = await connect(era, fakeService());
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(CALENDAR_TOOLS.length);
+    expect(tools).toHaveLength(ALL_TOOLS.length);
     for (const tool of tools) {
       expect(tool.title, tool.name).toBeTruthy();
       expect(tool.outputSchema, tool.name).toBeDefined();
@@ -156,7 +186,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     const first = (await client.listTools()).tools.map((t) => t.name);
     const second = (await client.listTools()).tools.map((t) => t.name);
     expect(second).toEqual(first);
-    expect(first).toEqual(CALENDAR_TOOLS.map((t) => t.name));
+    expect(first).toEqual(ALL_TOOLS.map((t) => t.name));
   });
 
   it("returns structuredContent matching the advertised outputSchema", async () => {
@@ -318,5 +348,85 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect(elicitations).toHaveLength(1);
     expect(result.isError).toBe(true);
     expect(service.deleteEvent).not.toHaveBeenCalled();
+  });
+  it("creates a calendar and validates the result against its outputSchema", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "create_calendar",
+      arguments: { provider: "mailbox", display_name: "Team", color: "#3B82F6" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      status: "created",
+      calendar_id: "mailbox/Team",
+    });
+  });
+
+  it("rejects a create with no display_name without running the handler", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "create_calendar",
+      arguments: { provider: "mailbox" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(service.createCalendar).not.toHaveBeenCalled();
+  });
+
+  it("hands back the post-rename calendar_id from update_calendar", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_calendar",
+      arguments: { calendar: "mailbox/Work", display_name: "Team" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      status: "updated",
+      calendar_id: "mailbox/Team",
+    });
+  });
+
+  it("confirms before deleting a calendar, then deletes", async () => {
+    const service = fakeService();
+    const { client, elicitations } = await connect(era, service);
+    const result = await client.callTool({
+      name: "delete_calendar",
+      arguments: { calendar: "mailbox/Work" },
+    });
+
+    expect(elicitations).toHaveLength(1);
+    expect(elicitations[0]).toContain("all 214 events in it");
+    expect(result.isError).toBeFalsy();
+    expect(service.deleteCalendar).toHaveBeenCalledWith("mailbox/Work");
+  });
+
+  it("does not delete a calendar when the user declines", async () => {
+    const service = fakeService();
+    const { client, elicitations } = await connect(era, service, { action: "decline" });
+    const result = await client.callTool({
+      name: "delete_calendar",
+      arguments: { calendar: "mailbox/Work" },
+    });
+
+    expect(elicitations).toHaveLength(1);
+    expect(result.isError).toBe(true);
+    expect(service.deleteCalendar).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete a calendar for a client that cannot be asked", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service, { action: "unsupported" });
+    const result = await client.callTool({
+      name: "delete_calendar",
+      arguments: { calendar: "mailbox/Work" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(service.deleteCalendar).not.toHaveBeenCalled();
   });
 });

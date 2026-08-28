@@ -4,6 +4,7 @@ import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { CalDavService } from "./services/CalDavService.js";
+import { CALENDAR_MANAGEMENT_TOOLS } from "./tools/calendarManagementTools.js";
 import { CALENDAR_TOOLS } from "./tools/calendarTools.js";
 
 const require = createRequire(import.meta.url);
@@ -18,12 +19,12 @@ export async function createServer(): Promise<McpServer> {
     {
       capabilities: { tools: { listChanged: false } },
       instructions:
-        "Read and manage CalDAV calendars across every configured provider. Calendar IDs are provider-prefixed (e.g. mailbox/Work) — call list_calendars first. delete_event asks the user to confirm whenever it removes the calendar object; excluding one occurrence of a recurring event does not.",
+        "Read and manage CalDAV calendars across every configured provider. Calendar IDs are provider-prefixed (e.g. mailbox/Work) — call list_calendars first. delete_event asks the user to confirm whenever it removes the calendar object; excluding one occurrence of a recurring event does not. delete_calendar asks the user to confirm too, since it removes every event in the calendar. Renaming a calendar with update_calendar changes its ID.",
       cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
     },
   );
 
-  registerTools(server, CALENDAR_TOOLS, service);
+  registerTools(server, [...CALENDAR_TOOLS, ...CALENDAR_MANAGEMENT_TOOLS], service);
 
   const handleShutdown = async () => {
     process.exit(0);

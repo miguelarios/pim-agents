@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@backrunner/url-cleaner": "^0.1.0",
-    "@miguelarios/pim-core": "^0.8.0",
+    "@miguelarios/pim-core": "^0.9.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "imapflow": "^1.0.0",
     "mailparser": "^3.7.0",

@@ -94,3 +94,15 @@ export const freeSlotsSchema = v.object({
   slots: v.array(v.object({ start: v.string(), end: v.string(), duration: v.number() })),
   count: v.number(),
 });
+
+/**
+ * Result of the three collection-management tools. `calendar_id` is always the
+ * post-operation ID, so a rename hands back the ID that resolves from now on
+ * rather than the one the caller passed in.
+ */
+export const calendarWriteResultSchema = v.object({
+  status: v.picklist(["created", "updated", "deleted"]),
+  calendar_id: v.string(),
+  url: v.string(),
+  display_name: v.optional(v.string()),
+});
