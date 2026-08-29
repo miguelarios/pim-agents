@@ -24,6 +24,10 @@ vi.mock("tsdav", () => {
     updateCalendarObject: vi.fn().mockResolvedValue({ ok: true }),
     deleteCalendarObject: vi.fn().mockResolvedValue({ ok: true }),
     propfind: vi.fn().mockResolvedValue([]),
+    davRequest: vi.fn().mockResolvedValue([{ status: 201, statusText: "Created" }]),
+    deleteObject: vi.fn().mockResolvedValue({ status: 204, statusText: "No Content" }),
+    // Populated by login() on a real client; the calendar-home-set.
+    account: { homeUrl: "https://dav.mailbox.org/caldav/" },
   };
   return {
     DAVClient: vi.fn().mockImplementation(() => mockClient),
@@ -52,6 +56,21 @@ vi.mock("../services/urlCache.js", () => {
     ),
     deleteCachedObject: vi.fn((calendarId: string, uid: string) => {
       store.delete(`${calendarId}::${uid}`);
+    }),
+    moveCachedCalendar: vi.fn((oldId: string, newId: string) => {
+      if (oldId === newId) return;
+      for (const key of [...store.keys()]) {
+        if (!key.startsWith(`${oldId}::`)) continue;
+        const uid = key.slice(oldId.length + 2);
+        const value = store.get(key)!;
+        if (!store.has(`${newId}::${uid}`)) store.set(`${newId}::${uid}`, value);
+        store.delete(key);
+      }
+    }),
+    purgeCachedCalendar: vi.fn((calendarId: string) => {
+      for (const key of [...store.keys()]) {
+        if (key.startsWith(`${calendarId}::`)) store.delete(key);
+      }
     }),
     __urlCacheStore: store,
   };
@@ -1795,6 +1814,454 @@ describe("CalDavService", () => {
 
     it("throws for unknown provider", async () => {
       await expect(service.fetchRawCalendarObject("unknown/Work", "test-uid")).rejects.toThrow();
+    });
+  });
+
+  describe("calendar collection management", () => {
+    const SINGLE_ACCOUNT = { accounts: [TEST_CONFIG.accounts[0]] };
+
+    /** The shared tsdav mock, with the collection verbs reset to success. */
+    const mockClient = async () => {
+      const mod = (await import("tsdav")) as unknown as { __mockClient: any };
+      const client = mod.__mockClient;
+      client.davRequest.mockResolvedValue([{ status: 201, statusText: "Created" }]);
+      client.deleteObject.mockResolvedValue({ status: 204, statusText: "No Content" });
+      client.account = { homeUrl: "https://dav.mailbox.org/caldav/" };
+      return client;
+    };
+
+    /** The single davRequest body a test's call produced. */
+    const lastRequest = (client: any) => client.davRequest.mock.calls.at(-1)[0];
+
+    describe("listProviders", () => {
+      it("returns the configured account IDs", () => {
+        expect(service.listProviders()).toEqual(["mailbox", "nextcloud"]);
+      });
+    });
+
+    describe("createCalendar", () => {
+      it("issues MKCALENDAR with declared namespaces on the root element", async () => {
+        const client = await mockClient();
+        await service.createCalendar({ provider: "mailbox", displayName: "Team" });
+
+        const req = lastRequest(client);
+        expect(req.init.method).toBe("MKCALENDAR");
+        const root = req.init.body["cal:mkcalendar"];
+        // Undeclared prefixes are what a conformant server rejects, and
+        // davRequest drops document-level attributes — so they must be here.
+        expect(root._attributes).toEqual({
+          "xmlns:d": "DAV:",
+          "xmlns:cal": "urn:ietf:params:xml:ns:caldav",
+          "xmlns:ical": "http://apple.com/ns/ical/",
+        });
+        expect(root["d:set"]["d:prop"]["d:displayname"]).toBe("Team");
+      });
+
+      it("carries description and colour in the same atomic request", async () => {
+        const client = await mockClient();
+        await service.createCalendar({
+          provider: "mailbox",
+          displayName: "Team",
+          description: "Shared team calendar",
+          color: "#3B82F6",
+        });
+
+        const props = lastRequest(client).init.body["cal:mkcalendar"]["d:set"]["d:prop"];
+        expect(props["cal:calendar-description"]).toBe("Shared team calendar");
+        expect(props["ical:calendar-color"]).toBe("#3B82F6");
+      });
+
+      it("omits properties that were not given", async () => {
+        const client = await mockClient();
+        await service.createCalendar({ provider: "mailbox", displayName: "Team" });
+
+        const props = lastRequest(client).init.body["cal:mkcalendar"]["d:set"]["d:prop"];
+        expect(props).not.toHaveProperty("cal:calendar-description");
+        expect(props).not.toHaveProperty("ical:calendar-color");
+      });
+
+      it("derives the URL from the home URL and a slug of the display name", async () => {
+        const client = await mockClient();
+        const created = await service.createCalendar({
+          provider: "mailbox",
+          displayName: "Team Offsite 2026!",
+        });
+
+        expect(created.url).toBe("https://dav.mailbox.org/caldav/team-offsite-2026/");
+        expect(lastRequest(client).url).toBe(created.url);
+      });
+
+      it("returns the provider-prefixed ID the other tools take", async () => {
+        await mockClient();
+        const created = await service.createCalendar({ provider: "mailbox", displayName: "Team" });
+        expect(created).toEqual({
+          calendar_id: "mailbox/Team",
+          display_name: "Team",
+          url: "https://dav.mailbox.org/caldav/team/",
+          provider: "mailbox",
+        });
+      });
+
+      it("honours an explicit slug", async () => {
+        await mockClient();
+        const created = await service.createCalendar({
+          provider: "mailbox",
+          displayName: "Team",
+          slug: "squad-alpha",
+        });
+        expect(created.url).toBe("https://dav.mailbox.org/caldav/squad-alpha/");
+      });
+
+      it("rejects a malformed slug before any request", async () => {
+        const client = await mockClient();
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "Team", slug: "Bad Slug!" }),
+        ).rejects.toThrow(/Invalid slug/);
+        expect(client.davRequest).not.toHaveBeenCalled();
+      });
+
+      it("rejects an empty display name — it would have no addressable ID", async () => {
+        const client = await mockClient();
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "   " }),
+        ).rejects.toThrow(/display_name cannot be empty/);
+        expect(client.davRequest).not.toHaveBeenCalled();
+      });
+
+      it.each(["blue", "#FFF", "3B82F6", "#GGGGGG"])(
+        "rejects the malformed colour %s",
+        async (color) => {
+          const client = await mockClient();
+          await expect(
+            service.createCalendar({ provider: "mailbox", displayName: "Team", color }),
+          ).rejects.toThrow(/Invalid color/);
+          expect(client.davRequest).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each(["#3B82F6", "#3b82f6ff"])("accepts the colour %s", async (color) => {
+        await mockClient();
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "Team", color }),
+        ).resolves.toBeDefined();
+      });
+
+      it("refuses a duplicate display name on the same provider", async () => {
+        const client = await mockClient();
+        // "Work" already exists on mailbox in the mocked listing.
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "work" }),
+        ).rejects.toThrow(/already exists on provider "mailbox"/);
+        expect(client.davRequest).not.toHaveBeenCalled();
+      });
+
+      it("suffixes a slug that collides with a differently named calendar", async () => {
+        const client = await mockClient();
+        client.fetchCalendars.mockResolvedValueOnce([
+          { displayName: "Team A", url: "https://dav.mailbox.org/caldav/team-a/", ctag: "c" },
+        ]);
+        // "Team: A" and "Team A" are different names that slugify identically,
+        // which is the only case suffixing is for.
+        const created = await service.createCalendar({
+          provider: "mailbox",
+          displayName: "Team: A",
+        });
+        expect(created.url).toBe("https://dav.mailbox.org/caldav/team-a-2/");
+      });
+
+      it("refuses an explicit slug that is already taken rather than suffixing it", async () => {
+        const client = await mockClient();
+        client.fetchCalendars.mockResolvedValueOnce([
+          { displayName: "Team A", url: "https://dav.mailbox.org/caldav/team/", ctag: "c" },
+        ]);
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "Squad", slug: "team" }),
+        ).rejects.toThrow(/already exists at the requested slug/);
+      });
+
+      it("defaults the provider when exactly one account is configured", async () => {
+        await mockClient();
+        const single = new CalDavService(SINGLE_ACCOUNT);
+        const created = await single.createCalendar({ displayName: "Team" });
+        expect(created.calendar_id).toBe("mailbox/Team");
+      });
+
+      it("refuses to guess a provider when several are configured", async () => {
+        const client = await mockClient();
+        await expect(service.createCalendar({ displayName: "Team" })).rejects.toThrow(
+          /provider is required.*mailbox, nextcloud/s,
+        );
+        expect(client.davRequest).not.toHaveBeenCalled();
+      });
+
+      it("names the configured providers when given an unknown one", async () => {
+        await mockClient();
+        await expect(
+          service.createCalendar({ provider: "gmail", displayName: "Team" }),
+        ).rejects.toThrow(/Unknown provider "gmail" — configured providers: mailbox, nextcloud/);
+      });
+
+      it("fails when the account has no calendar home URL", async () => {
+        const client = await mockClient();
+        client.account = {};
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "Team" }),
+        ).rejects.toThrow(/no calendar home URL/);
+      });
+
+      it("maps a 403 to a plain-language provider-unsupported error", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 403, statusText: "Forbidden" }]);
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "Team" }),
+        ).rejects.toThrow(/does not allow creating calendars here \(HTTP 403\)/);
+      });
+
+      it("maps a 405 to 'a collection already exists'", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 405, statusText: "Not Allowed" }]);
+        await expect(
+          service.createCalendar({ provider: "mailbox", displayName: "Team" }),
+        ).rejects.toThrow(/collection already exists/);
+      });
+
+      it("makes the new calendar visible to findCalendar by dropping the listing cache", async () => {
+        const client = await mockClient();
+        await service.listCalendars();
+        client.fetchCalendars.mockClear();
+        await service.createCalendar({ provider: "mailbox", displayName: "Team" });
+        client.fetchCalendars.mockResolvedValueOnce([
+          { displayName: "Team", url: "https://dav.mailbox.org/caldav/team/", ctag: "c" },
+        ]);
+        // Would throw CALENDAR_NOT_FOUND if the stale listing were still cached.
+        await expect(service.findCalendarEntry("mailbox/Team")).resolves.toMatchObject({
+          display_name: "Team",
+        });
+      });
+    });
+
+    describe("updateCalendarMeta", () => {
+      it("issues PROPPATCH with only the properties given", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
+        await service.updateCalendarMeta("mailbox/Work", { color: "#FF0000" });
+
+        const req = lastRequest(client);
+        expect(req.init.method).toBe("PROPPATCH");
+        expect(req.url).toBe("/caldav/work/");
+        const root = req.init.body["d:propertyupdate"];
+        expect(root._attributes["xmlns:ical"]).toBe("http://apple.com/ns/ical/");
+        expect(root["d:set"]["d:prop"]).toEqual({ "ical:calendar-color": "#FF0000" });
+      });
+
+      it("sets name, colour and description together", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
+        await service.updateCalendarMeta("mailbox/Work", {
+          displayName: "Team",
+          color: "#FF0000",
+          description: "Renamed",
+        });
+
+        expect(lastRequest(client).init.body["d:propertyupdate"]["d:set"]["d:prop"]).toEqual({
+          "d:displayname": "Team",
+          "cal:calendar-description": "Renamed",
+          "ical:calendar-color": "#FF0000",
+        });
+      });
+
+      it("returns the new calendar_id after a rename — the old one stops resolving", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
+        const updated = await service.updateCalendarMeta("mailbox/Work", { displayName: "Team" });
+        expect(updated.calendar_id).toBe("mailbox/Team");
+        expect(updated.display_name).toBe("Team");
+        // The collection itself does not move.
+        expect(updated.url).toBe("/caldav/work/");
+      });
+
+      it("keeps the ID when only the colour changes", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
+        const updated = await service.updateCalendarMeta("mailbox/Work", { color: "#FF0000" });
+        expect(updated.calendar_id).toBe("mailbox/Work");
+      });
+
+      it("rekeys the UID cache onto the new ID rather than stranding it", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
+        const { setCachedObject, getCachedObject } = await import("../services/urlCache.js");
+        setCachedObject("mailbox/Work", "evt-1", { url: "/caldav/work/evt-1.ics", etag: "e1" });
+
+        await service.updateCalendarMeta("mailbox/Work", { displayName: "Team" });
+
+        expect(getCachedObject("mailbox/Team", "evt-1")).toEqual({
+          url: "/caldav/work/evt-1.ics",
+          etag: "e1",
+        });
+        expect(getCachedObject("mailbox/Work", "evt-1")).toBeNull();
+      });
+
+      it("rejects an empty update instead of spending a round trip", async () => {
+        const client = await mockClient();
+        await expect(service.updateCalendarMeta("mailbox/Work", {})).rejects.toThrow(
+          /Nothing to change/,
+        );
+        expect(client.davRequest).not.toHaveBeenCalled();
+      });
+
+      it("rejects an empty new display name", async () => {
+        const client = await mockClient();
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { displayName: "  " }),
+        ).rejects.toThrow(/display_name cannot be empty/);
+        expect(client.davRequest).not.toHaveBeenCalled();
+      });
+
+      it("refuses a rename onto a name already used on that provider", async () => {
+        const client = await mockClient();
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { displayName: "Personal" }),
+        ).rejects.toThrow(/already exists on provider "mailbox"/);
+        expect(client.davRequest).not.toHaveBeenCalled();
+      });
+
+      it("allows re-applying a calendar's own name", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { displayName: "Work" }),
+        ).resolves.toMatchObject({ calendar_id: "mailbox/Work" });
+      });
+
+      it("catches a refused PROPPATCH that tsdav reports as a 2xx multistatus", async () => {
+        const client = await mockClient();
+        // The failure lives only in propstat — mapped status is the 207 wrapper.
+        client.davRequest.mockResolvedValue([
+          {
+            ok: true,
+            status: 207,
+            statusText: "Multi-Status",
+            raw: {
+              multistatus: {
+                response: { propstat: { status: "HTTP/1.1 403 Forbidden", prop: {} } },
+              },
+            },
+          },
+        ]);
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { displayName: "Team" }),
+        ).rejects.toThrow(/may be read-only/);
+      });
+
+      it("does not rekey the cache when the update failed", async () => {
+        const client = await mockClient();
+        client.davRequest.mockResolvedValue([{ status: 403, statusText: "Forbidden" }]);
+        const { setCachedObject, getCachedObject } = await import("../services/urlCache.js");
+        setCachedObject("mailbox/Work", "evt-1", { url: "/caldav/work/evt-1.ics" });
+
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { displayName: "Team" }),
+        ).rejects.toThrow();
+
+        expect(getCachedObject("mailbox/Work", "evt-1")).not.toBeNull();
+        expect(getCachedObject("mailbox/Team", "evt-1")).toBeNull();
+      });
+    });
+
+    describe("deleteCalendar", () => {
+      it("DELETEs the collection URL and reports what it removed", async () => {
+        const client = await mockClient();
+        const deleted = await service.deleteCalendar("mailbox/Work");
+        expect(client.deleteObject).toHaveBeenCalledWith({ url: "/caldav/work/" });
+        expect(deleted).toEqual({
+          calendar_id: "mailbox/Work",
+          display_name: "Work",
+          url: "/caldav/work/",
+          provider: "mailbox",
+        });
+      });
+
+      it("purges the calendar's cached object URLs", async () => {
+        await mockClient();
+        const { setCachedObject, getCachedObject } = await import("../services/urlCache.js");
+        setCachedObject("mailbox/Work", "evt-1", { url: "/caldav/work/evt-1.ics" });
+        setCachedObject("mailbox/Personal", "evt-2", { url: "/caldav/personal/evt-2.ics" });
+
+        await service.deleteCalendar("mailbox/Work");
+
+        expect(getCachedObject("mailbox/Work", "evt-1")).toBeNull();
+        // Other calendars are untouched.
+        expect(getCachedObject("mailbox/Personal", "evt-2")).not.toBeNull();
+      });
+
+      it("leaves the cache alone when the delete was refused", async () => {
+        const client = await mockClient();
+        client.deleteObject.mockResolvedValue({ status: 403, statusText: "Forbidden" });
+        const { setCachedObject, getCachedObject } = await import("../services/urlCache.js");
+        setCachedObject("mailbox/Work", "evt-1", { url: "/caldav/work/evt-1.ics" });
+
+        await expect(service.deleteCalendar("mailbox/Work")).rejects.toThrow(/may be read-only/);
+        expect(getCachedObject("mailbox/Work", "evt-1")).not.toBeNull();
+      });
+
+      it("surfaces an unknown calendar as CALENDAR_NOT_FOUND", async () => {
+        await mockClient();
+        await expect(service.deleteCalendar("mailbox/Nope")).rejects.toMatchObject({
+          code: "CALENDAR_NOT_FOUND",
+        });
+      });
+    });
+
+    describe("countCalendarObjects", () => {
+      it("counts hrefs below the collection, excluding the collection itself", async () => {
+        const client = await mockClient();
+        client.propfind.mockResolvedValue([
+          { href: "/caldav/work/" },
+          { href: "/caldav/work/evt-1.ics" },
+          { href: "/caldav/work/evt-2.ics" },
+        ]);
+        expect(await service.countCalendarObjects("mailbox/Work")).toBe(2);
+      });
+
+      it("asks only for etags, so no ICS bodies cross the wire", async () => {
+        const client = await mockClient();
+        client.propfind.mockResolvedValue([]);
+        await service.countCalendarObjects("mailbox/Work");
+        expect(client.propfind).toHaveBeenCalledWith({
+          url: "/caldav/work/",
+          props: { "d:getetag": {} },
+          depth: "1",
+        });
+      });
+
+      it("degrades to undefined rather than failing when the server refuses", async () => {
+        const client = await mockClient();
+        client.propfind.mockRejectedValue(new Error("403 Forbidden"));
+        expect(await service.countCalendarObjects("mailbox/Work")).toBeUndefined();
+      });
+
+      it("degrades to undefined for a calendar that does not exist", async () => {
+        await mockClient();
+        expect(await service.countCalendarObjects("mailbox/Nope")).toBeUndefined();
+      });
+    });
+
+    describe("findCalendarEntry", () => {
+      it("resolves a calendar_id to the entry it names", async () => {
+        await mockClient();
+        expect(await service.findCalendarEntry("mailbox/Work")).toEqual({
+          calendar_id: "mailbox/Work",
+          display_name: "Work",
+          url: "/caldav/work/",
+          provider: "mailbox",
+        });
+      });
+
+      it("fails on an unknown provider", async () => {
+        await mockClient();
+        await expect(service.findCalendarEntry("gmail/Work")).rejects.toThrow(/Unknown provider/);
+      });
     });
   });
 });

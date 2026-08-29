@@ -1,8 +1,8 @@
 # Calendar MCP Tools
 
-`@miguelarios/cal-mcp` — CalDAV calendar server with 11 tools.
+`@miguelarios/cal-mcp` — CalDAV calendar server with 15 tools.
 
-> Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts`. Output shapes from `packages/cal-mcp/src/services/CalDavService.ts`.
+> Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts` (events) and `packages/cal-mcp/src/tools/calendarManagementTools.ts` (calendar collections). Output shapes from `packages/cal-mcp/src/services/CalDavService.ts`.
 
 > All results carry validated `structuredContent` matching the tool's advertised `outputSchema`, with the same JSON serialized into a text block for clients that do not read structured output. Errors are returned as `isError: true` with a `{ error, message, retryable }` body.
 
@@ -247,6 +247,78 @@ Find available time slots across specified calendars. Returns free windows match
   count: number;
 }
 ```
+
+## create_calendar
+
+Create a new calendar on a CalDAV provider. The URL is derived from the display name unless an explicit slug is given.
+
+Fails if a calendar with that name already exists on the provider: the display name is half of every calendar ID, and `findCalendar` resolves each event operation by exact match, so a duplicate would make that ID ambiguous on every subsequent call.
+
+Issues `MKCALENDAR` (RFC 4791 §5.3.1). The request is atomic — name, description and colour are all set in it, so a refused property cannot leave a half-configured calendar behind. Providers vary: Baikal, Radicale, Nextcloud, SOGo, Fastmail and iCloud implement it; Google's CalDAV endpoint does not, and reports back as a plain-language "provider does not allow creating calendars here".
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `display_name` | string | yes | Display name for the new calendar. Becomes the second half of its `calendar_id`. |
+| `provider` | string | | Account to create on — the prefix half of a calendar ID (`mailbox` in `mailbox/Work`). Optional when a single account is configured; required otherwise. |
+| `color` | string | | Colour as `#RRGGBB` or `#RRGGBBAA` (e.g. `#3B82F6`). |
+| `description` | string | | Calendar description. |
+| `slug` | string | | URL path segment (lowercase letters, digits, hyphens). Derived from `display_name` when omitted. |
+
+**Output**
+
+See [Collection results](#collection-results) — `status: "created"`.
+
+## update_calendar
+
+Update a calendar's display name, colour, and/or description via `PROPPATCH`. At least one must be given.
+
+**Renaming changes the calendar's ID.** `calendar_id` is `provider/DisplayName`, so after a rename the old ID stops resolving and the new one is returned in the result. The collection URL does not move. As with `create_calendar`, renaming onto a name already used on that provider is refused.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID to update (e.g. `mailbox/Work`). |
+| `display_name` | string | | New display name. Changes the calendar's ID. |
+| `color` | string | | New colour as `#RRGGBB` or `#RRGGBBAA`. |
+| `description` | string | | New description. |
+
+**Output**
+
+See [Collection results](#collection-results) — `status: "updated"`, and `calendar_id` is the **post-rename** ID.
+
+## delete_calendar
+
+Delete a calendar and every event in it. Irreversible, so it asks the user to confirm first via the same `confirmDestructive` gate as `delete_event` (`PIM_MCP_CONFIRM=off` bypasses it).
+
+The calendar is resolved and its objects counted before the prompt is built, so the confirmation names what is being destroyed — *"Permanently delete calendar "Work" on provider "mailbox" (<url>) and all 214 events in it? This cannot be undone."* The count is read when the prompt is built, so it describes the calendar at that moment rather than guaranteeing what the delete will remove. It counts calendar objects, so a whole recurring series counts once.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID to delete. |
+
+**Output**
+
+See [Collection results](#collection-results) — `status: "deleted"`.
+
+## Collection results
+
+`create_calendar`, `update_calendar` and `delete_calendar` share one result shape:
+
+```ts
+{
+  status: "created" | "updated" | "deleted";
+  calendar_id: string;      // post-operation ID — reflects a rename
+  url: string;              // CalDAV collection URL
+  display_name?: string;
+}
+```
+
+`calendar_id` is always usable directly by the event tools.
 
 ## Event shapes
 

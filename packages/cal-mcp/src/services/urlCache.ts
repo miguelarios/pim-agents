@@ -66,3 +66,34 @@ export function deleteCachedObject(calendarId: string, uid: string): void {
     writeCache(cache);
   }
 }
+
+/**
+ * Rekeys a calendar's cached entries after a rename.
+ *
+ * A PROPPATCH changes the display name, and with it the `calendar_id` this
+ * cache is keyed by — but not the object URLs underneath, so the entries stay
+ * valid and only their key is stale. Correctness never depends on this:
+ * `findCalendarObject` verifies UIDs after every fetch and falls back to a
+ * scan. Without it, though, a rename would silently discard the cache that
+ * exists to avoid full-calendar scans.
+ *
+ * Entries already under `newId` (a name reused after an earlier rename) are
+ * kept — they were written against the same URLs the new name now resolves to.
+ */
+export function moveCachedCalendar(oldCalendarId: string, newCalendarId: string): void {
+  if (oldCalendarId === newCalendarId) return;
+  const cache = readCache();
+  const moving = cache[oldCalendarId];
+  if (!moving) return;
+  cache[newCalendarId] = { ...moving, ...(cache[newCalendarId] ?? {}) };
+  delete cache[oldCalendarId];
+  writeCache(cache);
+}
+
+/** Drops every cached entry for a calendar — used when the collection is deleted. */
+export function purgeCachedCalendar(calendarId: string): void {
+  const cache = readCache();
+  if (!cache[calendarId]) return;
+  delete cache[calendarId];
+  writeCache(cache);
+}

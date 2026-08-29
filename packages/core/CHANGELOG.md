@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0 (2026-08-28)
+
+- `checkDavCollectionResponse` and `propstatStatusLines` (`dav.ts`) — shared judging of DAV collection-level responses (MKCALENDAR, extended MKCOL, PROPPATCH, DELETE). Extracted from card-mcp so both DAV servers distrust tsdav's response shapes the same way: `ok` is `!responseBody.error`, and a propstat-level PROPPATCH failure leaves the mapped `status` at the transport's 207, so a refused rename reads as success unless the raw propstat statuses are walked. Resource wording and the not-found error are supplied by the caller, so each server keeps its own vocabulary (issues #43, #44, #45).
+
 ## 0.7.0 (2026-07-10)
 
 - RFC 6350 vCard value escaping/unescaping — commas, semicolons, backslashes, and newlines in `N`/`ADR`/`NOTE` fields are now correctly escaped on write and unescaped on read (PR #4, `fix/vcard-escaping`).

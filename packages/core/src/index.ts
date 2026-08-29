@@ -23,6 +23,13 @@ export {
 } from "./errors.js";
 
 export {
+  type DavCollectionAction,
+  type DavCollectionCheckOptions,
+  checkDavCollectionResponse,
+  propstatStatusLines,
+} from "./dav.js";
+
+export {
   type Contact,
   type TypedValue,
   type PostalAddress,
