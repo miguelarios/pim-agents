@@ -6,9 +6,9 @@ PIM Agents — AI agent tooling for email (IMAP/SMTP), calendar (CalDAV), and co
 
 Monorepo with 4 packages:
 - `packages/core` — `@miguelarios/pim-core` — shared config, validation, errors, vCard utilities
-- `packages/card-mcp` — `@miguelarios/card-mcp` — CardDAV contacts MCP server (6 tools)
-- `packages/email-mcp` — `@miguelarios/email-mcp` — IMAP/SMTP email MCP server (12 tools)
-- `packages/cal-mcp` — `@miguelarios/cal-mcp` — CalDAV calendar MCP server (15 tools)
+- `packages/card-mcp` — `@miguelarios/card-mcp` — CardDAV contacts MCP server
+- `packages/email-mcp` — `@miguelarios/email-mcp` — IMAP/SMTP email MCP server
+- `packages/cal-mcp` — `@miguelarios/cal-mcp` — CalDAV calendar MCP server
 
 ## Development Commands
 
