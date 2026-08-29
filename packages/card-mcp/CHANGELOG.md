@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 (2026-08-29)
+
+- Collection-level DAV responses (MKCOL, PROPPATCH, DELETE) are now judged by
+  `checkDavCollectionResponse` from `@miguelarios/pim-core` instead of a private copy of the
+  same logic. Behaviour and error messages are unchanged — the existing tests pass untouched —
+  but the code that exists to distrust tsdav's response shapes (`ok` is `!responseBody.error`,
+  and a propstat-level PROPPATCH failure leaves the mapped `status` at the transport's 207)
+  now has one implementation shared with cal-mcp rather than two to keep in step (#71).
+
 ## 0.6.0 (2026-08-24)
 
 - Four address book management tools: `list_address_books` (metadata plus opt-in per-book
