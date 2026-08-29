@@ -63,7 +63,9 @@ Monorepo with 4 packages:
   the root cause turned out to be, not just the symptom.
 - **refactor / chore** — what is equivalent before and after, and what proves it (usually:
   the existing tests, unchanged).
-- **docs** — what was wrong or missing. Skip Testing and Release if nothing runs or ships.
+- **docs** — what was wrong or missing. Skip Testing when nothing runs, but keep Release:
+  merging a version bump publishes it, so "no release" is a claim worth stating rather than
+  an absence a reviewer has to interpret.
 
 Merges are **squash merges**, so:
 
