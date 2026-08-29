@@ -7,6 +7,7 @@ import {
   ErrorCode,
   ValidationError,
   buildVCard,
+  checkDavCollectionResponse,
   parseVCard,
   toPimError,
 } from "@miguelarios/pim-core";
@@ -35,29 +36,6 @@ function slugify(displayName: string): string {
   return slug || `addressbook-${randomBytes(4).toString("hex")}`;
 }
 
-/**
- * Collects the propstat-level status lines from a raw tsdav multistatus, in
- * which keys arrive camelCased with namespace prefixes stripped.
- */
-function propstatStatusLines(raw: unknown): string[] {
-  const multistatus = (raw as { multistatus?: { response?: unknown } } | null | undefined)
-    ?.multistatus;
-  if (!multistatus) return [];
-  const responses = Array.isArray(multistatus.response)
-    ? multistatus.response
-    : [multistatus.response];
-  const lines: string[] = [];
-  for (const entry of responses) {
-    const propstat = (entry as { propstat?: unknown } | null | undefined)?.propstat;
-    if (!propstat) continue;
-    for (const ps of Array.isArray(propstat) ? propstat : [propstat]) {
-      const status = (ps as { status?: unknown } | null | undefined)?.status;
-      if (typeof status === "string") lines.push(status);
-    }
-  }
-  return lines;
-}
-
 /** Normalises a URL or href to a comparable path: origin stripped, trailing slashes trimmed. */
 function collectionPath(ref: string): string {
   try {
@@ -66,6 +44,17 @@ function collectionPath(ref: string): string {
     return ref.replace(/\/+$/, "");
   }
 }
+
+/**
+ * Wiring for the shared DAV collection response checker, so every collection
+ * verb in this service keeps speaking ContactError.
+ */
+const BOOK_DAV_CHECK = {
+  resource: "address book",
+  notFound: (url: string) =>
+    new ContactError(`Address book not found: ${url}`, ErrorCode.ADDRESSBOOK_NOT_FOUND),
+  failed: (message: string) => new ContactError(message, ErrorCode.OPERATION_FAILED),
+};
 
 export type DetailLevel = "summary" | "full";
 
@@ -338,7 +327,7 @@ export class CardDavService {
           },
         },
       });
-      this.checkCollectionResponse(response, "create", url);
+      checkDavCollectionResponse(response, "create", url, BOOK_DAV_CHECK);
       return { url, displayName: opts.displayName };
     } catch (error) {
       if (error instanceof ContactError) throw error;
@@ -383,7 +372,7 @@ export class CardDavService {
           },
         },
       });
-      this.checkCollectionResponse(response, "rename", url);
+      checkDavCollectionResponse(response, "rename", url, BOOK_DAV_CHECK);
     } catch (error) {
       // No ValidationError branch: the only one this method throws happens
       // before the try, so a branch for it here would be dead code implying a
@@ -398,93 +387,10 @@ export class CardDavService {
     const client = await this.ensureConnected();
     try {
       const response = await client.deleteObject({ url });
-      this.checkCollectionResponse(response, "delete", url);
+      checkDavCollectionResponse(response, "delete", url, BOOK_DAV_CHECK);
     } catch (error) {
       if (error instanceof ContactError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
-    }
-  }
-
-  /**
-   * Judges a collection-level DAV response. Never trusts `ok` — tsdav computes
-   * it as `!responseBody.error`, so a 207 wrapping a failed propstat reports
-   * `ok: true` — and for PROPPATCH not the mapped `status` alone either: a
-   * propstat-level failure leaves it at the transport's 207 (a 2xx), with the
-   * real statuses surviving only under `raw`. So this walks the raw propstat
-   * statuses too.
-   */
-  private checkCollectionResponse(
-    response: unknown,
-    action: "create" | "rename" | "delete",
-    url: string,
-  ): void {
-    const res = response as
-      | { status?: number; statusText?: string; raw?: unknown }
-      | null
-      | undefined;
-    const statuses: Array<{ status: number; statusText: string }> = [];
-    if (res && typeof res.status === "number") {
-      statuses.push({ status: res.status, statusText: res.statusText ?? "" });
-    }
-    for (const line of propstatStatusLines(res?.raw)) {
-      const match = /\b(\d{3})\b\s*(.*)$/.exec(line);
-      if (match) statuses.push({ status: Number(match[1]), statusText: match[2] ?? "" });
-    }
-
-    // This helper exists to distrust tsdav's response shapes, so a response
-    // carrying no status at all is a failure to judge, not a success.
-    if (statuses.length === 0) {
-      throw new ContactError(
-        `The server returned no usable status for the ${action} of ${url}`,
-        ErrorCode.OPERATION_FAILED,
-      );
-    }
-
-    // A 207 is not itself a verdict — it is a wrapper saying "the answer is
-    // inside". If the propstat statuses did not parse, the only status left is
-    // that wrapper, and treating a 2xx envelope as success is exactly the
-    // failure this walk exists to prevent. Not being able to look inside is a
-    // reason to refuse, not to assume.
-    if (res?.status === 207 && statuses.every((s) => s.status === 207)) {
-      throw new ContactError(
-        `The server returned a 207 for the ${action} of ${url} with no readable per-property status — cannot confirm it succeeded`,
-        ErrorCode.OPERATION_FAILED,
-      );
-    }
-
-    for (const { status, statusText } of statuses) {
-      if (status >= 200 && status <= 299) continue;
-      if (action === "create" && status === 404) {
-        // RFC 5689 §3: a 404 here is about a missing parent collection, not
-        // about the book being created — saying "not found" would name the
-        // wrong thing.
-        throw new ContactError(
-          `Cannot create ${url}: the parent collection does not exist`,
-          ErrorCode.OPERATION_FAILED,
-        );
-      }
-      if (status === 404) {
-        throw new ContactError(`Address book not found: ${url}`, ErrorCode.ADDRESSBOOK_NOT_FOUND);
-      }
-      if (action === "create" && status === 405) {
-        throw new ContactError(`A collection already exists at ${url}`, ErrorCode.OPERATION_FAILED);
-      }
-      if (action === "create" && (status === 403 || status === 501)) {
-        throw new ContactError(
-          `The provider does not allow creating address books here (HTTP ${status})`,
-          ErrorCode.OPERATION_FAILED,
-        );
-      }
-      if (status === 403) {
-        throw new ContactError(
-          `The server refused to ${action} ${url} — the address book may be read-only (HTTP 403)`,
-          ErrorCode.OPERATION_FAILED,
-        );
-      }
-      throw new ContactError(
-        `Failed to ${action} address book ${url}: HTTP ${status} ${statusText}`.trim(),
-        ErrorCode.OPERATION_FAILED,
-      );
     }
   }
 
