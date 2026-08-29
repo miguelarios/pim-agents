@@ -52,6 +52,42 @@ Monorepo with 4 packages:
 - Tool handlers are invoked directly via `dispatchTool` from `@miguelarios/pim-core/mcp`
 - Each server has a `src/__tests__/roundtrip.test.ts` that drives a real `@modelcontextprotocol/client` over `InMemoryTransport` on both protocol eras — that's what proves wire conformance (schemas advertised, arguments validated, confirmation round trips)
 
+## Pull Requests
+
+`.github/pull_request_template.md` is the default body — fill its sections and delete the
+"Bug fixes only" block when it does not apply. Type-specific emphasis:
+
+- **feat** — what it lets a user do that they could not before, and the design decisions a
+  reviewer would otherwise reverse-engineer from the diff (what was rejected, and why).
+- **fix** — keep the bug block. Current behaviour, expected behaviour, reproduction. Say what
+  the root cause turned out to be, not just the symptom.
+- **refactor / chore** — what is equivalent before and after, and what proves it (usually:
+  the existing tests, unchanged).
+- **docs** — what was wrong or missing. Skip Testing and Release if nothing runs or ships.
+
+Merges are **squash merges**, so:
+
+- The PR **title** becomes the commit subject on `main`, with `(#N)` appended. Use the
+  Conventional-Commit form the history already uses: `feat(cal-mcp): …`, `fix(core): …`.
+  Title the PR for the *whole* change, not for whichever commit happens to be first.
+- The squash **body is built from the branch's commit messages**, not from the PR body. So
+  commit messages are permanent and worth writing properly; the PR body is for reviewers.
+
+One PR is one concern, because that title has to describe a single change — so repo-wide
+convention changes do not ride along with a feature.
+
+## What not to commit
+
+- **Implementation plans** (step-by-step checklists, progress tracking, `- [ ]` task lists)
+  stay out of the repo. Their value expires the moment they are executed, and they
+  accumulate. `docs/superpowers/plans/` is legacy — do not add to it.
+- **Design docs** (`docs/superpowers/specs/`) are worth keeping: the decisions, trade-offs
+  and rejected alternatives stay useful long after the work lands. Commit one **with the
+  implementation, in the same PR** — never as a separate earlier commit, which mislabels the
+  branch and makes a feature look like a docs change.
+- Planning output that is neither of those — scratch notes, exploratory scripts — belongs in
+  the session scratchpad, not the repo.
+
 ## Publishing
 
 - All 4 packages publish independently to npm under `@miguelarios` scope
