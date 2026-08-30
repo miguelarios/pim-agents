@@ -622,7 +622,17 @@ export class CardDavService {
         // second case and is reported as such.
         if (response.status === 412) {
           const fresh = await this.findVCard(fromUrl, uid);
-          if (fresh) response = await this.davMove(fresh.url, destination, fresh.etag);
+          if (!fresh) {
+            // The contact left the source between the batch read and this
+            // retry. Falling through would report the generic 412 message,
+            // which names the two causes this is not.
+            failed.push({
+              uid,
+              message: `Contact ${uid} is no longer in the source address book — it was moved or deleted while this batch was running`,
+            });
+            continue;
+          }
+          response = await this.davMove(fresh.url, destination, fresh.etag);
         }
 
         if (!response.ok) {

@@ -1003,6 +1003,31 @@ describe("CardDavService", () => {
         expect(outcome.transferred).toEqual([{ uid: "u1" }]);
       });
 
+      it("names the real cause when the contact left the source before the 412 retry", async () => {
+        const client = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue({ ok: false, status: 412, statusText: "Precondition Failed" }),
+        );
+        // The retry re-reads the source and finds nothing: the contact was
+        // moved or deleted concurrently. Reporting the generic 412 message
+        // here would name two causes that are both wrong.
+        client.fetchVCards.mockResolvedValueOnce([
+          {
+            url: `${BOOK_A}u1.vcf`,
+            etag: '"etag-u1"',
+            data: vcard("u1", "Jane Doe"),
+          },
+        ]);
+        client.fetchVCards.mockResolvedValue([]);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.transferred).toEqual([]);
+        expect(outcome.failed[0].message).toMatch(/no longer in the source address book/);
+        expect(outcome.failed[0].message).not.toMatch(/already exists/);
+      });
+
       it("names both causes when a 412 survives the retry", async () => {
         await seedSource([{ uid: "u1", name: "Jane Doe" }]);
         vi.stubGlobal(
