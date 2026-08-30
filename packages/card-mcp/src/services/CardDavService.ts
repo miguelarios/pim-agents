@@ -762,6 +762,10 @@ export class CardDavService {
     };
     if (etag) headers["If-Match"] = etag;
 
+    // No trailing-slash normalisation here, unlike transferDestination:
+    // sourceUrl is always an object URL (.../<uid>.vcf) from fetchVCards, not
+    // a collection reference, so there is no last segment to lose. The
+    // asymmetry is deliberate — the sibling function got this wrong.
     const response = await fetch(new URL(sourceUrl, this.config.url).toString(), {
       method: "MOVE",
       headers,

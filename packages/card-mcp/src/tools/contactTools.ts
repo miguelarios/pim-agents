@@ -48,8 +48,11 @@ const ADDRESS_ITEMS = {
 const TRANSFER_UIDS_PROP = {
   type: "array",
   items: { type: "string", description: "UID of a contact to transfer" },
+  // minItems lets a client reject the empty case before a round trip; the
+  // service still refuses it, since the schema is advice and not a guarantee.
+  minItems: 1,
   description:
-    "UIDs of the contacts to transfer. The source book is read once for the whole batch.",
+    "UIDs of the contacts to transfer. Repeats are ignored. The source book is read once for the whole batch.",
 } as const;
 
 /**
@@ -418,7 +421,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "move_contacts",
     title: "Move Contacts",
     description:
-      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch.",
+      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch. Retrying a move that already succeeded reports its UIDs as not found in the source, because they are no longer there — that is a completed move, not a failed one.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
