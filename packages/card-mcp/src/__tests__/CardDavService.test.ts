@@ -1027,6 +1027,46 @@ describe("CardDavService", () => {
 
         expect(outcome.failed[0].message).toMatch(/read-only/);
       });
+
+      it("keeps the Destination inside a target book URL written without a trailing slash", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        // findAddressBook returns a URL ref verbatim, so a caller may well pass
+        // the book URL with no trailing slash. RFC 3986 relative resolution
+        // replaces the last segment of such a base, which put the MOVE one
+        // directory above the target book.
+        await service.moveContacts(BOOK_A, BOOK_B.replace(/\/$/, ""), ["u1"]);
+
+        const destination = fetchMock.mock.calls[0][1].headers.Destination;
+        expect(destination).toContain(`${BOOK_B}u1.vcf`);
+        expect(destination).not.toMatch(/\/miguel\/u1\.vcf$/);
+      });
+
+      it("processes a repeated UID once", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1", "u1"]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(outcome.transferred).toEqual([{ uid: "u1" }]);
+        expect(outcome.failed).toEqual([]);
+      });
+
+      it("does not blame only the target for a 403 — either end can refuse", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue({ ok: false, status: 403, statusText: "Forbidden" }),
+        );
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.failed[0].message).toMatch(/source or target/);
+      });
     });
 
     describe("copyContacts", () => {
@@ -1079,6 +1119,13 @@ describe("CardDavService", () => {
         const [a, b] = outcome.transferred.map((t) => t.newUid);
         expect(a).not.toBe(b);
         expect(client.createVCard).toHaveBeenCalledTimes(2);
+      });
+
+      it("processes a repeated UID once", async () => {
+        const client = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["u1", "u1"]);
+        expect(client.createVCard).toHaveBeenCalledTimes(1);
+        expect(outcome.transferred).toHaveLength(1);
       });
 
       it("reports a failed write without stranding the rest", async () => {

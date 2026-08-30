@@ -605,7 +605,7 @@ export class CardDavService {
     const transferred: ContactTransferred[] = [];
     const failed: ContactTransferFailure[] = [];
 
-    for (const uid of uids) {
+    for (const uid of new Set(uids)) {
       const source = sources.get(uid);
       if (!source) {
         failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
@@ -662,7 +662,7 @@ export class CardDavService {
     const transferred: ContactTransferred[] = [];
     const failed: ContactTransferFailure[] = [];
 
-    for (const uid of uids) {
+    for (const uid of new Set(uids)) {
       const source = sources.get(uid);
       if (!source?.data) {
         failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
@@ -734,7 +734,13 @@ export class CardDavService {
         ErrorCode.OPERATION_FAILED,
       );
     }
-    const base = new URL(toUrl, this.config.url).toString();
+    const resolved = new URL(toUrl, this.config.url).toString();
+    // A collection URL must end in "/" before joining: RFC 3986 relative
+    // resolution replaces the last segment of a base that does not, so
+    // ".../work" + "u1.vcf" resolves to ".../u1.vcf" — one directory above the
+    // target book. findAddressBook returns a URL ref verbatim, so a caller
+    // writing the book URL without a trailing slash reaches here directly.
+    const base = resolved.endsWith("/") ? resolved : `${resolved}/`;
     return new URL(filename, base).toString();
   }
 
@@ -772,7 +778,7 @@ export class CardDavService {
       return `Failed to ${action} contact ${uid}: a contact already exists at that name in the target address book, or the source changed while it was being read (HTTP 412)`;
     }
     if (response.status === 403) {
-      return `Failed to ${action} contact ${uid}: the server refused it — the target address book may be read-only (HTTP 403)`;
+      return `Failed to ${action} contact ${uid}: the server refused it — the source or target address book may be read-only (HTTP 403)`;
     }
     return `Failed to ${action} contact ${uid}: HTTP ${response.status} ${response.statusText}`.trim();
   }
