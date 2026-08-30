@@ -6,6 +6,7 @@ import {
   contactListSchema,
   contactSchema,
   resolveResultSchema,
+  transferResultSchema,
   writeResultSchema,
 } from "./contactSchemas.js";
 
@@ -42,6 +43,29 @@ const ADDRESS_ITEMS = {
     postalCode: { type: "string", description: "Postal/ZIP code" },
     country: { type: "string", description: "Country" },
   },
+} as const;
+
+const TRANSFER_UIDS_PROP = {
+  type: "array",
+  items: { type: "string", description: "UID of a contact to transfer" },
+  description:
+    "UIDs of the contacts to transfer. The source book is read once for the whole batch.",
+} as const;
+
+/**
+ * Unlike the single-contact tools' optional `addressBook`, a transfer names
+ * both ends. Moving out of whichever book happened to sort first is not a
+ * thing a caller can mean, and getting it wrong relocates the wrong contacts.
+ */
+const SOURCE_BOOK_PROP = {
+  type: "string",
+  description: "Source address book URL or display name (e.g. 'Personal').",
+} as const;
+
+const TARGET_BOOK_PROP = {
+  type: "string",
+  description:
+    "Target address book URL or display name (e.g. 'Work'). Must differ from the source.",
 } as const;
 
 type ListArgs = { query?: string; addressBook?: string; detail_level?: "summary" | "full" };
@@ -81,6 +105,7 @@ type CreateArgs = ContactFields & { fullName: string };
 type UpdateArgs = ContactFields & { uid: string };
 type DeleteArgs = { uid: string; addressBook?: string };
 type ResolveArgs = { name: string; addressBook?: string };
+type TransferArgs = { uids: string[]; addressBook: string; targetAddressBook: string };
 
 /**
  * Copies one field across when the caller supplied it. The generic `K` is what
@@ -384,6 +409,86 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       try {
         const addressBookUrl = await resolveAddressBook(args.addressBook, service);
         return structured(await service.resolveContact(addressBookUrl, args.name));
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  },
+  {
+    name: "move_contacts",
+    title: "Move Contacts",
+    description:
+      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        uids: TRANSFER_UIDS_PROP,
+        addressBook: SOURCE_BOOK_PROP,
+        targetAddressBook: TARGET_BOOK_PROP,
+      },
+      required: ["uids", "addressBook", "targetAddressBook"],
+    },
+    outputSchema: transferResultSchema,
+    handler: async (args: TransferArgs, service) => {
+      try {
+        const [from, to] = await Promise.all([
+          service.findAddressBook(args.addressBook),
+          service.findAddressBook(args.targetAddressBook),
+        ]);
+        const outcome = await service.moveContacts(from, to, args.uids);
+        return structured({
+          status: "moved" as const,
+          from,
+          to,
+          transferred: outcome.transferred,
+          ...(outcome.failed.length > 0 ? { failed: outcome.failed } : {}),
+        });
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  },
+  {
+    name: "copy_contacts",
+    title: "Copy Contacts",
+    description:
+      "Copy contacts into another address book, leaving the originals in place. Each copy is a new contact and gets a new UID, returned as newUid — two vCards sharing a UID in one account is a sync hazard. Both address books must be named; neither defaults.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        uids: TRANSFER_UIDS_PROP,
+        addressBook: SOURCE_BOOK_PROP,
+        targetAddressBook: TARGET_BOOK_PROP,
+      },
+      required: ["uids", "addressBook", "targetAddressBook"],
+    },
+    outputSchema: transferResultSchema,
+    handler: async (args: TransferArgs, service) => {
+      try {
+        const [from, to] = await Promise.all([
+          service.findAddressBook(args.addressBook),
+          service.findAddressBook(args.targetAddressBook),
+        ]);
+        const outcome = await service.copyContacts(from, to, args.uids);
+        return structured({
+          status: "copied" as const,
+          from,
+          to,
+          transferred: outcome.transferred,
+          ...(outcome.failed.length > 0 ? { failed: outcome.failed } : {}),
+        });
       } catch (err) {
         return toolError(err);
       }

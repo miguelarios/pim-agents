@@ -79,3 +79,17 @@ export const resolveResultSchema = v.variant("status", [
     message: v.string(),
   }),
 ]);
+
+/**
+ * Result of moving or copying contacts between address books. Reports per
+ * contact rather than a bare count, because a batch can partly succeed:
+ * `transferred` names what arrived (with `newUid` for copies, which are given
+ * a fresh UID), and `failed` names what did not and why.
+ */
+export const transferResultSchema = v.object({
+  status: v.picklist(["moved", "copied"]),
+  from: v.string(),
+  to: v.string(),
+  transferred: v.array(v.object({ uid: v.string(), newUid: v.optional(v.string()) })),
+  failed: v.optional(v.array(v.object({ uid: v.string(), message: v.string() }))),
+});

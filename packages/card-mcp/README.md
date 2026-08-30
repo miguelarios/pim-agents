@@ -33,6 +33,8 @@ npx @miguelarios/card-mcp
 | `update_contact` | Update an existing contact (merge-based) |
 | `delete_contact` | Delete a contact by UID |
 | `resolve_contact` | Given a name, return email address |
+| `move_contacts` | Move contacts to another address book (keeps each UID) |
+| `copy_contacts` | Copy contacts into another address book (each copy gets a new UID) |
 | `list_address_books` | List address books with metadata and opt-in contact counts |
 | `create_address_book` | Create an address book (extended MKCOL) |
 | `rename_address_book` | Rename an address book or update its description |

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.7.0 (2026-08-29)
+
+- `move_contacts` — move contacts to another address book (#58). Issues a DAV `MOVE` per
+  contact, which is atomic: a create-then-delete pair failing between its two steps would
+  leave the contact in both books, the one state a move exists to avoid. `Overwrite: F`
+  keeps it from clobbering a contact already filed under that name in the target. Each
+  contact keeps its UID — a moved contact is the same person, filed somewhere else.
+- `copy_contacts` — copy contacts into another address book, leaving the originals in place
+  (#59). Each copy is a new vCard and gets a **new UID**, returned as `newUid`: two vCards
+  sharing a UID inside one account is a sync hazard, since servers and clients key on UID
+  and can silently merge the pair or drop one of them.
+- Both take a batch of UIDs and read the source book once for the whole batch — the
+  per-contact lookup scans every vCard in the book, so a per-call form would re-read the
+  entire book once per contact. A batch can partly succeed, so the result reports per
+  contact (`transferred[]`, plus `failed[]` when something did not make it) rather than
+  failing whole on one unknown UID.
+- Both require *both* address books, unlike the single-contact tools' optional
+  `addressBook`: moving out of whichever book happened to sort first is not a thing a caller
+  can mean. Either end accepts a display name or a URL, and transferring into the source
+  book is refused.
+- Neither asks for confirmation. A move relocates and a copy adds; nothing is destroyed.
+
 ## 0.6.1 (2026-08-29)
 
 - Collection-level DAV responses (MKCOL, PROPPATCH, DELETE) are now judged by

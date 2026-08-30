@@ -37,6 +37,10 @@ function fakeService() {
     renameAddressBook: vi.fn().mockResolvedValue(undefined),
     deleteAddressBook: vi.fn().mockResolvedValue(undefined),
     countContacts: vi.fn().mockResolvedValue(2),
+    moveContacts: vi.fn().mockResolvedValue({ transferred: [{ uid: "uid-1" }], failed: [] }),
+    copyContacts: vi
+      .fn()
+      .mockResolvedValue({ transferred: [{ uid: "uid-1", newUid: "uid-copy" }], failed: [] }),
     disconnect: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -216,6 +220,66 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     expect(elicitations).toHaveLength(1);
     expect(result.isError).toBe(true);
     expect(service.deleteContact).not.toHaveBeenCalled();
+  });
+
+  it("moves contacts between books and reports the resolved URLs", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "move_contacts",
+      arguments: { uids: ["uid-1"], addressBook: "Personal", targetAddressBook: "Work" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      status: "moved",
+      from: "Personal",
+      to: "Work",
+      transferred: [{ uid: "uid-1" }],
+    });
+    expect(service.moveContacts).toHaveBeenCalledWith("Personal", "Work", ["uid-1"]);
+  });
+
+  it("copies contacts and surfaces the new UID over the wire", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "copy_contacts",
+      arguments: { uids: ["uid-1"], addressBook: "Personal", targetAddressBook: "Work" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      status: "copied",
+      transferred: [{ uid: "uid-1", newUid: "uid-copy" }],
+    });
+  });
+
+  it("rejects a transfer missing its target book without running the handler", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "move_contacts",
+      arguments: { uids: ["uid-1"], addressBook: "Personal" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(service.moveContacts).not.toHaveBeenCalled();
+  });
+
+  it("neither transfer asks for confirmation — nothing is destroyed", async () => {
+    const service = fakeService();
+    const { client, elicitations } = await connect(era, service);
+    await client.callTool({
+      name: "move_contacts",
+      arguments: { uids: ["uid-1"], addressBook: "Personal", targetAddressBook: "Work" },
+    });
+    await client.callTool({
+      name: "copy_contacts",
+      arguments: { uids: ["uid-1"], addressBook: "Personal", targetAddressBook: "Work" },
+    });
+
+    expect(elicitations).toHaveLength(0);
   });
 });
 
