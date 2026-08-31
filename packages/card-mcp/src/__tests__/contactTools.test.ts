@@ -19,8 +19,8 @@ function callTool(
 }
 
 describe("CONTACT_TOOLS definitions", () => {
-  it("defines 6 tools", () => {
-    expect(CONTACT_TOOLS).toHaveLength(6);
+  it("defines 8 tools", () => {
+    expect(CONTACT_TOOLS).toHaveLength(8);
   });
 
   it("all tools have name, title, description, and inputSchema", () => {
@@ -426,5 +426,116 @@ describe("tool errors", () => {
       error: "CONTACT_NOT_FOUND",
       retryable: false,
     });
+  });
+});
+
+describe("move_contacts / copy_contacts", () => {
+  const transferService = () => ({
+    findAddressBook: vi.fn(async (ref: string) =>
+      ref === "Work" ? "/dav/work/" : ref === "Personal" ? "/dav/personal/" : ref,
+    ),
+    moveContacts: vi.fn().mockResolvedValue({ transferred: [{ uid: "u1" }], failed: [] }),
+    copyContacts: vi
+      .fn()
+      .mockResolvedValue({ transferred: [{ uid: "u1", newUid: "new-1" }], failed: [] }),
+  });
+
+  it("defines both tools as non-destructive writes", () => {
+    for (const name of ["move_contacts", "copy_contacts"]) {
+      const tool = CONTACT_TOOLS.find((t) => t.name === name)!;
+      expect(tool, name).toBeDefined();
+      expect(tool.outputSchema, name).toBeDefined();
+      // Neither destroys data: move relocates, copy adds.
+      expect(tool.annotations.destructiveHint, name).toBe(false);
+      expect(tool.annotations.readOnlyHint, name).toBe(false);
+    }
+  });
+
+  it("requires both books and the uids — neither end defaults", () => {
+    for (const name of ["move_contacts", "copy_contacts"]) {
+      const tool = CONTACT_TOOLS.find((t) => t.name === name)!;
+      const required = (tool.inputSchema as { required?: string[] }).required ?? [];
+      expect(required.sort(), name).toEqual(["addressBook", "targetAddressBook", "uids"]);
+    }
+  });
+
+  it("resolves both books by display name and reports the resolved URLs", async () => {
+    const service = transferService();
+    const res = await callTool(
+      "move_contacts",
+      { uids: ["u1"], addressBook: "Personal", targetAddressBook: "Work" },
+      service,
+    );
+
+    expect(service.findAddressBook).toHaveBeenCalledWith("Personal");
+    expect(service.findAddressBook).toHaveBeenCalledWith("Work");
+    expect(service.moveContacts).toHaveBeenCalledWith("/dav/personal/", "/dav/work/", ["u1"]);
+    expect(res.structuredContent).toEqual({
+      status: "moved",
+      from: "/dav/personal/",
+      to: "/dav/work/",
+      transferred: [{ uid: "u1" }],
+    });
+  });
+
+  it("returns the copy's new UID", async () => {
+    const service = transferService();
+    const res = await callTool(
+      "copy_contacts",
+      { uids: ["u1"], addressBook: "Personal", targetAddressBook: "Work" },
+      service,
+    );
+
+    expect(res.structuredContent.status).toBe("copied");
+    expect(res.structuredContent.transferred).toEqual([{ uid: "u1", newUid: "new-1" }]);
+  });
+
+  it("omits `failed` entirely when everything transferred", async () => {
+    const service = transferService();
+    const res = await callTool(
+      "move_contacts",
+      { uids: ["u1"], addressBook: "Personal", targetAddressBook: "Work" },
+      service,
+    );
+    expect(res.structuredContent).not.toHaveProperty("failed");
+  });
+
+  it("surfaces partial failures alongside what did transfer", async () => {
+    const service = transferService();
+    service.moveContacts.mockResolvedValue({
+      transferred: [{ uid: "u1" }],
+      failed: [{ uid: "u2", message: "Contact u2 not found in the source address book" }],
+    });
+
+    const res = await callTool(
+      "move_contacts",
+      { uids: ["u1", "u2"], addressBook: "Personal", targetAddressBook: "Work" },
+      service,
+    );
+
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent.transferred).toEqual([{ uid: "u1" }]);
+    expect(res.structuredContent.failed).toEqual([
+      { uid: "u2", message: "Contact u2 not found in the source address book" },
+    ]);
+  });
+
+  it("reports a same-book transfer as an error", async () => {
+    const service = transferService();
+    class Invalid extends Error {
+      code = "VALIDATION_FAILED";
+    }
+    service.moveContacts.mockRejectedValue(
+      new Invalid("The source and target address books are the same — pick a different target"),
+    );
+
+    const res = await callTool(
+      "move_contacts",
+      { uids: ["u1"], addressBook: "Work", targetAddressBook: "Work" },
+      service,
+    );
+
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).message).toMatch(/same/);
   });
 });

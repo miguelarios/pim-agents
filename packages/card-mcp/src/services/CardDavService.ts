@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   type CardDavConfig,
   ConnectionError,
@@ -57,6 +57,26 @@ const BOOK_DAV_CHECK = {
 };
 
 export type DetailLevel = "summary" | "full";
+
+/** One contact that reached the target book. `newUid` is set for copies only. */
+export interface ContactTransferred {
+  uid: string;
+  newUid?: string;
+}
+
+export interface ContactTransferFailure {
+  uid: string;
+  message: string;
+}
+
+/**
+ * A batch transfer reports per contact rather than failing whole: one unknown
+ * UID should not strand the contacts either side of it in the list.
+ */
+export interface ContactTransferOutcome {
+  transferred: ContactTransferred[];
+  failed: ContactTransferFailure[];
+}
 
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
@@ -561,6 +581,220 @@ export class CardDavService {
         uid: c.uid,
       }));
     return { status: "ambiguous", candidates };
+  }
+
+  /**
+   * Moves contacts to another address book with DAV `MOVE`.
+   *
+   * `MOVE` is used rather than create-then-delete because it is atomic per
+   * contact: a create/delete pair that fails between the two steps leaves the
+   * same contact in both books, which is exactly the state a move is supposed
+   * to avoid. It also relocates the stored vCard bytes untouched, so nothing
+   * depends on parse/serialize fidelity.
+   *
+   * The UID is deliberately preserved: a moved contact is the same person
+   * filed somewhere else, not a new one, so anything already referring to that
+   * UID stays correct.
+   */
+  async moveContacts(
+    fromUrl: string,
+    toUrl: string,
+    uids: string[],
+  ): Promise<ContactTransferOutcome> {
+    const sources = await this.loadTransferSources(fromUrl, toUrl, uids);
+    const transferred: ContactTransferred[] = [];
+    const failed: ContactTransferFailure[] = [];
+
+    for (const uid of new Set(uids)) {
+      const source = sources.get(uid);
+      if (!source) {
+        failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
+        continue;
+      }
+
+      try {
+        const destination = this.transferDestination(toUrl, source.url);
+        let response = await this.davMove(source.url, destination, source.etag);
+
+        // A 412 here is ambiguous: either the source changed since it was read
+        // (If-Match) or Overwrite: F refused an existing destination. Re-read
+        // and retry once, which resolves the first case; a second 412 is the
+        // second case and is reported as such.
+        if (response.status === 412) {
+          const fresh = await this.findVCard(fromUrl, uid);
+          if (!fresh) {
+            // The contact left the source between the batch read and this
+            // retry. Falling through would report the generic 412 message,
+            // which names the two causes this is not.
+            failed.push({
+              uid,
+              message: `Contact ${uid} is no longer in the source address book — it was moved or deleted while this batch was running`,
+            });
+            continue;
+          }
+          response = await this.davMove(fresh.url, destination, fresh.etag);
+        }
+
+        if (!response.ok) {
+          failed.push({ uid, message: this.transferFailureMessage("move", uid, response) });
+          continue;
+        }
+        transferred.push({ uid });
+      } catch (error) {
+        failed.push({ uid, message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    return { transferred, failed };
+  }
+
+  /**
+   * Copies contacts into another address book, giving each copy a fresh UID.
+   *
+   * The new UID is the point of the operation rather than an implementation
+   * detail: a copy is a second, independent vCard, and two vCards sharing a
+   * UID within one account is a sync hazard — servers and clients key on UID,
+   * so the pair can be silently merged or one of them dropped. Desktop clients
+   * mint a new UID when duplicating a card for the same reason. The new UID is
+   * returned so the caller can address the copy immediately.
+   *
+   * The vCard is round-tripped through `parseVCard`/`buildVCard` rather than
+   * having its UID line rewritten in the raw text, because that round trip is
+   * already the codebase's contract (it is what `updateContact` relies on) and
+   * preserves `PHOTO` and unknown properties.
+   */
+  async copyContacts(
+    fromUrl: string,
+    toUrl: string,
+    uids: string[],
+  ): Promise<ContactTransferOutcome> {
+    const sources = await this.loadTransferSources(fromUrl, toUrl, uids);
+    const transferred: ContactTransferred[] = [];
+    const failed: ContactTransferFailure[] = [];
+
+    for (const uid of new Set(uids)) {
+      const source = sources.get(uid);
+      if (!source?.data) {
+        failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
+        continue;
+      }
+
+      try {
+        const copy: Contact = { ...parseVCard(source.data), uid: randomUUID() };
+        await this.createContact(toUrl, copy);
+        transferred.push({ uid, newUid: copy.uid });
+      } catch (error) {
+        failed.push({ uid, message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    return { transferred, failed };
+  }
+
+  /**
+   * Validates a transfer and reads the source book once.
+   *
+   * One `fetchVCards` for the whole batch rather than one per contact: the
+   * per-contact lookup path scans every vCard in the book, so a ten-contact
+   * move would otherwise re-read the entire book ten times.
+   */
+  private async loadTransferSources(
+    fromUrl: string,
+    toUrl: string,
+    uids: string[],
+  ): Promise<Map<string, { url: string; etag?: string; data?: string }>> {
+    if (uids.length === 0) {
+      throw new ValidationError("uids must name at least one contact", "uids");
+    }
+    if (collectionPath(fromUrl) === collectionPath(toUrl)) {
+      throw new ValidationError(
+        "The source and target address books are the same — pick a different target",
+        "targetAddressBook",
+      );
+    }
+
+    const client = await this.ensureConnected();
+    try {
+      const vcards = await client.fetchVCards({ addressBook: { url: fromUrl } as any });
+      const byUid = new Map<string, { url: string; etag?: string; data?: string }>();
+      for (const vcard of vcards) {
+        if (!vcard.data) continue;
+        const parsed = parseVCard(vcard.data);
+        if (parsed.uid) {
+          byUid.set(parsed.uid, {
+            url: vcard.url,
+            etag: vcard.etag,
+            data: vcard.data,
+          });
+        }
+      }
+      return byUid;
+    } catch (error) {
+      if (error instanceof ContactError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** The destination URL for a moved vCard: the target book plus its filename. */
+  private transferDestination(toUrl: string, sourceUrl: string): string {
+    const filename = new URL(sourceUrl, this.config.url).pathname.split("/").pop();
+    if (!filename) {
+      throw new ContactError(
+        `Cannot derive a filename from ${sourceUrl}`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
+    const resolved = new URL(toUrl, this.config.url).toString();
+    // A collection URL must end in "/" before joining: RFC 3986 relative
+    // resolution replaces the last segment of a base that does not, so
+    // ".../work" + "u1.vcf" resolves to ".../u1.vcf" — one directory above the
+    // target book. findAddressBook returns a URL ref verbatim, so a caller
+    // writing the book URL without a trailing slash reaches here directly.
+    const base = resolved.endsWith("/") ? resolved : `${resolved}/`;
+    return new URL(filename, base).toString();
+  }
+
+  /**
+   * Issues the `MOVE`. tsdav exposes no move helper, so this goes out through
+   * `fetch` with Basic auth — the same approach cal-mcp's `moveEvent` uses.
+   * `Overwrite: F` keeps a move from silently clobbering a contact already
+   * filed under that name in the target.
+   */
+  private async davMove(
+    sourceUrl: string,
+    destination: string,
+    etag?: string,
+  ): Promise<{ ok: boolean; status: number; statusText: string }> {
+    const headers: Record<string, string> = {
+      Authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.password}`).toString("base64")}`,
+      Destination: destination,
+      Overwrite: "F",
+    };
+    if (etag) headers["If-Match"] = etag;
+
+    // No trailing-slash normalisation here, unlike transferDestination:
+    // sourceUrl is always an object URL (.../<uid>.vcf) from fetchVCards, not
+    // a collection reference, so there is no last segment to lose. The
+    // asymmetry is deliberate — the sibling function got this wrong.
+    const response = await fetch(new URL(sourceUrl, this.config.url).toString(), {
+      method: "MOVE",
+      headers,
+    });
+    return { ok: response.ok, status: response.status, statusText: response.statusText };
+  }
+
+  private transferFailureMessage(
+    action: "move" | "copy",
+    uid: string,
+    response: { status: number; statusText: string },
+  ): string {
+    if (response.status === 412) {
+      return `Failed to ${action} contact ${uid}: a contact already exists at that name in the target address book, or the source changed while it was being read (HTTP 412)`;
+    }
+    if (response.status === 403) {
+      return `Failed to ${action} contact ${uid}: the server refused it — the source or target address book may be read-only (HTTP 403)`;
+    }
+    return `Failed to ${action} contact ${uid}: HTTP ${response.status} ${response.statusText}`.trim();
   }
 
   async disconnect(): Promise<void> {

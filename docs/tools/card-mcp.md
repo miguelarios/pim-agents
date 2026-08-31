@@ -1,6 +1,6 @@
 # Contacts MCP Tools
 
-`@miguelarios/card-mcp` — CardDAV contacts server with 10 tools.
+`@miguelarios/card-mcp` — CardDAV contacts server with 12 tools.
 
 > Definitions are pulled directly from `packages/card-mcp/src/tools/contactTools.ts` and `packages/card-mcp/src/tools/addressBookTools.ts`. Output shapes from `packages/card-mcp/src/services/CardDavService.ts` and `packages/core/src/vcard.ts`.
 
@@ -143,6 +143,63 @@ Given a person's name, resolve to email. Returns `{ status: 'resolved', fullName
 | { status: "ambiguous"; candidates: Array<{ fullName: string; email: string; uid: string }> }
 | { status: "not_found"; message: string }
 ```
+
+## move_contacts
+
+Move contacts to another address book. Each contact **keeps its UID** — it is the same person, filed somewhere else — so anything already referring to that UID stays correct.
+
+Issues a DAV `MOVE` per contact, which is atomic: a create-then-delete pair that failed between the two steps would leave the contact in *both* books, which is the state a move exists to avoid. `Overwrite: F` means a move will not clobber a contact already filed under that name in the target.
+
+Both address books are required and neither defaults — moving out of whichever book happened to sort first is not a thing a caller can mean. Each accepts a display name or a URL. Transferring into the source book is refused.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uids` | string[] | yes | UIDs of the contacts to move. The source book is read once for the whole batch. |
+| `addressBook` | string | yes | Source address book URL or display name. |
+| `targetAddressBook` | string | yes | Target address book URL or display name. Must differ from the source. |
+
+**Output**
+
+See [Transfer results](#transfer-results) — `status: "moved"`, and no `newUid`.
+
+## copy_contacts
+
+Copy contacts into another address book, leaving the originals in place.
+
+**Each copy is a new contact and gets a new UID**, returned as `newUid`. Two vCards sharing a UID inside one account is a sync hazard — servers and clients key on UID, so the pair can be silently merged or one of them dropped. Desktop clients mint a new UID when duplicating a card for the same reason.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uids` | string[] | yes | UIDs of the contacts to copy. |
+| `addressBook` | string | yes | Source address book URL or display name. |
+| `targetAddressBook` | string | yes | Target address book URL or display name. Must differ from the source. |
+
+**Output**
+
+See [Transfer results](#transfer-results) — `status: "copied"`, with `newUid` set on every entry.
+
+## Transfer results
+
+`move_contacts` and `copy_contacts` share one result shape. A batch can partly succeed: one unknown UID does not strand the contacts either side of it, so the result reports per contact rather than as a bare count.
+
+```ts
+{
+  status: "moved" | "copied";
+  from: string;          // resolved source address book URL
+  to: string;            // resolved target address book URL
+  transferred: Array<{
+    uid: string;         // the original UID
+    newUid?: string;     // copies only — the copy's fresh UID
+  }>;
+  failed?: Array<{ uid: string; message: string }>;   // omitted when everything transferred
+}
+```
+
+`from` and `to` are the *resolved* URLs, so a caller who passed display names can see which collections were actually touched.
 
 ## list_address_books
 

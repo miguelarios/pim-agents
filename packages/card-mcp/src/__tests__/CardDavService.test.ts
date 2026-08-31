@@ -884,6 +884,316 @@ describe("CardDavService", () => {
       expect(results[0].uid).toBe("1");
     });
   });
+
+  describe("moveContacts / copyContacts", () => {
+    const BOOK_A = "/dav/addressbooks/users/miguel/contacts/";
+    const BOOK_B = "/dav/addressbooks/users/miguel/work/";
+
+    const vcard = (uid: string, fullName: string) =>
+      [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        `UID:${uid}`,
+        `FN:${fullName}`,
+        `N:${fullName.split(" ")[1] ?? ""};${fullName.split(" ")[0]};;;`,
+        "EMAIL;TYPE=work:someone@example.com",
+        "END:VCARD",
+      ].join("\r\n");
+
+    // The suite's beforeEach rebuilds the service but not the shared tsdav
+    // mock, so call counts carry over between tests. Anything this block
+    // asserts on is reset here.
+    const seedSource = async (entries: Array<{ uid: string; name: string }>) => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      for (const spy of [
+        __mockClient.fetchVCards,
+        __mockClient.createVCard,
+        __mockClient.deleteVCard,
+      ]) {
+        spy.mockClear();
+      }
+      __mockClient.createVCard.mockResolvedValue({ ok: true });
+      __mockClient.fetchVCards.mockResolvedValue(
+        entries.map((e) => ({
+          url: `${BOOK_A}${e.uid}.vcf`,
+          etag: `"etag-${e.uid}"`,
+          data: vcard(e.uid, e.name),
+        })),
+      );
+      return __mockClient;
+    };
+
+    const okMove = () =>
+      vi.fn().mockResolvedValue({ ok: true, status: 201, statusText: "Created" } as Response);
+
+    describe("moveContacts", () => {
+      it("issues one MOVE per contact, with Destination, Overwrite and If-Match", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.transferred).toEqual([{ uid: "u1" }]);
+        expect(outcome.failed).toEqual([]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toContain(`${BOOK_A}u1.vcf`);
+        expect(init.method).toBe("MOVE");
+        expect(init.headers.Destination).toContain(`${BOOK_B}u1.vcf`);
+        // Overwrite: F keeps a move from clobbering a contact already filed
+        // under that name in the target.
+        expect(init.headers.Overwrite).toBe("F");
+        expect(init.headers["If-Match"]).toBe('"etag-u1"');
+        expect(init.headers.Authorization).toMatch(/^Basic /);
+      });
+
+      it("preserves the UID — a moved contact is the same person, filed elsewhere", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        vi.stubGlobal("fetch", okMove());
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.transferred[0].uid).toBe("u1");
+        expect(outcome.transferred[0].newUid).toBeUndefined();
+      });
+
+      it("reads the source book once for the whole batch", async () => {
+        const client = await seedSource([
+          { uid: "u1", name: "Jane Doe" },
+          { uid: "u2", name: "John Roe" },
+          { uid: "u3", name: "Ann Poe" },
+        ]);
+        client.fetchVCards.mockClear();
+        vi.stubGlobal("fetch", okMove());
+
+        await service.moveContacts(BOOK_A, BOOK_B, ["u1", "u2", "u3"]);
+
+        // One read, not one per contact — the per-contact lookup scans the
+        // whole book, so N reads would be N full scans.
+        expect(client.fetchVCards).toHaveBeenCalledTimes(1);
+      });
+
+      it("reports an unknown UID without stranding the rest of the batch", async () => {
+        await seedSource([
+          { uid: "u1", name: "Jane Doe" },
+          { uid: "u3", name: "Ann Poe" },
+        ]);
+        vi.stubGlobal("fetch", okMove());
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1", "missing", "u3"]);
+
+        expect(outcome.transferred.map((t) => t.uid)).toEqual(["u1", "u3"]);
+        expect(outcome.failed).toEqual([
+          { uid: "missing", message: expect.stringContaining("not found") },
+        ]);
+      });
+
+      it("retries once on 412, since the source may simply have been re-read", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const fetchMock = vi
+          .fn()
+          .mockResolvedValueOnce({ ok: false, status: 412, statusText: "Precondition Failed" })
+          .mockResolvedValueOnce({ ok: true, status: 201, statusText: "Created" });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(outcome.transferred).toEqual([{ uid: "u1" }]);
+      });
+
+      it("names the real cause when the contact left the source before the 412 retry", async () => {
+        const client = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue({ ok: false, status: 412, statusText: "Precondition Failed" }),
+        );
+        // The retry re-reads the source and finds nothing: the contact was
+        // moved or deleted concurrently. Reporting the generic 412 message
+        // here would name two causes that are both wrong.
+        client.fetchVCards.mockResolvedValueOnce([
+          {
+            url: `${BOOK_A}u1.vcf`,
+            etag: '"etag-u1"',
+            data: vcard("u1", "Jane Doe"),
+          },
+        ]);
+        client.fetchVCards.mockResolvedValue([]);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.transferred).toEqual([]);
+        expect(outcome.failed[0].message).toMatch(/no longer in the source address book/);
+        expect(outcome.failed[0].message).not.toMatch(/already exists/);
+      });
+
+      it("names both causes when a 412 survives the retry", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue({ ok: false, status: 412, statusText: "Precondition Failed" }),
+        );
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.transferred).toEqual([]);
+        expect(outcome.failed[0].message).toMatch(/already exists.*or the source changed/s);
+      });
+
+      it("maps a 403 to a read-only-target hint", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue({ ok: false, status: 403, statusText: "Forbidden" }),
+        );
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.failed[0].message).toMatch(/read-only/);
+      });
+
+      it("keeps the Destination inside a target book URL written without a trailing slash", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        // findAddressBook returns a URL ref verbatim, so a caller may well pass
+        // the book URL with no trailing slash. RFC 3986 relative resolution
+        // replaces the last segment of such a base, which put the MOVE one
+        // directory above the target book.
+        await service.moveContacts(BOOK_A, BOOK_B.replace(/\/$/, ""), ["u1"]);
+
+        const destination = fetchMock.mock.calls[0][1].headers.Destination;
+        expect(destination).toContain(`${BOOK_B}u1.vcf`);
+        expect(destination).not.toMatch(/\/miguel\/u1\.vcf$/);
+      });
+
+      it("processes a repeated UID once", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1", "u1"]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(outcome.transferred).toEqual([{ uid: "u1" }]);
+        expect(outcome.failed).toEqual([]);
+      });
+
+      it("does not blame only the target for a 403 — either end can refuse", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue({ ok: false, status: 403, statusText: "Forbidden" }),
+        );
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(outcome.failed[0].message).toMatch(/source or target/);
+      });
+    });
+
+    describe("copyContacts", () => {
+      it("writes a copy into the target with a fresh UID", async () => {
+        const client = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        client.createVCard.mockClear();
+
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["u1"]);
+
+        expect(client.createVCard).toHaveBeenCalledTimes(1);
+        const call = client.createVCard.mock.calls[0][0];
+        expect(call.addressBook.url).toBe(BOOK_B);
+
+        const newUid = outcome.transferred[0].newUid!;
+        expect(newUid).toBeDefined();
+        // Two vCards sharing a UID in one account is a sync hazard, so the
+        // copy is a distinct object.
+        expect(newUid).not.toBe("u1");
+        expect(call.vCardString).toContain(`UID:${newUid}`);
+        expect(call.vCardString).not.toContain("UID:u1");
+        expect(call.filename).toBe(`${newUid}.vcf`);
+      });
+
+      it("reports the original UID alongside the new one", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["u1"]);
+        expect(outcome.transferred[0].uid).toBe("u1");
+      });
+
+      it("carries the contact's fields through the copy", async () => {
+        const client = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        await service.copyContacts(BOOK_A, BOOK_B, ["u1"]);
+        const { vCardString } = client.createVCard.mock.calls[0][0];
+        expect(vCardString).toContain("FN:Jane Doe");
+        expect(vCardString).toContain("someone@example.com");
+      });
+
+      it("leaves the original in place — nothing is deleted", async () => {
+        const client = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        await service.copyContacts(BOOK_A, BOOK_B, ["u1"]);
+        expect(client.deleteVCard).not.toHaveBeenCalled();
+      });
+
+      it("gives each copy in a batch its own UID", async () => {
+        const client = await seedSource([
+          { uid: "u1", name: "Jane Doe" },
+          { uid: "u2", name: "John Roe" },
+        ]);
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["u1", "u2"]);
+        const [a, b] = outcome.transferred.map((t) => t.newUid);
+        expect(a).not.toBe(b);
+        expect(client.createVCard).toHaveBeenCalledTimes(2);
+      });
+
+      it("processes a repeated UID once", async () => {
+        const client = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["u1", "u1"]);
+        expect(client.createVCard).toHaveBeenCalledTimes(1);
+        expect(outcome.transferred).toHaveLength(1);
+      });
+
+      it("reports a failed write without stranding the rest", async () => {
+        const client = await seedSource([
+          { uid: "u1", name: "Jane Doe" },
+          { uid: "u2", name: "John Roe" },
+        ]);
+        client.createVCard
+          .mockResolvedValueOnce({ ok: false, statusText: "Insufficient Storage" })
+          .mockResolvedValueOnce({ ok: true });
+
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["u1", "u2"]);
+
+        expect(outcome.failed).toHaveLength(1);
+        expect(outcome.failed[0].uid).toBe("u1");
+        expect(outcome.transferred.map((t) => t.uid)).toEqual(["u2"]);
+      });
+    });
+
+    describe("shared validation", () => {
+      it.each([
+        ["moveContacts", (s: CardDavService) => s.moveContacts(BOOK_A, BOOK_A, ["u1"])],
+        ["copyContacts", (s: CardDavService) => s.copyContacts(BOOK_A, BOOK_A, ["u1"])],
+      ])("%s refuses a transfer into the source book", async (_name, run) => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        await expect(run(service)).rejects.toThrow(/source and target address books are the same/);
+      });
+
+      it("treats a trailing slash as the same collection", async () => {
+        await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+        await expect(
+          service.moveContacts(BOOK_A, BOOK_A.replace(/\/$/, ""), ["u1"]),
+        ).rejects.toThrow(/same/);
+      });
+
+      it.each([
+        ["moveContacts", (s: CardDavService) => s.moveContacts(BOOK_A, BOOK_B, [])],
+        ["copyContacts", (s: CardDavService) => s.copyContacts(BOOK_A, BOOK_B, [])],
+      ])("%s refuses an empty uid list", async (_name, run) => {
+        await expect(run(service)).rejects.toThrow(/at least one contact/);
+      });
+    });
+  });
 });
 
 describe("CardDavService detail_level", () => {
