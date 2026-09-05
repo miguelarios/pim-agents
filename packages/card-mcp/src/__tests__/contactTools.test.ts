@@ -419,7 +419,7 @@ describe("delete_contact confirmation gate", () => {
     } as unknown as ServerContext;
     const res = await callTool("delete_contact", { uid: "u1" }, service, ctx);
     expect(res.structuredContent).toEqual({ status: "deleted", uid: "u1" });
-    expect(service.deleteContact).toHaveBeenCalledWith("b", "u1");
+    expect(service.deleteContact.mock.calls[0].slice(0, 2)).toEqual(["b", "u1"]);
   });
 
   it("does not delete, and does not re-ask, when the user declines", async () => {
@@ -723,7 +723,9 @@ describe("cross-book lookup when addressBook is omitted", () => {
     service.listAddressBooks.mockResolvedValue([{ url: "only", displayName: "Only" }]);
     await callTool("update_contact", { uid: "w1", note: "n" }, service);
     expect(service.locateContact).not.toHaveBeenCalled();
-    expect(service.updateContact).toHaveBeenCalledWith("only", "w1", { note: "n" });
+    const [bookUrl, uid, updates, opts] = service.updateContact.mock.calls[0];
+    expect([bookUrl, uid, updates]).toEqual(["only", "w1", { note: "n" }]);
+    expect(opts?.located).toBeUndefined();
   });
 
   it("get_contact refuses to guess when two books hold the same UID", async () => {
