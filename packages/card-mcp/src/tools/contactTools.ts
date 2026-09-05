@@ -4,6 +4,7 @@ import { type ToolDef, confirmDestructive, structured, toolError } from "@miguel
 import {
   type CardDavService,
   type ContactUpdates,
+  FULL_NAME_REQUIRED,
   duplicateContactError,
 } from "../services/CardDavService.js";
 import { booksToSearch, locateBookFor, readAcrossBooks, resolveAddressBook } from "./books.js";
@@ -437,10 +438,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         // Cheap validation first: on a multi-book account the locate below
         // scans every book, and an invalid request should not pay for that.
         if (args.fullName === null) {
-          throw new ValidationError(
-            "fullName cannot be cleared: FN is required on every vCard",
-            "fullName",
-          );
+          throw new ValidationError(FULL_NAME_REQUIRED, "fullName");
         }
         const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
         const updates: ContactUpdates = {};
