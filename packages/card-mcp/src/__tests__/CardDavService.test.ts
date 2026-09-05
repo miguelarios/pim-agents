@@ -1419,3 +1419,63 @@ describe("CardDavService.updateContact clearing fields", () => {
     expect(sent).not.toContain("twitter");
   });
 });
+
+describe("CardDavService across address books", () => {
+  const mkVCard = (uid: string, fn: string, email?: string) =>
+    [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `UID:${uid}`,
+      `FN:${fn}`,
+      email ? `EMAIL:${email}` : "",
+      "END:VCARD",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+  const perBook = (cards: Record<string, string[]>) =>
+    vi.fn(async ({ addressBook }: { addressBook: { url: string } }) =>
+      (cards[addressBook.url] ?? []).map((data, i) => ({
+        url: `${addressBook.url}${i}.vcf`,
+        etag: '"e"',
+        data,
+      })),
+    );
+
+  it("resolveContact merges matches from several books", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u2", "Alice Brown", "b@y.com")],
+      }),
+    };
+    const r = await service.resolveContact(["b1", "b2"], "Alice");
+    if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+    expect(r.candidates.map((c) => c.uid)).toEqual(["u2", "u1"]);
+  });
+
+  it("locateContact returns the URL of the book holding the UID", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u2", "B")] }),
+    };
+    expect(await service.locateContact("u2", ["b1", "b2"])).toBe("b2");
+  });
+
+  it("locateContact fails as CONTACT_NOT_FOUND when no book holds the UID", async () => {
+    const { ErrorCode } = await import("@miguelarios/pim-core");
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = { fetchVCards: perBook({ b1: [mkVCard("u1", "A")] }) };
+    await expect(service.locateContact("nope", ["b1", "b2"])).rejects.toMatchObject({
+      code: ErrorCode.CONTACT_NOT_FOUND,
+    });
+  });
+
+  it("locateContact refuses to guess when two books hold the same UID", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
+    };
+    await expect(service.locateContact("u1", ["b1", "b2"])).rejects.toThrow(/b1.*b2|both/);
+  });
+});

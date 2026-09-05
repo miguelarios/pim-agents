@@ -574,8 +574,18 @@ export class CardDavService {
     });
   }
 
-  async resolveContact(addressBookUrl: string, name: string): Promise<ResolveContactResult> {
-    const matches = await this.searchContacts(addressBookUrl, name);
+  /**
+   * Resolves a name to an email across one book or several. A name the user
+   * did not qualify with a book means "whoever I know by that name", so the
+   * default caller passes every book; a match filed in "Work" must not go
+   * missing because "Personal" happened to sort first.
+   */
+  async resolveContact(
+    addressBookUrl: string | string[],
+    name: string,
+  ): Promise<ResolveContactResult> {
+    const urls = Array.isArray(addressBookUrl) ? addressBookUrl : [addressBookUrl];
+    const matches = (await Promise.all(urls.map((url) => this.searchContacts(url, name)))).flat();
     const withEmail = matches.filter((c) => c.emails.length > 0);
     if (withEmail.length === 0) {
       return {
@@ -599,6 +609,34 @@ export class CardDavService {
         uid: c.uid,
       }));
     return { status: "ambiguous", candidates };
+  }
+
+  /**
+   * Finds which of the given books holds a UID. Used when a caller names a
+   * contact but not its book. A UID is meant to be unique across an account,
+   * so one hit is the answer; two is a state this cannot safely act on (the
+   * write would land on whichever book came first), so it fails naming both
+   * so the caller can pass one explicitly.
+   */
+  async locateContact(uid: string, bookUrls: string[]): Promise<string> {
+    const hits = (
+      await Promise.all(
+        bookUrls.map(async (url) => ((await this.findVCard(url, uid)) ? url : undefined)),
+      )
+    ).filter((url): url is string => url !== undefined);
+    if (hits.length === 1) return hits[0];
+    if (hits.length === 0) {
+      throw new ContactError(
+        `Contact ${uid} not found in any address book`,
+        ErrorCode.CONTACT_NOT_FOUND,
+        uid,
+      );
+    }
+    throw new ContactError(
+      `Contact ${uid} exists in more than one address book — pass addressBook to pick one of: ${hits.join(", ")}`,
+      ErrorCode.CONTACT_NOT_FOUND,
+      uid,
+    );
   }
 
   /**
