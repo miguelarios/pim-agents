@@ -9,6 +9,7 @@
   writes the `X-ADDRESSBOOKSERVER-*` form, since the builder emits `VERSION:3.0` and that
   is the form Apple, iCloud and SabreDAV-based servers read. None of the four properties
   land in `otherProperties` any more (issue #60).
+
 ## 0.9.1 (2026-09-05)
 
 - `buildVCard` writes the `ORG` line when either `organization` or `orgUnits` is set, with
