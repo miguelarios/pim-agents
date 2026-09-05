@@ -30,7 +30,7 @@ npx @miguelarios/card-mcp
 | `list_contacts` | List and search contacts by name, email, phone, org |
 | `get_contact` | Get full contact details by UID |
 | `create_contact` | Create a new contact |
-| `update_contact` | Update an existing contact (merge-based) |
+| `update_contact` | Update an existing contact (merge-based; `null` clears a field) |
 | `delete_contact` | Delete a contact by UID |
 | `resolve_contact` | Given a name, return email address |
 | `move_contacts` | Move contacts to another address book (keeps each UID) |

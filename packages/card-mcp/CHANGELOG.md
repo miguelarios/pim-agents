@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 (2026-09-05)
+
+- **`update_contact` can clear a field.** Absent keeps the stored value, `null` clears it,
+  a value replaces it. Before this a stale phone or note could not be removed short of
+  deleting and recreating the contact. Multi-valued fields that are required on `Contact`
+  (`emails`, `phones`, `addresses`, `urls`) clear to an empty list; everything else is
+  dropped from the card. `fullName` is not nullable — `FN` is required by every vCard
+  version.
+- `create_contact` and `update_contact` accept `middleName`, `namePrefix`, `nameSuffix`,
+  `orgUnits` and `socialProfiles`, which the parser already round-tripped but no tool
+  could write.
+
 ## 0.7.0 (2026-08-29)
 
 - `move_contacts` — move contacts to another address book (#58). Issues a DAV `MOVE` per
