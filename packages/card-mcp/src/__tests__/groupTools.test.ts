@@ -193,6 +193,21 @@ describe("update_group", () => {
     });
   });
 
+  it("renames without touching membership", async () => {
+    const service = fakeService();
+    const res = await callTool("update_group", { uid: "g1", name: "Readers" }, service);
+    expect(res.structuredContent).toEqual({
+      status: "updated",
+      uid: "g1",
+      name: "Readers",
+      memberCount: 3,
+    });
+    expect(service.updateContact).toHaveBeenCalledWith("/p/", "g1", {
+      fullName: "Readers",
+      members: ["a", "b", "ghost"],
+    });
+  });
+
   it("rejects adding a member from another book", async () => {
     const service = fakeService();
     const res = await callTool("update_group", { uid: "g1", addMembers: ["w"] }, service);

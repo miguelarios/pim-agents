@@ -1,6 +1,6 @@
 /**
- * Single source of registration order: contact tools first, then the group
- * tools, then the address book tools. Both wire tests and `main.ts` register from here.
+ * Single source of registration order: contact tools, then group tools, then
+ * address book tools. Both the wire tests and `main.ts` register from here.
  */
 import type { ToolDef } from "@miguelarios/pim-core/mcp";
 import type { CardDavService } from "../services/CardDavService.js";
