@@ -55,4 +55,8 @@ The book-selection helpers (`booksToSearch`, `readAcrossBooks`, `locateBookFor`,
 ## Deferred
 
 Server-side `addressbook-query` (#52). Reading N books is N full fetches; this change does
-not make that worse per book, and the fix belongs with the REPORT work.
+not make that worse per book, and the fix belongs with the REPORT work. The same cost lands
+on the write path: `update_contact` and `delete_contact` on an unqualified UID in a
+multi-book account scan every book to locate it, where before they read one (wrong, but
+cheap) default book. Correctness wins, and #52 would cut both the read and the locate to a
+UID-filtered REPORT per book.
