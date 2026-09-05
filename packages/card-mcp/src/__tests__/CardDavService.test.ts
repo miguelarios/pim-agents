@@ -1499,6 +1499,36 @@ describe("CardDavService across address books", () => {
     expect(r.candidates.map((c) => c.uid)).toEqual(["u2", "u1"]);
   });
 
+  it("updateContact refuses a group on every path unless the caller is update_group", async () => {
+    const GROUP =
+      "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Team\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD";
+    const mk = () => {
+      const service = new CardDavService({ url: "x", username: "u", password: "p" });
+      const updateVCard = vi.fn().mockResolvedValue({ ok: true });
+      (service as any).client = {
+        fetchVCards: vi.fn().mockResolvedValue([{ url: "b/g1.vcf", etag: '"e"', data: GROUP }]),
+        updateVCard,
+      };
+      return { service, updateVCard };
+    };
+    // Single-book / explicit-book path: no `located`, the service reads the card itself.
+    const a = mk();
+    await expect(
+      a.service.updateContact("b", "g1", { emails: [{ value: "t@x" }] }),
+    ).rejects.toThrow(/update_group/);
+    expect(a.updateVCard).not.toHaveBeenCalled();
+    // Located path.
+    const b = mk();
+    const located = { bookUrl: "b", url: "b/g1.vcf", etag: '"e"', data: GROUP };
+    await expect(b.service.updateContact("b", "g1", { note: "n" }, { located })).rejects.toThrow(
+      /update_group/,
+    );
+    // update_group opts in.
+    const c = mk();
+    await c.service.updateContact("b", "g1", { members: ["u1"] }, { allowGroup: true });
+    expect(c.updateVCard).toHaveBeenCalledTimes(1);
+  });
+
   it("resolveContact never resolves to a group, even one carrying an EMAIL", async () => {
     const service = new CardDavService({ url: "x", username: "u", password: "p" });
     (service as any).client = {

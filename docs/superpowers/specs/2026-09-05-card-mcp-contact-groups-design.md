@@ -84,7 +84,10 @@ batch's `failed[]`, so the rest of the batch still transfers. Moving a group pro
 
 **`update_contact` refuses a group; `delete_contact` does not.** `update_contact` could
 give a group an `EMAIL`, and `resolve_contact` would then hand a list back as if it were a
-person, so it fails pointing at `update_group`. `resolve_contact` also skips groups outright,
+person, so it fails pointing at `update_group`. The check lives in
+`CardDavService.updateContact`, on the card it actually reads, so no locate path (single
+book, explicit book, or multi-book lookup) can bypass it; `update_group` opts in with
+`allowGroup`. `resolve_contact` also skips groups outright,
 against cards some other client has already shaped that way. `delete_contact` on a group has
 the same end state as `delete_group` and stays allowed; only the prompt is less informative.
 
@@ -94,6 +97,12 @@ from a strict 4.0 client comes out in the 3.0 form after its first edit here. Wr
 forms was rejected: `MEMBER` is not a 3.0 property and SabreDAV-based servers validate cards
 on PUT, so the mixed card risks a rejected write for every user to protect a client this
 server does not target.
+
+**`update_group` and concurrent edits.** The member list is computed from the book snapshot
+`loadGroup` took, then written wholesale by `updateContact`, whose etag comes from its own
+fresh read. A concurrent edit landing between those two reads is overwritten rather than
+merged; one landing after the fresh read fails the conditional PUT as a conflict. Closing the
+window means reading the group card once with its etag, which is #80's change.
 
 **Membership invariants live in the tool layer.** `CardDavService` will write whatever
 `members` it is given; `create_group`/`update_group` are the only writers today, and the

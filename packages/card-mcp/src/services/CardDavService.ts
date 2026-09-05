@@ -552,7 +552,7 @@ export class CardDavService {
     addressBookUrl: string,
     uid: string,
     updates: ContactUpdates,
-    opts: { located?: LocatedContact } = {},
+    opts: { located?: LocatedContact; allowGroup?: boolean } = {},
   ): Promise<void> {
     // The tool schema already keeps fullName non-nullable; this guards a direct
     // caller, since a cleared FN would otherwise serialise as "FN:undefined".
@@ -567,7 +567,18 @@ export class CardDavService {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
 
-    const merged = mergeContactUpdates(parseVCard(existing.data), updates);
+    const current = parseVCard(existing.data);
+    // A group is edited through update_group, which validates members and
+    // keeps the group invariants (no EMAIL, so resolve_contact never returns
+    // a list as a person). Checked here, on the card actually read, so no
+    // locate path can bypass it.
+    if (isGroup(current) && !opts.allowGroup) {
+      throw new ValidationError(
+        `Contact ${uid} is a group; use update_group to rename it or edit its members`,
+        "uid",
+      );
+    }
+    const merged = mergeContactUpdates(current, updates);
 
     try {
       const response = await client.updateVCard({

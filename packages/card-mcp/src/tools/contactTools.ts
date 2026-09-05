@@ -5,7 +5,6 @@ import {
   ErrorCode,
   ValidationError,
   isGroup,
-  parseVCard,
 } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import {
@@ -459,15 +458,8 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           throw new ValidationError(FULL_NAME_REQUIRED, "fullName");
         }
         const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
-        // A group is edited through update_group, which validates members and
-        // keeps the group invariants (no EMAIL, so resolve_contact never
-        // returns a list as a person).
-        if (located?.data && isGroup(parseVCard(located.data))) {
-          throw new ValidationError(
-            `Contact ${args.uid} is a group; use update_group to rename it or edit its members`,
-            "uid",
-          );
-        }
+        // The service refuses a group here (use update_group), on the card it
+        // actually reads, whichever locate path was taken.
         const updates: ContactUpdates = {};
         for (const field of UPDATABLE_FIELDS) {
           copyDefined(updates, args, field);

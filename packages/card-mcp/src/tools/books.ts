@@ -34,18 +34,6 @@ export const ADDRESS_BOOK_PROP = {
     "Address book URL or display name (e.g. 'Work'). If omitted, every address book in the account is searched.",
 } as const;
 
-/** Trailing slashes and origin do not make two collection URLs different books. */
-const samePath = (a: string, b: string): boolean => {
-  const path = (u: string) => {
-    try {
-      return new URL(u, "http://placeholder.invalid").pathname.replace(/\/+$/, "");
-    } catch {
-      return u.replace(/\/+$/, "");
-    }
-  };
-  return path(a) === path(b);
-};
-
 /** A book to read, with the label its contacts are tagged with. */
 export interface BookRef {
   url: string;

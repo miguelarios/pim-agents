@@ -740,21 +740,6 @@ describe("cross-book lookup when addressBook is omitted", () => {
     expect(opts?.located).toBeUndefined();
   });
 
-  it("update_contact refuses a group UID and points at update_group", async () => {
-    const service = twoBooks();
-    const groupCard =
-      "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Team\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD";
-    service.locateContact.mockResolvedValue({ ...LOCATED, data: groupCard });
-    const res = await callTool(
-      "update_contact",
-      { uid: "g1", emails: [{ value: "t@x" }] },
-      service,
-    );
-    expect(res.isError).toBe(true);
-    expect(JSON.parse(res.content[0].text).message).toContain("update_group");
-    expect(service.updateContact).not.toHaveBeenCalled();
-  });
-
   it("update_contact rejects fullName: null before scanning any book", async () => {
     const service = twoBooks();
     const res = await callTool("update_contact", { uid: "w1", fullName: null }, service);

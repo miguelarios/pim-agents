@@ -207,10 +207,12 @@ describe("update_group", () => {
       name: "Readers",
       memberCount: 2,
     });
-    expect(service.updateContact).toHaveBeenCalledWith("/p/", "g1", {
-      fullName: "Readers",
-      members: ["a", "b"],
-    });
+    expect(service.updateContact).toHaveBeenCalledWith(
+      "/p/",
+      "g1",
+      { fullName: "Readers", members: ["a", "b"] },
+      { allowGroup: true },
+    );
   });
 
   it("renames without touching membership", async () => {
@@ -222,10 +224,12 @@ describe("update_group", () => {
       name: "Readers",
       memberCount: 3,
     });
-    expect(service.updateContact).toHaveBeenCalledWith("/p/", "g1", {
-      fullName: "Readers",
-      members: ["a", "b", "ghost"],
-    });
+    expect(service.updateContact).toHaveBeenCalledWith(
+      "/p/",
+      "g1",
+      { fullName: "Readers", members: ["a", "b", "ghost"] },
+      { allowGroup: true },
+    );
   });
 
   it("rejects adding a member from another book", async () => {

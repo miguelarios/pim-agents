@@ -272,10 +272,15 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         // The merge re-reads the stored card and only overlays these fields,
         // so `kind: "group"` survives a rename: nothing here can demote a
         // group to an individual.
-        await service.updateContact(bookUrl, group.uid, {
-          ...(args.name !== undefined ? { fullName: args.name } : {}),
-          members,
-        });
+        await service.updateContact(
+          bookUrl,
+          group.uid,
+          {
+            ...(args.name !== undefined ? { fullName: args.name } : {}),
+            members,
+          },
+          { allowGroup: true },
+        );
         return structured({
           status: "updated" as const,
           uid: group.uid,
