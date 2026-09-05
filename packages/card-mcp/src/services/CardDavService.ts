@@ -105,14 +105,6 @@ export type ContactUpdates = {
 const REQUIRED_ARRAY_FIELDS = ["emails", "phones", "addresses", "urls"] as const;
 
 function mergeContactUpdates(current: Contact, updates: ContactUpdates): Contact {
-  // The tool schema already keeps fullName non-nullable; this guards a direct
-  // caller, since a cleared FN would otherwise serialise as "FN:undefined".
-  if ((updates as { fullName?: unknown }).fullName === null) {
-    throw new ValidationError(
-      "fullName cannot be cleared: FN is required on every vCard",
-      "fullName",
-    );
-  }
   const merged: Contact = { ...current };
   for (const key of Object.keys(updates) as Array<keyof ContactUpdates>) {
     const value = updates[key];
@@ -498,6 +490,15 @@ export class CardDavService {
   }
 
   async updateContact(addressBookUrl: string, uid: string, updates: ContactUpdates): Promise<void> {
+    // The tool schema already keeps fullName non-nullable; this guards a direct
+    // caller, since a cleared FN would otherwise serialise as "FN:undefined".
+    // Checked before the fetch, so an invalid request pays for no round trip.
+    if (updates.fullName === null) {
+      throw new ValidationError(
+        "fullName cannot be cleared: FN is required on every vCard",
+        "fullName",
+      );
+    }
     const client = await this.ensureConnected();
     const existing = await this.findVCard(addressBookUrl, uid);
     if (!existing) {
