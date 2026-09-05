@@ -26,7 +26,8 @@ a UID duplicated across books, which is a state a write cannot safely act on —
 land on whichever book sorted first — so it fails as `CONTACT_CONFLICT` (the contact *was*
 found; a caller that offers to create a missing contact must not do so here) naming both
 URLs. `get_contact` applies the same rule on the read side rather than returning whichever
-book sorted first. A single-book account skips the lookup entirely, and on a multi-book
+book sorted first — and, since it counts matches rather than books, a UID duplicated *within*
+one book (corrupt data) is now a conflict too, where `.find()` used to take the first card. A single-book account skips the lookup entirely, and on a multi-book
 account the vCard the lookup found is handed to the write as `located`, so the winning book
 is read once, not twice.
 

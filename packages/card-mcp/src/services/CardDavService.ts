@@ -111,6 +111,9 @@ export function duplicateContactError(uid: string, labels: string[]): ContactErr
   );
 }
 
+/** Shared by the service guard and the tool's fast-fail, so the two cannot drift. */
+export const FULL_NAME_REQUIRED = "fullName cannot be cleared: FN is required on every vCard";
+
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
   | {
@@ -536,10 +539,7 @@ export class CardDavService {
     // Checked before this method's own fetch; the tool handler runs the same
     // check ahead of its locate scan so the multi-book path fast-fails too.
     if (updates.fullName === null) {
-      throw new ValidationError(
-        "fullName cannot be cleared: FN is required on every vCard",
-        "fullName",
-      );
+      throw new ValidationError(FULL_NAME_REQUIRED, "fullName");
     }
     const client = await this.ensureConnected();
     const existing = opts.located ?? (await this.findVCard(addressBookUrl, uid));
