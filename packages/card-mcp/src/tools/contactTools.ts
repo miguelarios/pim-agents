@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import type { CardDavService, ContactUpdates } from "../services/CardDavService.js";
+import { booksToSearch, locateBookFor, readAcrossBooks, resolveAddressBook } from "./books.js";
 import {
   contactListSchema,
   contactSchema,
@@ -225,15 +226,26 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         const contacts = await readAcrossBooks(books, (url) =>
           service.fetchContacts(url, { detailLevel }),
         );
-        const contact = contacts.find((c) => c.uid === args.uid);
-        if (!contact) {
+        const matches = contacts.filter((c) => c.uid === args.uid);
+        if (matches.length === 0) {
           throw new ContactError(
             `Contact ${args.uid} not found`,
             ErrorCode.CONTACT_NOT_FOUND,
             args.uid,
           );
         }
-        return structured(contact);
+        // Reads treat a UID duplicated across books the way writes do: a
+        // conflict to surface, not a coin toss on whichever book sorted first.
+        if (matches.length > 1) {
+          throw new ContactError(
+            `Contact ${args.uid} exists in more than one address book — pass addressBook to pick one of: ${matches
+              .map((c) => c.addressBook)
+              .join(", ")}`,
+            ErrorCode.CONTACT_CONFLICT,
+            args.uid,
+          );
+        }
+        return structured(matches[0]);
       } catch (err) {
         return toolError(err);
       }
@@ -410,13 +422,15 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: writeResultSchema,
     handler: async (args: UpdateArgs, service) => {
       try {
-        const addressBookUrl = await locateBookFor(args.uid, args.addressBook, service);
+        const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
         const updates: ContactUpdates = {};
         for (const field of UPDATABLE_FIELDS) {
           copyDefined(updates, args, field);
         }
 
-        await service.updateContact(addressBookUrl, args.uid, updates);
+        await (located
+          ? service.updateContact(bookUrl, args.uid, updates, { located })
+          : service.updateContact(bookUrl, args.uid, updates));
         return structured({ status: "updated" as const, uid: args.uid });
       } catch (err) {
         return toolError(err);
@@ -452,8 +466,10 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       if (gate.status === "interrupt") return gate.result;
 
       try {
-        const addressBookUrl = await locateBookFor(args.uid, args.addressBook, service);
-        await service.deleteContact(addressBookUrl, args.uid);
+        const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
+        await (located
+          ? service.deleteContact(bookUrl, args.uid, { located })
+          : service.deleteContact(bookUrl, args.uid));
         return structured({ status: "deleted" as const, uid: args.uid });
       } catch (err) {
         return toolError(err);
@@ -575,82 +591,3 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     },
   },
 ];
-
-/**
- * Resolves the omitted-book default for `create_contact`, the one tool that
- * has to pick a single book: a new contact must land somewhere, and "the
- * first book" is the only default that does not need a second round trip.
- */
-async function resolveAddressBook(
-  explicit: string | undefined,
-  service: CardDavService,
-): Promise<string> {
-  if (explicit) return service.findAddressBook(explicit);
-  const books = await service.listAddressBooks();
-  if (books.length === 0) {
-    throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
-  }
-  return books[0].url;
-}
-
-/** A book to read, with the label its contacts are tagged with. */
-interface BookRef {
-  url: string;
-  label: string;
-}
-
-/**
- * The books a read should cover. An explicit reference names one book and
- * its contacts carry that reference back as their label; omitted means every
- * book in the account, labelled by display name, or URL for a nameless book,
- * so the label is always something the caller can pass back as
- * `addressBook`. The old default of "the first book" silently hid anyone
- * filed in a second one.
- */
-async function booksToSearch(
-  explicit: string | undefined,
-  service: CardDavService,
-): Promise<BookRef[]> {
-  if (explicit) return [{ url: await service.findAddressBook(explicit), label: explicit }];
-  const books = await service.listAddressBooks();
-  if (books.length === 0) {
-    throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
-  }
-  return books.map((b) => ({ url: b.url, label: b.displayName || b.url }));
-}
-
-/** Reads every book concurrently and tags each contact with its book's label. */
-async function readAcrossBooks(
-  books: BookRef[],
-  read: (url: string) => Promise<Contact[]>,
-): Promise<Array<Contact & { addressBook: string }>> {
-  const perBook = await Promise.all(
-    books.map(async (book) =>
-      (await read(book.url)).map((contact) => ({ ...contact, addressBook: book.label })),
-    ),
-  );
-  return perBook.flat();
-}
-
-/**
- * The book a write on a known UID should go to. With one book in the account
- * there is nothing to locate, and the write's own lookup will report a
- * missing UID; with several, the contact has to be found first, or the write
- * would land on whichever book sorted first and miss.
- */
-async function locateBookFor(
-  uid: string,
-  explicit: string | undefined,
-  service: CardDavService,
-): Promise<string> {
-  if (explicit) return service.findAddressBook(explicit);
-  const books = await service.listAddressBooks();
-  if (books.length === 0) {
-    throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
-  }
-  if (books.length === 1) return books[0].url;
-  return service.locateContact(
-    uid,
-    books.map((b) => b.url),
-  );
-}

@@ -78,6 +78,19 @@ export interface ContactTransferOutcome {
   failed: ContactTransferFailure[];
 }
 
+/**
+ * A contact found by {@link CardDavService.locateContact}: the book it lives
+ * in plus the vCard's own URL, etag and data. Passing it back to
+ * `updateContact`/`deleteContact` as `located` lets the write reuse the read
+ * that found it instead of fetching the book again.
+ */
+export interface LocatedContact {
+  bookUrl: string;
+  url: string;
+  etag?: string;
+  data?: string;
+}
+
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
   | { status: "ambiguous"; candidates: Array<{ fullName: string; email: string; uid: string }> }
@@ -489,7 +502,12 @@ export class CardDavService {
     }
   }
 
-  async updateContact(addressBookUrl: string, uid: string, updates: ContactUpdates): Promise<void> {
+  async updateContact(
+    addressBookUrl: string,
+    uid: string,
+    updates: ContactUpdates,
+    opts: { located?: LocatedContact } = {},
+  ): Promise<void> {
     // The tool schema already keeps fullName non-nullable; this guards a direct
     // caller, since a cleared FN would otherwise serialise as "FN:undefined".
     // Checked before the fetch, so an invalid request pays for no round trip.
@@ -500,7 +518,7 @@ export class CardDavService {
       );
     }
     const client = await this.ensureConnected();
-    const existing = await this.findVCard(addressBookUrl, uid);
+    const existing = opts.located ?? (await this.findVCard(addressBookUrl, uid));
     if (!existing) {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
@@ -522,9 +540,13 @@ export class CardDavService {
     }
   }
 
-  async deleteContact(addressBookUrl: string, uid: string): Promise<void> {
+  async deleteContact(
+    addressBookUrl: string,
+    uid: string,
+    opts: { located?: LocatedContact } = {},
+  ): Promise<void> {
     const client = await this.ensureConnected();
-    const existing = await this.findVCard(addressBookUrl, uid);
+    const existing = opts.located ?? (await this.findVCard(addressBookUrl, uid));
     if (!existing) {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
@@ -618,12 +640,15 @@ export class CardDavService {
    * write would land on whichever book came first), so it fails naming both
    * so the caller can pass one explicitly.
    */
-  async locateContact(uid: string, bookUrls: string[]): Promise<string> {
+  async locateContact(uid: string, bookUrls: string[]): Promise<LocatedContact> {
     const hits = (
       await Promise.all(
-        bookUrls.map(async (url) => ((await this.findVCard(url, uid)) ? url : undefined)),
+        bookUrls.map(async (bookUrl) => {
+          const found = await this.findVCard(bookUrl, uid);
+          return found ? { bookUrl, ...found } : undefined;
+        }),
       )
-    ).filter((url): url is string => url !== undefined);
+    ).filter((hit): hit is LocatedContact => hit !== undefined);
     if (hits.length === 1) return hits[0];
     if (hits.length === 0) {
       throw new ContactError(
@@ -632,9 +657,13 @@ export class CardDavService {
         uid,
       );
     }
+    // The contact was found, twice: CONTACT_CONFLICT, not NOT_FOUND, so a
+    // caller that offers to create a missing contact does not do so here.
     throw new ContactError(
-      `Contact ${uid} exists in more than one address book — pass addressBook to pick one of: ${hits.join(", ")}`,
-      ErrorCode.CONTACT_NOT_FOUND,
+      `Contact ${uid} exists in more than one address book — pass addressBook to pick one of: ${hits
+        .map((h) => h.bookUrl)
+        .join(", ")}`,
+      ErrorCode.CONTACT_CONFLICT,
       uid,
     );
   }

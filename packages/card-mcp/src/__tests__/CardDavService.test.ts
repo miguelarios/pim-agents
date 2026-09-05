@@ -1459,7 +1459,11 @@ describe("CardDavService across address books", () => {
     (service as any).client = {
       fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u2", "B")] }),
     };
-    expect(await service.locateContact("u2", ["b1", "b2"])).toBe("b2");
+    expect(await service.locateContact("u2", ["b1", "b2"])).toMatchObject({
+      bookUrl: "b2",
+      url: "b20.vcf",
+      etag: '"e"',
+    });
   });
 
   it("locateContact fails as CONTACT_NOT_FOUND when no book holds the UID", async () => {
@@ -1476,6 +1480,26 @@ describe("CardDavService across address books", () => {
     (service as any).client = {
       fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
     };
-    await expect(service.locateContact("u1", ["b1", "b2"])).rejects.toThrow(/b1.*b2|both/);
+    const { ErrorCode } = await import("@miguelarios/pim-core");
+    await expect(service.locateContact("u1", ["b1", "b2"])).rejects.toMatchObject({
+      code: ErrorCode.CONTACT_CONFLICT,
+      message: expect.stringMatching(/b1.*b2/),
+    });
+  });
+
+  it("updateContact and deleteContact reuse a located vCard instead of re-reading the book", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const fetchVCards = vi.fn();
+    const updateVCard = vi.fn().mockResolvedValue({ ok: true });
+    const deleteVCard = vi.fn().mockResolvedValue({ ok: true });
+    (service as any).client = { fetchVCards, updateVCard, deleteVCard };
+    const located = { bookUrl: "b2", url: "b2/u1.vcf", etag: '"e1"', data: mkVCard("u1", "A") };
+
+    await service.updateContact("b2", "u1", { note: "n" }, { located });
+    await service.deleteContact("b2", "u1", { located });
+
+    expect(fetchVCards).not.toHaveBeenCalled();
+    expect(updateVCard.mock.calls[0][0].vCard).toMatchObject({ url: "b2/u1.vcf", etag: '"e1"' });
+    expect(deleteVCard.mock.calls[0][0].vCard).toMatchObject({ url: "b2/u1.vcf", etag: '"e1"' });
   });
 });
