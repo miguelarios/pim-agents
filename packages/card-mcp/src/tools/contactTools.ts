@@ -539,7 +539,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "move_contacts",
     title: "Move Contacts",
     description:
-      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch. Retrying a move that already succeeded reports its UIDs as not found in the source, because they are no longer there — that is a completed move, not a failed one.",
+      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch. Groups are refused (their members must stay in the same book). Retrying a move that already succeeded reports its UIDs as not found in the source, because they are no longer there — that is a completed move, not a failed one.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -579,7 +579,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "copy_contacts",
     title: "Copy Contacts",
     description:
-      "Copy contacts into another address book, leaving the originals in place. Each copy is a new contact and gets a new UID, returned as newUid — two vCards sharing a UID in one account is a sync hazard. Both address books must be named; neither defaults.",
+      "Copy contacts into another address book, leaving the originals in place. Each copy is a new contact and gets a new UID, returned as newUid — two vCards sharing a UID in one account is a sync hazard. Both address books must be named; neither defaults. Groups are refused (their members must stay in the same book).",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,

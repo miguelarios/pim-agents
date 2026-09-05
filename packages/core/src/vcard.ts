@@ -201,9 +201,17 @@ export function parseVCard(data: string): Contact {
     ...extractAll(lines, "MEMBER"),
     ...extractAll(lines, "X-ADDRESSBOOKSERVER-MEMBER"),
   ];
+  // Deduplicated: a card that carries both the RFC and the Apple form for
+  // compatibility would otherwise list every member twice.
   const members =
     memberValues.length > 0
-      ? memberValues.map((m) => (m.toLowerCase().startsWith(UID_URN) ? m.slice(UID_URN.length) : m))
+      ? [
+          ...new Set(
+            memberValues.map((m) =>
+              m.toLowerCase().startsWith(UID_URN) ? m.slice(UID_URN.length) : m,
+            ),
+          ),
+        ]
       : undefined;
 
   let photo: string | undefined;

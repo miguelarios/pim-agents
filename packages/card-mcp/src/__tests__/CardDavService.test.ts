@@ -926,6 +926,51 @@ describe("CardDavService", () => {
     const okMove = () =>
       vi.fn().mockResolvedValue({ ok: true, status: 201, statusText: "Created" } as Response);
 
+    const groupCard = (uid: string, fullName: string, members: string[]) =>
+      [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        `UID:${uid}`,
+        `FN:${fullName}`,
+        "X-ADDRESSBOOKSERVER-KIND:group",
+        ...members.map((m) => `X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:${m}`),
+        "END:VCARD",
+      ].join("\r\n");
+
+    /** A person and a group that names them, both in the source book. */
+    const seedWithGroup = async () => {
+      const mock = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+      mock.fetchVCards.mockResolvedValue([
+        { url: `${BOOK_A}u1.vcf`, etag: '"etag-u1"', data: vcard("u1", "Jane Doe") },
+        { url: `${BOOK_A}g1.vcf`, etag: '"etag-g1"', data: groupCard("g1", "Team", ["u1"]) },
+      ]);
+      return mock;
+    };
+
+    describe("groups are refused per contact", () => {
+      it("moveContacts skips a group and moves the rest of the batch", async () => {
+        await seedWithGroup();
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["g1", "u1"]);
+
+        expect(outcome.transferred).toEqual([{ uid: "u1" }]);
+        expect(outcome.failed).toEqual([{ uid: "g1", message: expect.stringMatching(/group/) }]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("copyContacts skips a group and copies the rest of the batch", async () => {
+        const mock = await seedWithGroup();
+
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["g1", "u1"]);
+
+        expect(outcome.transferred.map((t) => t.uid)).toEqual(["u1"]);
+        expect(outcome.failed).toEqual([{ uid: "g1", message: expect.stringMatching(/group/) }]);
+        expect(mock.createVCard).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe("moveContacts", () => {
       it("issues one MOVE per contact, with Destination, Overwrite and If-Match", async () => {
         await seedSource([{ uid: "u1", name: "Jane Doe" }]);

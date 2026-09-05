@@ -69,6 +69,19 @@ contact, but showing "Book Club" between "Bob" and "Carol" is noise for the comm
 Rejected: a `search_groups`/`get_group_by_name` tool. `list_groups` returns every group
 with its name in one call; groups number in the tens, not the thousands.
 
+**`move_contacts` and `copy_contacts` refuse a group.** A group's `MEMBER` lines name
+contacts by UID, and a server only resolves them within the group's own book, so a moved or
+copied group card would point every member at the source book — the same dangling
+reference the membership validation exists to prevent. The refusal is per contact, in the
+batch's `failed[]`, so the rest of the batch still transfers. Moving a group properly
+(relocating its members with it, or re-pointing them) is not designed here.
+
+**`update_contact` and `delete_contact` stay group-unaware, deliberately.** Both act on
+one vCard by UID, and a group is one vCard; `delete_contact` on a group has the same end
+state as `delete_group`, and `update_contact` can rename one. `UPDATABLE_FIELDS` excludes
+`kind` and `members`, so neither can corrupt membership. The group tools exist for the
+better prompt and the member handling, not as the only path.
+
 ## Relation to cross-book lookup
 
 The group tools reuse the book-selection helpers from

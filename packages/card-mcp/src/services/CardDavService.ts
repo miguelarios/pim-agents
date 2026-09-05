@@ -114,6 +114,25 @@ export function duplicateContactError(uid: string, labels: string[]): ContactErr
 /** Shared by the service guard and the tool's fast-fail, so the two cannot drift. */
 export const FULL_NAME_REQUIRED = "fullName cannot be cleared: FN is required on every vCard";
 
+/** One vCard read from a transfer's source book. */
+interface TransferSource {
+  url: string;
+  etag?: string;
+  data?: string;
+  isGroup: boolean;
+}
+
+/**
+ * A group's MEMBER lines name contacts by UID, and a server only resolves
+ * them within the group's own book. Moving or copying the group card leaves
+ * every member pointing at the source book — a dangling reference on every
+ * server that implements groups — so the transfer refuses it per contact and
+ * lets the rest of the batch proceed.
+ */
+function groupTransferRefusal(uid: string): string {
+  return `Contact ${uid} is a group; groups cannot be moved or copied because their members must stay in the same address book`;
+}
+
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
   | {
@@ -740,6 +759,10 @@ export class CardDavService {
         failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
         continue;
       }
+      if (source.isGroup) {
+        failed.push({ uid, message: groupTransferRefusal(uid) });
+        continue;
+      }
 
       try {
         const destination = this.transferDestination(toUrl, source.url);
@@ -807,6 +830,10 @@ export class CardDavService {
         failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
         continue;
       }
+      if (source.isGroup) {
+        failed.push({ uid, message: groupTransferRefusal(uid) });
+        continue;
+      }
 
       try {
         const copy: Contact = { ...parseVCard(source.data), uid: randomUUID() };
@@ -831,7 +858,7 @@ export class CardDavService {
     fromUrl: string,
     toUrl: string,
     uids: string[],
-  ): Promise<Map<string, { url: string; etag?: string; data?: string }>> {
+  ): Promise<Map<string, TransferSource>> {
     if (uids.length === 0) {
       throw new ValidationError("uids must name at least one contact", "uids");
     }
@@ -845,7 +872,7 @@ export class CardDavService {
     const client = await this.ensureConnected();
     try {
       const vcards = await client.fetchVCards({ addressBook: { url: fromUrl } as any });
-      const byUid = new Map<string, { url: string; etag?: string; data?: string }>();
+      const byUid = new Map<string, TransferSource>();
       for (const vcard of vcards) {
         if (!vcard.data) continue;
         const parsed = parseVCard(vcard.data);
@@ -854,6 +881,7 @@ export class CardDavService {
             url: vcard.url,
             etag: vcard.etag,
             data: vcard.data,
+            isGroup: parsed.kind === "group",
           });
         }
       }

@@ -750,6 +750,21 @@ describe("parseVCard contact groups", () => {
     expect(c.otherProperties).toEqual([]);
   });
 
+  it("dedupes members when a card carries both forms", () => {
+    const vcard = [
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "UID:g4",
+      "FN:Both",
+      "KIND:group",
+      "MEMBER:urn:uuid:aaa",
+      "X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:aaa",
+      "X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:bbb",
+      "END:VCARD",
+    ].join("\r\n");
+    expect(parseVCard(vcard).members).toEqual(["aaa", "bbb"]);
+  });
+
   it("leaves kind and members unset on an individual", () => {
     const c = parseVCard("BEGIN:VCARD\nVERSION:3.0\nUID:i1\nFN:Jane\nEND:VCARD");
     expect(c.kind).toBeUndefined();
