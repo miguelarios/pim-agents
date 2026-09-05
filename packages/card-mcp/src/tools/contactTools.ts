@@ -13,7 +13,14 @@ import {
 const ADDRESS_BOOK_PROP = {
   type: "string",
   description:
-    "Address book URL or display name (e.g. 'Work'). If omitted, uses the first available address book.",
+    "Address book URL or display name (e.g. 'Work'). If omitted, every address book in the account is searched.",
+} as const;
+
+/** `create_contact` has to land somewhere, so its omitted-book default differs. */
+const CREATE_BOOK_PROP = {
+  type: "string",
+  description:
+    "Address book URL or display name (e.g. 'Work') to create the contact in. If omitted, uses the first available address book.",
 } as const;
 
 const DETAIL_LEVEL_PROP = {
@@ -177,11 +184,14 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: contactListSchema,
     handler: async (args: ListArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const books = await booksToSearch(args.addressBook, service);
         const detailLevel = args.detail_level ?? "summary";
-        const contacts = args.query
-          ? await service.searchContacts(addressBookUrl, args.query, { detailLevel })
-          : await service.fetchContacts(addressBookUrl, { detailLevel });
+        const query = args.query;
+        const contacts = await readAcrossBooks(books, (url) =>
+          query
+            ? service.searchContacts(url, query, { detailLevel })
+            : service.fetchContacts(url, { detailLevel }),
+        );
         return structured({ contacts, count: contacts.length });
       } catch (err) {
         return toolError(err);
@@ -210,9 +220,11 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: contactSchema,
     handler: async (args: GetArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const books = await booksToSearch(args.addressBook, service);
         const detailLevel = args.detail_level ?? "summary";
-        const contacts = await service.fetchContacts(addressBookUrl, { detailLevel });
+        const contacts = await readAcrossBooks(books, (url) =>
+          service.fetchContacts(url, { detailLevel }),
+        );
         const contact = contacts.find((c) => c.uid === args.uid);
         if (!contact) {
           throw new ContactError(
@@ -287,7 +299,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           items: SOCIAL_PROFILE_ITEMS,
           description: "Social media profiles",
         },
-        addressBook: ADDRESS_BOOK_PROP,
+        addressBook: CREATE_BOOK_PROP,
       },
       required: ["fullName"],
     },
@@ -398,7 +410,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: writeResultSchema,
     handler: async (args: UpdateArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const addressBookUrl = await locateBookFor(args.uid, args.addressBook, service);
         const updates: ContactUpdates = {};
         for (const field of UPDATABLE_FIELDS) {
           copyDefined(updates, args, field);
@@ -440,7 +452,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       if (gate.status === "interrupt") return gate.result;
 
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const addressBookUrl = await locateBookFor(args.uid, args.addressBook, service);
         await service.deleteContact(addressBookUrl, args.uid);
         return structured({ status: "deleted" as const, uid: args.uid });
       } catch (err) {
@@ -470,8 +482,13 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: resolveResultSchema,
     handler: async (args: ResolveArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
-        return structured(await service.resolveContact(addressBookUrl, args.name));
+        const books = await booksToSearch(args.addressBook, service);
+        return structured(
+          await service.resolveContact(
+            books.map((b) => b.url),
+            args.name,
+          ),
+        );
       } catch (err) {
         return toolError(err);
       }
@@ -559,6 +576,11 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
   },
 ];
 
+/**
+ * Resolves the omitted-book default for `create_contact`, the one tool that
+ * has to pick a single book: a new contact must land somewhere, and "the
+ * first book" is the only default that does not need a second round trip.
+ */
 async function resolveAddressBook(
   explicit: string | undefined,
   service: CardDavService,
@@ -569,4 +591,66 @@ async function resolveAddressBook(
     throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
   }
   return books[0].url;
+}
+
+/** A book to read, with the label its contacts are tagged with. */
+interface BookRef {
+  url: string;
+  label: string;
+}
+
+/**
+ * The books a read should cover. An explicit reference names one book and
+ * its contacts carry that reference back as their label; omitted means every
+ * book in the account, labelled by display name, or URL for a nameless book,
+ * so the label is always something the caller can pass back as
+ * `addressBook`. The old default of "the first book" silently hid anyone
+ * filed in a second one.
+ */
+async function booksToSearch(
+  explicit: string | undefined,
+  service: CardDavService,
+): Promise<BookRef[]> {
+  if (explicit) return [{ url: await service.findAddressBook(explicit), label: explicit }];
+  const books = await service.listAddressBooks();
+  if (books.length === 0) {
+    throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
+  }
+  return books.map((b) => ({ url: b.url, label: b.displayName || b.url }));
+}
+
+/** Reads every book concurrently and tags each contact with its book's label. */
+async function readAcrossBooks(
+  books: BookRef[],
+  read: (url: string) => Promise<Contact[]>,
+): Promise<Array<Contact & { addressBook: string }>> {
+  const perBook = await Promise.all(
+    books.map(async (book) =>
+      (await read(book.url)).map((contact) => ({ ...contact, addressBook: book.label })),
+    ),
+  );
+  return perBook.flat();
+}
+
+/**
+ * The book a write on a known UID should go to. With one book in the account
+ * there is nothing to locate, and the write's own lookup will report a
+ * missing UID; with several, the contact has to be found first, or the write
+ * would land on whichever book sorted first and miss.
+ */
+async function locateBookFor(
+  uid: string,
+  explicit: string | undefined,
+  service: CardDavService,
+): Promise<string> {
+  if (explicit) return service.findAddressBook(explicit);
+  const books = await service.listAddressBooks();
+  if (books.length === 0) {
+    throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
+  }
+  if (books.length === 1) return books[0].url;
+  return service.locateContact(
+    uid,
+    books.map((b) => b.url),
+  );
 }

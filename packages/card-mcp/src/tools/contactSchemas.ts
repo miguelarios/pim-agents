@@ -27,9 +27,15 @@ const socialProfile = v.object({
   url: v.optional(v.string()),
 });
 
-/** Mirrors `Contact`. `summary` detail level omits `photo` and `otherProperties` content. */
+/**
+ * Mirrors `Contact`, plus `addressBook`: the book the contact was read from,
+ * as a display name (or URL for a nameless book) that can be passed straight
+ * back as the `addressBook` argument of any contact tool. `summary` detail
+ * level omits `photo` and `otherProperties` content.
+ */
 export const contactSchema = v.object({
   uid: v.string(),
+  addressBook: v.optional(v.string()),
   fullName: v.string(),
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),
