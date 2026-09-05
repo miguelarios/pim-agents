@@ -158,6 +158,22 @@ describe("create_group", () => {
     expect(service.createContact).not.toHaveBeenCalled();
   });
 
+  it("rejects a group as a member", async () => {
+    const service = fakeService();
+    const res = await callTool("create_group", { name: "X", members: ["g1"] }, service);
+    expect(res.isError).toBe(true);
+    expect(service.createContact).not.toHaveBeenCalled();
+  });
+
+  it("defaults to no members", async () => {
+    const service = fakeService();
+    await callTool("create_group", { name: "Empty", addressBook: "Work" }, service);
+    expect(service.createContact.mock.calls[0][0]).toBe("/w/");
+    expect(service.createContact.mock.calls[0][1].members).toEqual([]);
+  });
+});
+
+describe("update_group", () => {
   it("rejects the group itself as a member", async () => {
     const service = fakeService();
     const res = await callTool("update_group", { uid: "g1", addMembers: ["g1"] }, service);
@@ -178,22 +194,6 @@ describe("create_group", () => {
     expect(service.updateContact).not.toHaveBeenCalled();
   });
 
-  it("rejects a group as a member", async () => {
-    const service = fakeService();
-    const res = await callTool("create_group", { name: "X", members: ["g1"] }, service);
-    expect(res.isError).toBe(true);
-    expect(service.createContact).not.toHaveBeenCalled();
-  });
-
-  it("defaults to no members", async () => {
-    const service = fakeService();
-    await callTool("create_group", { name: "Empty", addressBook: "Work" }, service);
-    expect(service.createContact.mock.calls[0][0]).toBe("/w/");
-    expect(service.createContact.mock.calls[0][1].members).toEqual([]);
-  });
-});
-
-describe("update_group", () => {
   it("adds and removes members, ignoring repeats, and can rename", async () => {
     const service = fakeService();
     const res = await callTool(
