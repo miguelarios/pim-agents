@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
+import { type Contact, ContactError, ErrorCode, ValidationError } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import {
   type CardDavService,
@@ -434,6 +434,14 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: writeResultSchema,
     handler: async (args: UpdateArgs, service) => {
       try {
+        // Cheap validation first: on a multi-book account the locate below
+        // scans every book, and an invalid request should not pay for that.
+        if (args.fullName === null) {
+          throw new ValidationError(
+            "fullName cannot be cleared: FN is required on every vCard",
+            "fullName",
+          );
+        }
         const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
         const updates: ContactUpdates = {};
         for (const field of UPDATABLE_FIELDS) {
@@ -509,7 +517,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         const books = await booksToSearch(args.addressBook, service);
         return structured(
           await service.resolveContact(
-            books.map((b) => b.url),
+            books.map((b) => ({ url: b.url, label: b.label })),
             args.name,
           ),
         );

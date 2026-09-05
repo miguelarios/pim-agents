@@ -1454,6 +1454,25 @@ describe("CardDavService across address books", () => {
     expect(r.candidates.map((c) => c.uid)).toEqual(["u2", "u1"]);
   });
 
+  it("resolveContact tags ambiguous candidates with the label of their book", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u2", "Alice Brown", "b@y.com")],
+      }),
+    };
+    const r = await service.resolveContact(
+      [
+        { url: "b1", label: "Personal" },
+        { url: "b2", label: "Work" },
+      ],
+      "Alice",
+    );
+    if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+    expect(r.candidates.map((c) => c.addressBook)).toEqual(["Work", "Personal"]);
+  });
+
   it("locateContact returns the URL of the book holding the UID", async () => {
     const service = new CardDavService({ url: "x", username: "u", password: "p" });
     (service as any).client = {
