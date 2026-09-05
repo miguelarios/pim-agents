@@ -4,6 +4,14 @@ import { CONTACT_TOOLS, UPDATABLE_FIELDS } from "../tools/contactTools.js";
 
 /** Minimal handler context: no multi-round-trip input responses carried. */
 const emptyCtx = { mcpReq: { inputResponses: undefined } } as unknown as ServerContext;
+/** A context in which the user has already accepted `confirm_delete_contact`. */
+const confirmedCtx = {
+  mcpReq: {
+    inputResponses: {
+      confirm_delete_contact: { action: "accept", content: { confirm: true } },
+    },
+  },
+} as unknown as ServerContext;
 
 /** Invokes one tool's handler directly, bypassing the MCP transport. */
 function callTool(
@@ -249,16 +257,55 @@ describe("address book name resolution", () => {
     expect(fetchSpy).toHaveBeenCalledWith("/dav/other/", { detailLevel: "summary" });
   });
 
-  it("still falls back to the first book when omitted", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue([]);
+  it("searches every book when omitted, tagging each contact with its book", async () => {
+    const mk = (uid: string) => ({
+      uid,
+      fullName: uid,
+      emails: [],
+      phones: [],
+      addresses: [],
+      urls: [],
+      otherProperties: [],
+    });
+    const fetchSpy = vi.fn(async (url: string) => (url === "book1" ? [mk("a")] : [mk("b")]));
     const fakeService = {
-      listAddressBooks: vi.fn().mockResolvedValue([{ url: "book1", displayName: "x" }]),
+      listAddressBooks: vi.fn().mockResolvedValue([
+        { url: "book1", displayName: "Personal" },
+        { url: "book2", displayName: "" },
+      ]),
       findAddressBook: vi.fn(),
       fetchContacts: fetchSpy,
     };
-    await callTool("list_contacts", {}, fakeService);
+    const res = await callTool("list_contacts", {}, fakeService);
     expect(fakeService.findAddressBook).not.toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledWith("book1", { detailLevel: "summary" });
+    expect(fetchSpy).toHaveBeenCalledWith("book2", { detailLevel: "summary" });
+    expect(res.structuredContent.count).toBe(2);
+    // A nameless book is tagged with its URL, so the tag is always something
+    // the caller can pass straight back as `addressBook`.
+    expect(res.structuredContent.contacts.map((c: any) => c.addressBook)).toEqual([
+      "Personal",
+      "book2",
+    ]);
+  });
+
+  it("tags contacts from an explicit book with the reference the caller gave", async () => {
+    const fakeService = {
+      findAddressBook: vi.fn().mockResolvedValue("/dav/work/"),
+      fetchContacts: vi.fn().mockResolvedValue([
+        {
+          uid: "a",
+          fullName: "A",
+          emails: [],
+          phones: [],
+          addresses: [],
+          urls: [],
+          otherProperties: [],
+        },
+      ]),
+    };
+    const res = await callTool("list_contacts", { addressBook: "Work" }, fakeService);
+    expect(res.structuredContent.contacts[0].addressBook).toBe("Work");
   });
 
   it("surfaces an unknown name as ADDRESSBOOK_NOT_FOUND", async () => {
@@ -372,7 +419,7 @@ describe("delete_contact confirmation gate", () => {
     } as unknown as ServerContext;
     const res = await callTool("delete_contact", { uid: "u1" }, service, ctx);
     expect(res.structuredContent).toEqual({ status: "deleted", uid: "u1" });
-    expect(service.deleteContact).toHaveBeenCalledWith("b", "u1");
+    expect(service.deleteContact.mock.calls[0].slice(0, 2)).toEqual(["b", "u1"]);
   });
 
   it("does not delete, and does not re-ask, when the user declines", async () => {
@@ -602,5 +649,125 @@ describe("create_contact extended fields", () => {
       orgUnits: ["Engineering", "Platform"],
       socialProfiles: [{ type: "twitter", handle: "ada" }],
     });
+  });
+});
+
+const LOCATED = { bookUrl: "book2", url: "book2/w1.vcf", etag: '"e"', data: "..." };
+
+describe("cross-book lookup when addressBook is omitted", () => {
+  const mk = (uid: string) => ({
+    uid,
+    fullName: uid,
+    emails: [],
+    phones: [],
+    addresses: [],
+    urls: [],
+    otherProperties: [],
+  });
+  const twoBooks = () => ({
+    listAddressBooks: vi.fn().mockResolvedValue([
+      { url: "book1", displayName: "Personal" },
+      { url: "book2", displayName: "Work" },
+    ]),
+    fetchContacts: vi.fn(async (url: string) => (url === "book2" ? [mk("w1")] : [mk("p1")])),
+    searchContacts: vi.fn(async (url: string) => (url === "book2" ? [mk("w1")] : [])),
+    resolveContact: vi.fn().mockResolvedValue({ status: "not_found", message: "no" }),
+    locateContact: vi.fn().mockResolvedValue(LOCATED),
+    updateContact: vi.fn().mockResolvedValue(undefined),
+    deleteContact: vi.fn().mockResolvedValue(undefined),
+  });
+
+  it("list_contacts with a query searches each book and merges", async () => {
+    const service = twoBooks();
+    const res = await callTool("list_contacts", { query: "w" }, service);
+    expect(service.searchContacts).toHaveBeenCalledTimes(2);
+    expect(res.structuredContent.contacts).toEqual([{ ...mk("w1"), addressBook: "Work" }]);
+  });
+
+  it("get_contact finds a contact filed in a later book", async () => {
+    const service = twoBooks();
+    const res = await callTool("get_contact", { uid: "w1" }, service);
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent).toEqual({ ...mk("w1"), addressBook: "Work" });
+  });
+
+  it("resolve_contact passes every book URL to the service", async () => {
+    const service = twoBooks();
+    await callTool("resolve_contact", { name: "w" }, service);
+    expect(service.resolveContact).toHaveBeenCalledWith(
+      [
+        { url: "book1", label: "Personal" },
+        { url: "book2", label: "Work" },
+      ],
+      "w",
+    );
+  });
+
+  it("update_contact locates the contact's book first", async () => {
+    const service = twoBooks();
+    await callTool("update_contact", { uid: "w1", note: "n" }, service);
+    expect(service.locateContact).toHaveBeenCalledWith("w1", [
+      { url: "book1", label: "Personal" },
+      { url: "book2", label: "Work" },
+    ]);
+    expect(service.updateContact).toHaveBeenCalledWith(
+      "book2",
+      "w1",
+      { note: "n" },
+      {
+        located: LOCATED,
+      },
+    );
+  });
+
+  it("delete_contact locates the contact's book first", async () => {
+    const service = twoBooks();
+    await callTool("delete_contact", { uid: "w1" }, service, confirmedCtx);
+    expect(service.locateContact).toHaveBeenCalledWith("w1", [
+      { url: "book1", label: "Personal" },
+      { url: "book2", label: "Work" },
+    ]);
+    expect(service.deleteContact).toHaveBeenCalledWith("book2", "w1", { located: LOCATED });
+  });
+
+  it("does not locate when the account has a single book", async () => {
+    const service = twoBooks();
+    service.listAddressBooks.mockResolvedValue([{ url: "only", displayName: "Only" }]);
+    await callTool("update_contact", { uid: "w1", note: "n" }, service);
+    expect(service.locateContact).not.toHaveBeenCalled();
+    const [bookUrl, uid, updates, opts] = service.updateContact.mock.calls[0];
+    expect([bookUrl, uid, updates]).toEqual(["only", "w1", { note: "n" }]);
+    expect(opts?.located).toBeUndefined();
+  });
+
+  it("update_contact rejects fullName: null before scanning any book", async () => {
+    const service = twoBooks();
+    const res = await callTool("update_contact", { uid: "w1", fullName: null }, service);
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).error).toBe("VALIDATION_FAILED");
+    expect(service.locateContact).not.toHaveBeenCalled();
+    expect(service.updateContact).not.toHaveBeenCalled();
+  });
+
+  it("one unreachable book fails the whole read rather than returning a subset", async () => {
+    const service = twoBooks();
+    service.fetchContacts.mockImplementation(async (url: string) => {
+      if (url === "book2") throw new Error("503 from book2");
+      return [mk("p1")];
+    });
+    const res = await callTool("list_contacts", {}, service);
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).message).toContain("book2");
+  });
+
+  it("get_contact refuses to guess when two books hold the same UID", async () => {
+    const service = twoBooks();
+    service.fetchContacts.mockImplementation(async () => [mk("dup")]);
+    const res = await callTool("get_contact", { uid: "dup" }, service);
+    expect(res.isError).toBe(true);
+    const err = JSON.parse(res.content[0].text);
+    expect(err.error).toBe("CONTACT_CONFLICT");
+    expect(err.message).toContain("Personal");
+    expect(err.message).toContain("Work");
   });
 });

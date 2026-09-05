@@ -78,9 +78,48 @@ export interface ContactTransferOutcome {
   failed: ContactTransferFailure[];
 }
 
+/**
+ * A contact found by {@link CardDavService.locateContact}: the book it lives
+ * in plus the vCard's own URL, etag and data. Passing it back to
+ * `updateContact`/`deleteContact` as `located` lets the write reuse the read
+ * that found it instead of fetching the book again.
+ */
+export interface LocatedContact {
+  bookUrl: string;
+  url: string;
+  etag?: string;
+  /** Always present: a hit without a body is not a hit. */
+  data: string;
+}
+
+/** A book to search, with the label it is reported under in messages. */
+export interface BookToSearch {
+  url: string;
+  label: string;
+}
+
+/**
+ * The one error every path reports a UID duplicated across books with, so
+ * reads and writes name the books the same way — by whatever label the
+ * caller can pass back as `addressBook`.
+ */
+export function duplicateContactError(uid: string, labels: string[]): ContactError {
+  return new ContactError(
+    `Contact ${uid} exists in more than one address book — pass addressBook to pick one of: ${labels.join(", ")}`,
+    ErrorCode.CONTACT_CONFLICT,
+    uid,
+  );
+}
+
+/** Shared by the service guard and the tool's fast-fail, so the two cannot drift. */
+export const FULL_NAME_REQUIRED = "fullName cannot be cleared: FN is required on every vCard";
+
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
-  | { status: "ambiguous"; candidates: Array<{ fullName: string; email: string; uid: string }> }
+  | {
+      status: "ambiguous";
+      candidates: Array<{ fullName: string; email: string; uid: string; addressBook?: string }>;
+    }
   | { status: "not_found"; message: string };
 
 function applyDetailLevel(contact: Contact, level: DetailLevel): Contact {
@@ -489,23 +528,26 @@ export class CardDavService {
     }
   }
 
-  async updateContact(addressBookUrl: string, uid: string, updates: ContactUpdates): Promise<void> {
+  async updateContact(
+    addressBookUrl: string,
+    uid: string,
+    updates: ContactUpdates,
+    opts: { located?: LocatedContact } = {},
+  ): Promise<void> {
     // The tool schema already keeps fullName non-nullable; this guards a direct
     // caller, since a cleared FN would otherwise serialise as "FN:undefined".
-    // Checked before the fetch, so an invalid request pays for no round trip.
+    // Checked before this method's own fetch; the tool handler runs the same
+    // check ahead of its locate scan so the multi-book path fast-fails too.
     if (updates.fullName === null) {
-      throw new ValidationError(
-        "fullName cannot be cleared: FN is required on every vCard",
-        "fullName",
-      );
+      throw new ValidationError(FULL_NAME_REQUIRED, "fullName");
     }
     const client = await this.ensureConnected();
-    const existing = await this.findVCard(addressBookUrl, uid);
+    const existing = opts.located ?? (await this.findVCard(addressBookUrl, uid));
     if (!existing) {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
 
-    const merged = mergeContactUpdates(parseVCard(existing.data!), updates);
+    const merged = mergeContactUpdates(parseVCard(existing.data), updates);
 
     try {
       const response = await client.updateVCard({
@@ -522,9 +564,13 @@ export class CardDavService {
     }
   }
 
-  async deleteContact(addressBookUrl: string, uid: string): Promise<void> {
+  async deleteContact(
+    addressBookUrl: string,
+    uid: string,
+    opts: { located?: LocatedContact } = {},
+  ): Promise<void> {
     const client = await this.ensureConnected();
-    const existing = await this.findVCard(addressBookUrl, uid);
+    const existing = opts.located ?? (await this.findVCard(addressBookUrl, uid));
     if (!existing) {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
@@ -574,9 +620,35 @@ export class CardDavService {
     });
   }
 
-  async resolveContact(addressBookUrl: string, name: string): Promise<ResolveContactResult> {
-    const matches = await this.searchContacts(addressBookUrl, name);
-    const withEmail = matches.filter((c) => c.emails.length > 0);
+  /**
+   * Resolves a name to an email across one book or several. A name the user
+   * did not qualify with a book means "whoever I know by that name", so the
+   * default caller passes every book; a match filed in "Work" must not go
+   * missing because "Personal" happened to sort first.
+   */
+  async resolveContact(
+    addressBook: string | Array<string | BookToSearch>,
+    name: string,
+  ): Promise<ResolveContactResult> {
+    const refs = (Array.isArray(addressBook) ? addressBook : [addressBook]).map((b) =>
+      typeof b === "string" ? { url: b, label: undefined } : b,
+    );
+    const matches = (
+      await Promise.all(
+        refs.map(async (ref) =>
+          (await this.searchContacts(ref.url, name)).map((c) => ({ contact: c, label: ref.label })),
+        ),
+      )
+    ).flat();
+    // One UID in two books is one person synced twice, not two candidates:
+    // resolve to it once rather than report a false ambiguity. (Writes treat
+    // the same state as a conflict, because a write has to pick a book.)
+    const seen = new Set<string>();
+    const withEmail = matches.filter(({ contact }) => {
+      if (contact.emails.length === 0 || seen.has(contact.uid)) return false;
+      seen.add(contact.uid);
+      return true;
+    });
     if (withEmail.length === 0) {
       return {
         status: "not_found",
@@ -584,21 +656,60 @@ export class CardDavService {
       };
     }
     if (withEmail.length === 1) {
-      const c = withEmail[0];
+      const c = withEmail[0].contact;
       return {
         status: "resolved",
         fullName: c.fullName,
         email: c.emails[0].value,
       };
     }
+    // Candidates carry their book's label when one was given, so a caller can
+    // pass it back — the same contract every other read path keeps.
     const candidates = [...withEmail]
-      .sort((a, b) => a.fullName.localeCompare(b.fullName))
-      .map((c) => ({
+      .sort((a, b) => a.contact.fullName.localeCompare(b.contact.fullName))
+      .map(({ contact: c, label }) => ({
         fullName: c.fullName,
         email: c.emails[0].value,
         uid: c.uid,
+        ...(label ? { addressBook: label } : {}),
       }));
     return { status: "ambiguous", candidates };
+  }
+
+  /**
+   * Finds which of the given books holds a UID. Used when a caller names a
+   * contact but not its book. A UID is meant to be unique across an account,
+   * so one hit is the answer; two is a state this cannot safely act on (the
+   * write would land on whichever book came first), so it fails naming both
+   * so the caller can pass one explicitly.
+   */
+  async locateContact(uid: string, books: Array<string | BookToSearch>): Promise<LocatedContact> {
+    const refs = books.map((b) => (typeof b === "string" ? { url: b, label: b } : b));
+    const hits = (
+      await Promise.all(
+        refs.map(async (ref) => {
+          const found = await this.findVCard(ref.url, uid);
+          return found ? { bookUrl: ref.url, label: ref.label, ...found } : undefined;
+        }),
+      )
+    ).filter((hit): hit is LocatedContact & { label: string } => hit !== undefined);
+    if (hits.length === 1) {
+      const { label: _label, ...located } = hits[0];
+      return located;
+    }
+    if (hits.length === 0) {
+      throw new ContactError(
+        `Contact ${uid} not found in any address book`,
+        ErrorCode.CONTACT_NOT_FOUND,
+        uid,
+      );
+    }
+    // The contact was found, twice: CONTACT_CONFLICT, not NOT_FOUND, so a
+    // caller that offers to create a missing contact does not do so here.
+    throw duplicateContactError(
+      uid,
+      hits.map((h) => h.label),
+    );
   }
 
   /**
@@ -822,15 +933,15 @@ export class CardDavService {
   private async findVCard(
     addressBookUrl: string,
     uid: string,
-  ): Promise<{ url: string; etag?: string; data?: string } | undefined> {
+  ): Promise<{ url: string; etag?: string; data: string } | undefined> {
     const client = await this.ensureConnected();
     const vcards = await client.fetchVCards({
       addressBook: { url: addressBookUrl } as any,
     });
-    return vcards.find((v) => {
-      if (!v.data) return false;
-      const parsed = parseVCard(v.data);
-      return parsed.uid === uid;
-    }) as { url: string; etag?: string; data?: string } | undefined;
+    for (const v of vcards) {
+      if (!v.data) continue;
+      if (parseVCard(v.data).uid === uid) return { url: v.url, etag: v.etag, data: v.data };
+    }
+    return undefined;
   }
 }

@@ -1419,3 +1419,134 @@ describe("CardDavService.updateContact clearing fields", () => {
     expect(sent).not.toContain("twitter");
   });
 });
+
+describe("CardDavService across address books", () => {
+  const mkVCard = (uid: string, fn: string, email?: string) =>
+    [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `UID:${uid}`,
+      `FN:${fn}`,
+      email ? `EMAIL:${email}` : "",
+      "END:VCARD",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+  const perBook = (cards: Record<string, string[]>) =>
+    vi.fn(async ({ addressBook }: { addressBook: { url: string } }) =>
+      (cards[addressBook.url] ?? []).map((data, i) => ({
+        url: `${addressBook.url}${i}.vcf`,
+        etag: '"e"',
+        data,
+      })),
+    );
+
+  it("resolveContact merges matches from several books", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u2", "Alice Brown", "b@y.com")],
+      }),
+    };
+    const r = await service.resolveContact(["b1", "b2"], "Alice");
+    if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+    expect(r.candidates.map((c) => c.uid)).toEqual(["u2", "u1"]);
+  });
+
+  it("resolveContact tags ambiguous candidates with the label of their book", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u2", "Alice Brown", "b@y.com")],
+      }),
+    };
+    const r = await service.resolveContact(
+      [
+        { url: "b1", label: "Personal" },
+        { url: "b2", label: "Work" },
+      ],
+      "Alice",
+    );
+    if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+    expect(r.candidates.map((c) => c.addressBook)).toEqual(["Work", "Personal"]);
+  });
+
+  it("resolveContact treats one UID in two books as one person", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u1", "Alice Smith", "a@x.com")],
+      }),
+    };
+    expect(await service.resolveContact(["b1", "b2"], "Alice")).toEqual({
+      status: "resolved",
+      fullName: "Alice Smith",
+      email: "a@x.com",
+    });
+  });
+
+  it("locateContact returns the URL of the book holding the UID", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u2", "B")] }),
+    };
+    expect(await service.locateContact("u2", ["b1", "b2"])).toMatchObject({
+      bookUrl: "b2",
+      url: "b20.vcf",
+      etag: '"e"',
+    });
+  });
+
+  it("locateContact fails as CONTACT_NOT_FOUND when no book holds the UID", async () => {
+    const { ErrorCode } = await import("@miguelarios/pim-core");
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = { fetchVCards: perBook({ b1: [mkVCard("u1", "A")] }) };
+    await expect(service.locateContact("nope", ["b1", "b2"])).rejects.toMatchObject({
+      code: ErrorCode.CONTACT_NOT_FOUND,
+    });
+  });
+
+  it("locateContact names books by the label it was given", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
+    };
+    await expect(
+      service.locateContact("u1", [
+        { url: "b1", label: "Personal" },
+        { url: "b2", label: "Work" },
+      ]),
+    ).rejects.toThrow(/Personal, Work/);
+  });
+
+  it("locateContact refuses to guess when two books hold the same UID", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
+    };
+    const { ErrorCode } = await import("@miguelarios/pim-core");
+    await expect(service.locateContact("u1", ["b1", "b2"])).rejects.toMatchObject({
+      code: ErrorCode.CONTACT_CONFLICT,
+      message: expect.stringMatching(/b1.*b2/),
+    });
+  });
+
+  it("updateContact and deleteContact reuse a located vCard instead of re-reading the book", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const fetchVCards = vi.fn();
+    const updateVCard = vi.fn().mockResolvedValue({ ok: true });
+    const deleteVCard = vi.fn().mockResolvedValue({ ok: true });
+    (service as any).client = { fetchVCards, updateVCard, deleteVCard };
+    const located = { bookUrl: "b2", url: "b2/u1.vcf", etag: '"e1"', data: mkVCard("u1", "A") };
+
+    await service.updateContact("b2", "u1", { note: "n" }, { located });
+    await service.deleteContact("b2", "u1", { located });
+
+    expect(fetchVCards).not.toHaveBeenCalled();
+    expect(updateVCard.mock.calls[0][0].vCard).toMatchObject({ url: "b2/u1.vcf", etag: '"e1"' });
+    expect(deleteVCard.mock.calls[0][0].vCard).toMatchObject({ url: "b2/u1.vcf", etag: '"e1"' });
+  });
+});

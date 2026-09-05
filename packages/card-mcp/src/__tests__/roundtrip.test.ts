@@ -171,11 +171,11 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     });
 
     expect(result.isError).toBeFalsy();
-    expect(service.updateContact).toHaveBeenCalledWith("book1", "u1", {
-      note: null,
-      phones: null,
-      title: "Countess",
-    });
+    expect(service.updateContact.mock.calls[0].slice(0, 3)).toEqual([
+      "book1",
+      "u1",
+      { note: null, phones: null, title: "Countess" },
+    ]);
   });
 
   it("still rejects a wrong type on a nullable update_contact field", async () => {
@@ -198,7 +198,7 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     expect(elicitations).toHaveLength(1);
     expect(elicitations[0]).toContain("u1");
     expect(result.isError).toBeFalsy();
-    expect(service.deleteContact).toHaveBeenCalledWith("book1", "u1");
+    expect(service.deleteContact.mock.calls[0].slice(0, 2)).toEqual(["book1", "u1"]);
   });
 
   it("confirms before deleting an address book, then deletes it", async () => {
