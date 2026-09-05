@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
-import type { CardDavService, ContactUpdates } from "../services/CardDavService.js";
+import {
+  type CardDavService,
+  type ContactUpdates,
+  duplicateContactError,
+} from "../services/CardDavService.js";
 import { booksToSearch, locateBookFor, readAcrossBooks, resolveAddressBook } from "./books.js";
 import {
   contactListSchema,
@@ -15,6 +19,17 @@ const ADDRESS_BOOK_PROP = {
   type: "string",
   description:
     "Address book URL or display name (e.g. 'Work'). If omitted, every address book in the account is searched.",
+} as const;
+
+/**
+ * The write tools locate rather than search: an omitted book means "find the
+ * one book holding this UID", and a UID in two books is a conflict, never an
+ * update-everywhere.
+ */
+const WRITE_BOOK_PROP = {
+  type: "string",
+  description:
+    "Address book URL or display name (e.g. 'Work') holding the contact. If omitted, every address book is checked to locate the UID; fails if more than one holds it.",
 } as const;
 
 /** `create_contact` has to land somewhere, so its omitted-book default differs. */
@@ -237,12 +252,9 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         // Reads treat a UID duplicated across books the way writes do: a
         // conflict to surface, not a coin toss on whichever book sorted first.
         if (matches.length > 1) {
-          throw new ContactError(
-            `Contact ${args.uid} exists in more than one address book — pass addressBook to pick one of: ${matches
-              .map((c) => c.addressBook)
-              .join(", ")}`,
-            ErrorCode.CONTACT_CONFLICT,
+          throw duplicateContactError(
             args.uid,
+            matches.map((c) => c.addressBook),
           );
         }
         return structured(matches[0]);
@@ -415,7 +427,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           items: SOCIAL_PROFILE_ITEMS,
           description: "New social media profiles (replaces existing)",
         }),
-        addressBook: ADDRESS_BOOK_PROP,
+        addressBook: WRITE_BOOK_PROP,
       },
       required: ["uid"],
     },
@@ -450,7 +462,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       type: "object",
       properties: {
         uid: { type: "string", description: "The UID of the contact to delete" },
-        addressBook: ADDRESS_BOOK_PROP,
+        addressBook: WRITE_BOOK_PROP,
       },
       required: ["uid"],
     },

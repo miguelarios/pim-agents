@@ -700,7 +700,10 @@ describe("cross-book lookup when addressBook is omitted", () => {
   it("update_contact locates the contact's book first", async () => {
     const service = twoBooks();
     await callTool("update_contact", { uid: "w1", note: "n" }, service);
-    expect(service.locateContact).toHaveBeenCalledWith("w1", ["book1", "book2"]);
+    expect(service.locateContact).toHaveBeenCalledWith("w1", [
+      { url: "book1", label: "Personal" },
+      { url: "book2", label: "Work" },
+    ]);
     expect(service.updateContact).toHaveBeenCalledWith(
       "book2",
       "w1",
@@ -714,7 +717,10 @@ describe("cross-book lookup when addressBook is omitted", () => {
   it("delete_contact locates the contact's book first", async () => {
     const service = twoBooks();
     await callTool("delete_contact", { uid: "w1" }, service, confirmedCtx);
-    expect(service.locateContact).toHaveBeenCalledWith("w1", ["book1", "book2"]);
+    expect(service.locateContact).toHaveBeenCalledWith("w1", [
+      { url: "book1", label: "Personal" },
+      { url: "book2", label: "Work" },
+    ]);
     expect(service.deleteContact).toHaveBeenCalledWith("book2", "w1", { located: LOCATED });
   });
 
@@ -726,6 +732,17 @@ describe("cross-book lookup when addressBook is omitted", () => {
     const [bookUrl, uid, updates, opts] = service.updateContact.mock.calls[0];
     expect([bookUrl, uid, updates]).toEqual(["only", "w1", { note: "n" }]);
     expect(opts?.located).toBeUndefined();
+  });
+
+  it("one unreachable book fails the whole read rather than returning a subset", async () => {
+    const service = twoBooks();
+    service.fetchContacts.mockImplementation(async (url: string) => {
+      if (url === "book2") throw new Error("503 from book2");
+      return [mk("p1")];
+    });
+    const res = await callTool("list_contacts", {}, service);
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).message).toContain("book2");
   });
 
   it("get_contact refuses to guess when two books hold the same UID", async () => {

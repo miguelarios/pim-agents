@@ -92,6 +92,25 @@ export interface LocatedContact {
   data: string;
 }
 
+/** A book to search, with the label it is reported under in messages. */
+export interface BookToSearch {
+  url: string;
+  label: string;
+}
+
+/**
+ * The one error every path reports a UID duplicated across books with, so
+ * reads and writes name the books the same way — by whatever label the
+ * caller can pass back as `addressBook`.
+ */
+export function duplicateContactError(uid: string, labels: string[]): ContactError {
+  return new ContactError(
+    `Contact ${uid} exists in more than one address book — pass addressBook to pick one of: ${labels.join(", ")}`,
+    ErrorCode.CONTACT_CONFLICT,
+    uid,
+  );
+}
+
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
   | { status: "ambiguous"; candidates: Array<{ fullName: string; email: string; uid: string }> }
@@ -641,16 +660,20 @@ export class CardDavService {
    * write would land on whichever book came first), so it fails naming both
    * so the caller can pass one explicitly.
    */
-  async locateContact(uid: string, bookUrls: string[]): Promise<LocatedContact> {
+  async locateContact(uid: string, books: Array<string | BookToSearch>): Promise<LocatedContact> {
+    const refs = books.map((b) => (typeof b === "string" ? { url: b, label: b } : b));
     const hits = (
       await Promise.all(
-        bookUrls.map(async (bookUrl) => {
-          const found = await this.findVCard(bookUrl, uid);
-          return found ? { bookUrl, ...found } : undefined;
+        refs.map(async (ref) => {
+          const found = await this.findVCard(ref.url, uid);
+          return found ? { bookUrl: ref.url, label: ref.label, ...found } : undefined;
         }),
       )
-    ).filter((hit): hit is LocatedContact => hit !== undefined);
-    if (hits.length === 1) return hits[0];
+    ).filter((hit): hit is LocatedContact & { label: string } => hit !== undefined);
+    if (hits.length === 1) {
+      const { label: _label, ...located } = hits[0];
+      return located;
+    }
     if (hits.length === 0) {
       throw new ContactError(
         `Contact ${uid} not found in any address book`,
@@ -660,12 +683,9 @@ export class CardDavService {
     }
     // The contact was found, twice: CONTACT_CONFLICT, not NOT_FOUND, so a
     // caller that offers to create a missing contact does not do so here.
-    throw new ContactError(
-      `Contact ${uid} exists in more than one address book — pass addressBook to pick one of: ${hits
-        .map((h) => h.bookUrl)
-        .join(", ")}`,
-      ErrorCode.CONTACT_CONFLICT,
+    throw duplicateContactError(
       uid,
+      hits.map((h) => h.label),
     );
   }
 
@@ -896,7 +916,7 @@ export class CardDavService {
       addressBook: { url: addressBookUrl } as any,
     });
     for (const v of vcards) {
-      if (typeof v.data !== "string") continue;
+      if (!v.data) continue;
       if (parseVCard(v.data).uid === uid) return { url: v.url, etag: v.etag, data: v.data };
     }
     return undefined;
