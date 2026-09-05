@@ -82,7 +82,7 @@ export async function locateBookFor(
   if (books.length === 1) return { bookUrl: books[0].url };
   const located = await service.locateContact(
     uid,
-    books.map((b) => b.url),
+    books.map((b) => ({ url: b.url, label: b.displayName || b.url })),
   );
   return { bookUrl: located.bookUrl, located };
 }

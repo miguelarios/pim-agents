@@ -1475,6 +1475,19 @@ describe("CardDavService across address books", () => {
     });
   });
 
+  it("locateContact names books by the label it was given", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
+    };
+    await expect(
+      service.locateContact("u1", [
+        { url: "b1", label: "Personal" },
+        { url: "b2", label: "Work" },
+      ]),
+    ).rejects.toThrow(/Personal, Work/);
+  });
+
   it("locateContact refuses to guess when two books hold the same UID", async () => {
     const service = new CardDavService({ url: "x", username: "u", password: "p" });
     (service as any).client = {
