@@ -120,7 +120,12 @@ const TARGET_BOOK_PROP = {
     "Target address book URL or display name (e.g. 'Work'). Must differ from the source.",
 } as const;
 
-type ListArgs = { query?: string; addressBook?: string; detail_level?: "summary" | "full" };
+type ListArgs = {
+  query?: string;
+  addressBook?: string;
+  detail_level?: "summary" | "full";
+  include_groups?: boolean;
+};
 type GetArgs = { uid: string; addressBook?: string; detail_level?: "summary" | "full" };
 /**
  * The `Contact` fields `update_contact` can write, and the single source of
@@ -196,6 +201,11 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         },
         addressBook: ADDRESS_BOOK_PROP,
         detail_level: DETAIL_LEVEL_PROP,
+        include_groups: {
+          type: "boolean",
+          description:
+            "Include contact groups (kind='group') in the results. Default false: groups are listed by list_groups.",
+        },
       },
     },
     outputSchema: contactListSchema,
@@ -204,11 +214,12 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         const books = await booksToSearch(args.addressBook, service);
         const detailLevel = args.detail_level ?? "summary";
         const query = args.query;
-        const contacts = await readAcrossBooks(books, (url) =>
+        const all = await readAcrossBooks(books, (url) =>
           query
             ? service.searchContacts(url, query, { detailLevel })
             : service.fetchContacts(url, { detailLevel }),
         );
+        const contacts = args.include_groups ? all : all.filter((c) => c.kind !== "group");
         return structured({ contacts, count: contacts.length });
       } catch (err) {
         return toolError(err);

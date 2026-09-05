@@ -714,3 +714,92 @@ describe("contact update round-trip preservation", () => {
     expect(rebuilt).toContain("X-SOCIALPROFILE;type=twitter:https://twitter.com/example_user");
   });
 });
+
+describe("parseVCard contact groups", () => {
+  it("parses a vCard 4.0 KIND:group with MEMBER urns", () => {
+    const vcard = [
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "UID:g1",
+      "FN:Book Club",
+      "KIND:group",
+      "MEMBER:urn:uuid:aaa",
+      "MEMBER:urn:uuid:bbb",
+      "END:VCARD",
+    ].join("\r\n");
+    const c = parseVCard(vcard);
+    expect(c.kind).toBe("group");
+    expect(c.members).toEqual(["aaa", "bbb"]);
+    expect(c.otherProperties).toEqual([]);
+  });
+
+  it("parses the Apple vCard 3.0 X-ADDRESSBOOKSERVER form", () => {
+    const vcard = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "UID:g2",
+      "FN:Family",
+      "N:Family;;;;",
+      "X-ADDRESSBOOKSERVER-KIND:group",
+      "X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:ccc",
+      "END:VCARD",
+    ].join("\r\n");
+    const c = parseVCard(vcard);
+    expect(c.kind).toBe("group");
+    expect(c.members).toEqual(["ccc"]);
+    expect(c.otherProperties).toEqual([]);
+  });
+
+  it("leaves kind and members unset on an individual", () => {
+    const c = parseVCard("BEGIN:VCARD\nVERSION:3.0\nUID:i1\nFN:Jane\nEND:VCARD");
+    expect(c.kind).toBeUndefined();
+    expect(c.members).toBeUndefined();
+  });
+
+  it("keeps a member without a urn:uuid prefix verbatim", () => {
+    const c = parseVCard(
+      "BEGIN:VCARD\nVERSION:3.0\nUID:g3\nFN:G\nX-ADDRESSBOOKSERVER-KIND:group\nX-ADDRESSBOOKSERVER-MEMBER:mailto:x@y.z\nEND:VCARD",
+    );
+    expect(c.members).toEqual(["mailto:x@y.z"]);
+  });
+});
+
+describe("buildVCard contact groups", () => {
+  const group: Contact = {
+    uid: "g1",
+    fullName: "Book Club",
+    kind: "group",
+    members: ["aaa", "bbb"],
+    emails: [],
+    phones: [],
+    addresses: [],
+    urls: [],
+    otherProperties: [],
+  };
+
+  it("writes the vCard 3.0 Apple form, one MEMBER line per UID", () => {
+    const built = buildVCard(group);
+    expect(built).toContain("X-ADDRESSBOOKSERVER-KIND:group");
+    expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:aaa");
+    expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:bbb");
+    expect(built).not.toMatch(/^KIND:/m);
+  });
+
+  it("round-trips through parse", () => {
+    const again = parseVCard(buildVCard(group));
+    expect(again.kind).toBe("group");
+    expect(again.members).toEqual(["aaa", "bbb"]);
+  });
+
+  it("writes no group lines for an individual", () => {
+    const built = buildVCard({ ...group, kind: undefined, members: undefined });
+    expect(built).not.toContain("ADDRESSBOOKSERVER");
+  });
+
+  it("does not prefix a member that already carries a scheme", () => {
+    const built = buildVCard({ ...group, members: ["mailto:x@y.z", "urn:uuid:ddd"] });
+    expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:mailto:x@y.z");
+    expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:ddd");
+    expect(built).not.toContain("urn:uuid:urn:uuid");
+  });
+});

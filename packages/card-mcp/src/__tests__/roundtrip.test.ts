@@ -312,6 +312,35 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
   });
 });
 
+describe.each<Era>(["legacy", "modern"])("card-mcp group tools over the wire (%s)", (era) => {
+  it("confirms before deleting a group, then deletes it", async () => {
+    const service = fakeService();
+    service.fetchContacts.mockResolvedValue([
+      { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
+    ]);
+    const { client, elicitations } = await connect(era, service);
+    const result = await client.callTool({ name: "delete_group", arguments: { uid: "g1" } });
+    expect(elicitations).toHaveLength(1);
+    expect(elicitations[0]).toContain("Book Club");
+    expect(result.structuredContent).toEqual({ status: "deleted", uid: "g1", name: "Book Club" });
+    expect(service.deleteContact).toHaveBeenCalledWith("book1", "g1");
+  });
+
+  it("validates get_group output against its schema", async () => {
+    const service = fakeService();
+    service.fetchContacts.mockResolvedValue([
+      CONTACT,
+      { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
+    ]);
+    const { client } = await connect(era, service);
+    const result = await client.callTool({ name: "get_group", arguments: { uid: "g1" } });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as any).members).toEqual([
+      { uid: "u1", fullName: "Ada Lovelace", email: "ada@example.com" },
+    ]);
+  });
+});
+
 describe("card-mcp cache hints", () => {
   it("emits ttlMs and cacheScope on the 2026-07-28 era", async () => {
     const { client } = await connect("modern", fakeService());

@@ -56,6 +56,8 @@ export const contactSchema = v.object({
   note: v.optional(v.string()),
   socialProfiles: v.optional(v.array(socialProfile)),
   photo: v.optional(v.string()),
+  kind: v.optional(v.picklist(["individual", "group"])),
+  members: v.optional(v.array(v.string())),
   otherProperties: v.array(v.string()),
 });
 

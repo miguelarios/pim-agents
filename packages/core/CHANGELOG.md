@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 (2026-09-05)
+
+- `Contact` gains `kind` (`"group"` for a contact group, unset for an individual) and
+  `members` (member UIDs). `parseVCard` reads RFC 6350 `KIND:group` / `MEMBER:urn:uuid:…`
+  and Apple's vCard 3.0 `X-ADDRESSBOOKSERVER-KIND` / `X-ADDRESSBOOKSERVER-MEMBER` forms,
+  stripping the `urn:uuid:` prefix and keeping any other URI scheme verbatim. `buildVCard`
+  writes the `X-ADDRESSBOOKSERVER-*` form, since the builder emits `VERSION:3.0` and that
+  is the form Apple, iCloud and SabreDAV-based servers read. None of the four properties
+  land in `otherProperties` any more (issue #60).
 ## 0.9.1 (2026-09-05)
 
 - `buildVCard` writes the `ORG` line when either `organization` or `orgUnits` is set, with
