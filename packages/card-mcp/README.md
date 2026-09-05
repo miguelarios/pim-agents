@@ -40,7 +40,7 @@ npx @miguelarios/card-mcp
 | `rename_address_book` | Rename an address book or update its description |
 | `delete_address_book` | Delete an address book and its contacts (confirms first) |
 
-Every `addressBook` parameter takes a display name (e.g. `Work`) as well as a URL.
+Every `addressBook` parameter takes a display name (e.g. `Work`) as well as a URL. When it is omitted, reads and lookups by UID cover every address book in the account, and each returned contact carries an `addressBook` label to pass back; `create_contact` defaults to the first book.
 
 ## License
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0 (2026-09-05)
+
+- **Every book is searched when none is named.** `list_contacts`, `get_contact` and
+  `resolve_contact` used to default to the first address book, so a name filed in `Work`
+  went missing whenever `Personal` sorted first. Each returned contact now carries an
+  `addressBook` label (display name, or URL for a nameless book) that can be passed back
+  to any contact tool. `update_contact` and `delete_contact` on an unqualified UID locate
+  the contact's book first via the new `CardDavService.locateContact`, and refuse to guess
+  when two books hold the same UID; a single-book account skips the lookup.
+  `create_contact` keeps the first-book default: a new contact has to land somewhere.
+
 ## 0.8.0 (2026-09-05)
 
 - **`update_contact` can clear a field.** Absent keeps the stored value, `null` clears it,
