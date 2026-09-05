@@ -82,11 +82,24 @@ reference the membership validation exists to prevent. The refusal is per contac
 batch's `failed[]`, so the rest of the batch still transfers. Moving a group properly
 (relocating its members with it, or re-pointing them) is not designed here.
 
-**`update_contact` and `delete_contact` stay group-unaware, deliberately.** Both act on
-one vCard by UID, and a group is one vCard; `delete_contact` on a group has the same end
-state as `delete_group`, and `update_contact` can rename one. `UPDATABLE_FIELDS` excludes
-`kind` and `members`, so neither can corrupt membership. The group tools exist for the
-better prompt and the member handling, not as the only path.
+**`update_contact` refuses a group; `delete_contact` does not.** `update_contact` could
+give a group an `EMAIL`, and `resolve_contact` would then hand a list back as if it were a
+person, so it fails pointing at `update_group`. `resolve_contact` also skips groups outright,
+against cards some other client has already shaped that way. `delete_contact` on a group has
+the same end state as `delete_group` and stays allowed; only the prompt is less informative.
+
+**Editing a group written in the RFC 6350 form converts it to the Apple form.** The builder
+emits `VERSION:3.0` and writes only `X-ADDRESSBOOKSERVER-*`, so a `KIND:group`/`MEMBER` card
+from a strict 4.0 client comes out in the 3.0 form after its first edit here. Writing both
+forms was rejected: `MEMBER` is not a 3.0 property and SabreDAV-based servers validate cards
+on PUT, so the mixed card risks a rejected write for every user to protect a client this
+server does not target.
+
+**Membership invariants live in the tool layer.** `CardDavService` will write whatever
+`members` it is given; `create_group`/`update_group` are the only writers today, and the
+validation sits with them because it needs the book's contents, which the tools already
+hold. A future bulk path (import, restore) must validate the same way or accept dangling
+references.
 
 ## Relation to cross-book lookup
 

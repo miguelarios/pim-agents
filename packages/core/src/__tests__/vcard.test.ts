@@ -750,6 +750,23 @@ describe("parseVCard contact groups", () => {
     expect(c.otherProperties).toEqual([]);
   });
 
+  it("dedupes urn members case-insensitively, keeping the first spelling", () => {
+    const vcard = [
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "UID:g5",
+      "FN:Case",
+      "KIND:group",
+      "MEMBER:urn:uuid:ABC-1",
+      "X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:abc-1",
+      "X-ADDRESSBOOKSERVER-MEMBER:mailto:X@y.z",
+      "X-ADDRESSBOOKSERVER-MEMBER:mailto:x@y.z",
+      "END:VCARD",
+    ].join("\r\n");
+    // Only urns are case-insensitive; a mailto: is kept as written.
+    expect(parseVCard(vcard).members).toEqual(["ABC-1", "mailto:X@y.z", "mailto:x@y.z"]);
+  });
+
   it("keeps a non-group KIND raw so it survives a round trip", () => {
     for (const kindLine of ["KIND:org", "KIND:individual", "X-ADDRESSBOOKSERVER-KIND:location"]) {
       const c = parseVCard(`BEGIN:VCARD\nVERSION:4.0\nUID:k1\nFN:Acme\n${kindLine}\nEND:VCARD`);

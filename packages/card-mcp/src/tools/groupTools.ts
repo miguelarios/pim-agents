@@ -16,6 +16,7 @@ import {
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import type { CardDavService } from "../services/CardDavService.js";
 import {
+  ADDRESS_BOOK_PROP,
   bookLabel,
   booksToSearch,
   locateBookFor,
@@ -23,12 +24,6 @@ import {
   resolveAddressBook,
 } from "./books.js";
 import { groupDetailSchema, groupListSchema, groupWriteResultSchema } from "./groupSchemas.js";
-
-const ADDRESS_BOOK_PROP = {
-  type: "string",
-  description:
-    "Address book URL or display name (e.g. 'Work'). If omitted, every address book in the account is searched.",
-} as const;
 
 const MEMBER_UIDS_PROP = (description: string) =>
   ({
@@ -262,6 +257,13 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         if (args.name === undefined && add.length === 0 && remove.size === 0) {
           throw new ValidationError("Nothing to update: pass name, addMembers, or removeMembers");
         }
+        const both = add.filter((uid) => remove.has(uid));
+        if (both.length > 0) {
+          throw new ValidationError(
+            `Cannot both add and remove the same member: ${both.join(", ")}`,
+            "addMembers",
+          );
+        }
         const { bookUrl, group, book } = await loadGroup(args.uid, args.addressBook, service);
         assertMembersInBook(add, book);
         const members = dedupe([...(group.members ?? []), ...add]).filter(
@@ -326,7 +328,12 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
 
       try {
         await service.deleteContact(bookUrl, group.uid);
-        return structured({ status: "deleted" as const, uid: group.uid, name: group.fullName });
+        return structured({
+          status: "deleted" as const,
+          uid: group.uid,
+          name: group.fullName,
+          memberCount: group.members?.length ?? 0,
+        });
       } catch (err) {
         return toolError(err);
       }

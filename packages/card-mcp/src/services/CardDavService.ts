@@ -660,12 +660,14 @@ export class CardDavService {
         ),
       )
     ).flat();
-    // One UID in two books is one person synced twice, not two candidates:
-    // resolve to it once rather than report a false ambiguity. (Writes treat
-    // the same state as a conflict, because a write has to pick a book.)
+    // A group is never a person to resolve to, even if one has been given an
+    // EMAIL by some client. And one UID in two books is one person synced
+    // twice, not two candidates: resolve to it once rather than report a
+    // false ambiguity. (Writes treat that state as a conflict, because a
+    // write has to pick a book.)
     const seen = new Set<string>();
     const withEmail = matches.filter(({ contact }) => {
-      if (contact.emails.length === 0 || seen.has(contact.uid)) return false;
+      if (isGroup(contact) || contact.emails.length === 0 || seen.has(contact.uid)) return false;
       seen.add(contact.uid);
       return true;
     });

@@ -27,6 +27,25 @@ function toBookRefs(books: AddressBook[]): BookRef[] {
   return books.map((b) => ({ url: b.url, label: b.displayName || b.url }));
 }
 
+/** The `addressBook` argument every read tool shares. */
+export const ADDRESS_BOOK_PROP = {
+  type: "string",
+  description:
+    "Address book URL or display name (e.g. 'Work'). If omitted, every address book in the account is searched.",
+} as const;
+
+/** Trailing slashes and origin do not make two collection URLs different books. */
+const samePath = (a: string, b: string): boolean => {
+  const path = (u: string) => {
+    try {
+      return new URL(u, "http://placeholder.invalid").pathname.replace(/\/+$/, "");
+    } catch {
+      return u.replace(/\/+$/, "");
+    }
+  };
+  return path(a) === path(b);
+};
+
 /** A book to read, with the label its contacts are tagged with. */
 export interface BookRef {
   url: string;
@@ -103,6 +122,6 @@ export async function bookLabel(
 ): Promise<string> {
   if (explicit) return explicit;
   const books = await service.listAddressBooks();
-  const match = books.find((b) => b.url === bookUrl);
+  const match = books.find((b) => samePath(b.url, bookUrl));
   return match?.displayName || bookUrl;
 }

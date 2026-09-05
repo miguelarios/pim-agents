@@ -1499,6 +1499,20 @@ describe("CardDavService across address books", () => {
     expect(r.candidates.map((c) => c.uid)).toEqual(["u2", "u1"]);
   });
 
+  it("resolveContact never resolves to a group, even one carrying an EMAIL", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: vi.fn().mockResolvedValue([
+        {
+          url: "1",
+          etag: "",
+          data: "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Marketing Team\r\nEMAIL:team@x.io\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD",
+        },
+      ]),
+    };
+    expect((await service.resolveContact("b", "Marketing")).status).toBe("not_found");
+  });
+
   it("resolveContact tags ambiguous candidates with the label of their book", async () => {
     const service = new CardDavService({ url: "x", username: "u", password: "p" });
     (service as any).client = {

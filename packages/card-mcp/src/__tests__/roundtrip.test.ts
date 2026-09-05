@@ -322,7 +322,12 @@ describe.each<Era>(["legacy", "modern"])("card-mcp group tools over the wire (%s
     const result = await client.callTool({ name: "delete_group", arguments: { uid: "g1" } });
     expect(elicitations).toHaveLength(1);
     expect(elicitations[0]).toContain("Book Club");
-    expect(result.structuredContent).toEqual({ status: "deleted", uid: "g1", name: "Book Club" });
+    expect(result.structuredContent).toEqual({
+      status: "deleted",
+      uid: "g1",
+      name: "Book Club",
+      memberCount: 1,
+    });
     expect(service.deleteContact).toHaveBeenCalledWith("book1", "g1");
   });
 

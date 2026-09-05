@@ -158,6 +158,26 @@ describe("create_group", () => {
     expect(service.createContact).not.toHaveBeenCalled();
   });
 
+  it("rejects the group itself as a member", async () => {
+    const service = fakeService();
+    const res = await callTool("update_group", { uid: "g1", addMembers: ["g1"] }, service);
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).message).toMatch(/cannot contain another group/);
+    expect(service.updateContact).not.toHaveBeenCalled();
+  });
+
+  it("refuses a UID that is both added and removed", async () => {
+    const service = fakeService();
+    const res = await callTool(
+      "update_group",
+      { uid: "g1", addMembers: ["b"], removeMembers: ["b"] },
+      service,
+    );
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).message).toContain("b");
+    expect(service.updateContact).not.toHaveBeenCalled();
+  });
+
   it("rejects a group as a member", async () => {
     const service = fakeService();
     const res = await callTool("create_group", { name: "X", members: ["g1"] }, service);
@@ -231,7 +251,12 @@ describe("delete_group", () => {
     expect(service.deleteContact).not.toHaveBeenCalled();
 
     const res = await callTool("delete_group", { uid: "g1" }, service, confirmedCtx);
-    expect(res.structuredContent).toEqual({ status: "deleted", uid: "g1", name: "Book Club" });
+    expect(res.structuredContent).toEqual({
+      status: "deleted",
+      uid: "g1",
+      name: "Book Club",
+      memberCount: 3,
+    });
     expect(service.deleteContact).toHaveBeenCalledWith("/p/", "g1");
   });
 });

@@ -42,9 +42,10 @@ export interface Contact {
   photo?: string;
   /**
    * `group` for a contact group (RFC 6350 `KIND:group`, or Apple's vCard 3.0
-   * `X-ADDRESSBOOKSERVER-KIND:group`). Unset means an individual.
+   * `X-ADDRESSBOOKSERVER-KIND:group`). Unset means an individual; the parser
+   * never produces any other value, since only a group's KIND becomes a field.
    */
-  kind?: "individual" | "group";
+  kind?: "group";
   /**
    * Member UIDs of a group, with the `urn:uuid:` prefix stripped. A member
    * expressed as anything other than a UID urn (e.g. `mailto:`) is kept
@@ -205,17 +206,10 @@ export function parseVCard(data: string): Contact {
       ? [...extractAll(lines, "MEMBER"), ...extractAll(lines, "X-ADDRESSBOOKSERVER-MEMBER")]
       : [];
   // Deduplicated: a card that carries both the RFC and the Apple form for
-  // compatibility would otherwise list every member twice.
-  const members =
-    memberValues.length > 0
-      ? [
-          ...new Set(
-            memberValues.map((m) =>
-              m.toLowerCase().startsWith(UID_URN) ? m.slice(UID_URN.length) : m,
-            ),
-          ),
-        ]
-      : undefined;
+  // compatibility would otherwise list every member twice. UUID urns are
+  // case-insensitive (RFC 4122), so two spellings of one urn count once; the
+  // first spelling seen is kept.
+  const members = memberValues.length > 0 ? dedupeMembers(memberValues) : undefined;
 
   let photo: string | undefined;
   for (const rawLine of lines) {
@@ -446,6 +440,20 @@ function extractFirst(lines: string[], property: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function dedupeMembers(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    const isUrn = raw.toLowerCase().startsWith(UID_URN);
+    const value = isUrn ? raw.slice(UID_URN.length) : raw;
+    const key = isUrn ? `urn:${value.toLowerCase()}` : value;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
 }
 
 /** Extract every value of a property, parameters ignored, unescaped. */
