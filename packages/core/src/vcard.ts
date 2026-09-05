@@ -406,6 +406,10 @@ export function buildVCard(contact: Contact): string {
   if (contact.kind === "group") {
     lines.push("X-ADDRESSBOOKSERVER-KIND:group");
     for (const member of contact.members ?? []) {
+      // Anything that already looks like a URI (mailto:, urn:uuid:) is written
+      // as-is. A bare UID containing a colon would be mistaken for one, but
+      // every server this targets mints UUID-shaped UIDs, and the parser keeps
+      // such a value verbatim either way, so nothing is lost — only unprefixed.
       const uri = /^[a-z][a-z0-9+.-]*:/i.test(member) ? member : `${UID_URN}${member}`;
       lines.push(`X-ADDRESSBOOKSERVER-MEMBER:${uri}`);
     }
