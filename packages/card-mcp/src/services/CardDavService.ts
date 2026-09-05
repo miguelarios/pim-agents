@@ -105,6 +105,14 @@ export type ContactUpdates = {
 const REQUIRED_ARRAY_FIELDS = ["emails", "phones", "addresses", "urls"] as const;
 
 function mergeContactUpdates(current: Contact, updates: ContactUpdates): Contact {
+  // The tool schema already keeps fullName non-nullable; this guards a direct
+  // caller, since a cleared FN would otherwise serialise as "FN:undefined".
+  if ((updates as { fullName?: unknown }).fullName === null) {
+    throw new ValidationError(
+      "fullName cannot be cleared: FN is required on every vCard",
+      "fullName",
+    );
+  }
   const merged: Contact = { ...current };
   for (const key of Object.keys(updates) as Array<keyof ContactUpdates>) {
     const value = updates[key];

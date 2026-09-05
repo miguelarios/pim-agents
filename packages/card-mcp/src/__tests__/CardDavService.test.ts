@@ -1381,6 +1381,15 @@ describe("CardDavService.updateContact clearing fields", () => {
     expect(sent).toContain("ORG:;Engineering\r\n");
   });
 
+  it("clearing organization and orgUnits together drops the ORG line", async () => {
+    const sent = await updateWith({ organization: null, orgUnits: null });
+    expect(sent).not.toContain("ORG:");
+  });
+
+  it("refuses to clear fullName even when called directly", async () => {
+    await expect(updateWith({ fullName: null })).rejects.toThrow(/fullName cannot be cleared/);
+  });
+
   it("clearing orgUnits keeps the organization", async () => {
     const sent = await updateWith({ orgUnits: null });
     expect(sent).toContain("ORG:Acme Corp\r\n");
