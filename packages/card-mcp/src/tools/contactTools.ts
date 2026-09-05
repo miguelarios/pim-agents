@@ -428,9 +428,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           copyDefined(updates, args, field);
         }
 
-        await (located
-          ? service.updateContact(bookUrl, args.uid, updates, { located })
-          : service.updateContact(bookUrl, args.uid, updates));
+        await service.updateContact(bookUrl, args.uid, updates, { located });
         return structured({ status: "updated" as const, uid: args.uid });
       } catch (err) {
         return toolError(err);
@@ -467,9 +465,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
 
       try {
         const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
-        await (located
-          ? service.deleteContact(bookUrl, args.uid, { located })
-          : service.deleteContact(bookUrl, args.uid));
+        await service.deleteContact(bookUrl, args.uid, { located });
         return structured({ status: "deleted" as const, uid: args.uid });
       } catch (err) {
         return toolError(err);

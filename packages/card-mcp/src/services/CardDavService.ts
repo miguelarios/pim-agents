@@ -88,7 +88,8 @@ export interface LocatedContact {
   bookUrl: string;
   url: string;
   etag?: string;
-  data?: string;
+  /** Always present: a hit without a body is not a hit. */
+  data: string;
 }
 
 export type ResolveContactResult =
@@ -523,7 +524,7 @@ export class CardDavService {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
 
-    const merged = mergeContactUpdates(parseVCard(existing.data!), updates);
+    const merged = mergeContactUpdates(parseVCard(existing.data), updates);
 
     try {
       const response = await client.updateVCard({
@@ -889,15 +890,15 @@ export class CardDavService {
   private async findVCard(
     addressBookUrl: string,
     uid: string,
-  ): Promise<{ url: string; etag?: string; data?: string } | undefined> {
+  ): Promise<{ url: string; etag?: string; data: string } | undefined> {
     const client = await this.ensureConnected();
     const vcards = await client.fetchVCards({
       addressBook: { url: addressBookUrl } as any,
     });
-    return vcards.find((v) => {
-      if (!v.data) return false;
-      const parsed = parseVCard(v.data);
-      return parsed.uid === uid;
-    }) as { url: string; etag?: string; data?: string } | undefined;
+    for (const v of vcards) {
+      if (typeof v.data !== "string") continue;
+      if (parseVCard(v.data).uid === uid) return { url: v.url, etag: v.etag, data: v.data };
+    }
+    return undefined;
   }
 }
