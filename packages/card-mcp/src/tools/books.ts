@@ -109,19 +109,3 @@ export async function locateBookFor(
   const label = toBookRefs(books).find((b) => b.url === located.bookUrl)?.label ?? located.bookUrl;
   return { bookUrl: located.bookUrl, located, label };
 }
-
-/**
- * The label a contact read from `bookUrl` is tagged with: the reference the
- * caller gave when there was one (it is what they will pass back), otherwise
- * the book's display name, or its URL when it has none.
- */
-export async function bookLabel(
-  bookUrl: string,
-  explicit: string | undefined,
-  service: CardDavService,
-): Promise<string> {
-  if (explicit) return explicit;
-  const books = await service.listAddressBooks();
-  const match = books.find((b) => samePath(b.url, bookUrl));
-  return match?.displayName || bookUrl;
-}

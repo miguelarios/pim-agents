@@ -17,7 +17,6 @@ import { type ToolDef, confirmDestructive, structured, toolError } from "@miguel
 import type { CardDavService } from "../services/CardDavService.js";
 import {
   ADDRESS_BOOK_PROP,
-  bookLabel,
   booksToSearch,
   locateBookFor,
   readAcrossBooks,
@@ -53,10 +52,10 @@ async function loadGroup(
   uid: string,
   explicit: string | undefined,
   service: CardDavService,
-): Promise<{ bookUrl: string; group: Contact; book: Contact[] }> {
+): Promise<{ bookUrl: string; label: string; group: Contact; book: Contact[] }> {
   // Groups always need the whole book (members come from the same fetch), so
   // the located vCard is not reused here; only the book URL is.
-  const { bookUrl } = await locateBookFor(uid, explicit, service);
+  const { bookUrl, label } = await locateBookFor(uid, explicit, service);
   const book = await service.fetchContacts(bookUrl, { detailLevel: "summary" });
   const group = book.find((c) => c.uid === uid);
   if (!group) {
@@ -65,7 +64,7 @@ async function loadGroup(
   if (!isGroup(group)) {
     throw new ValidationError(`Contact ${uid} (${group.fullName}) is not a group`, "uid");
   }
-  return { bookUrl, group, book };
+  return { bookUrl, label, group, book };
 }
 
 /**
@@ -146,7 +145,7 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: groupDetailSchema,
     handler: async (args: GetArgs, service) => {
       try {
-        const { bookUrl, group, book } = await loadGroup(args.uid, args.addressBook, service);
+        const { label, group, book } = await loadGroup(args.uid, args.addressBook, service);
         const byUid = new Map(book.map((c) => [c.uid, c]));
         const members: Array<{ uid: string; fullName: string; email?: string }> = [];
         const missingMembers: string[] = [];
@@ -162,7 +161,7 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         return structured({
           uid: group.uid,
           name: group.fullName,
-          addressBook: await bookLabel(bookUrl, args.addressBook, service),
+          addressBook: label,
           members,
           missingMembers,
         });
