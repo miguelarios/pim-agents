@@ -652,6 +652,8 @@ describe("create_contact extended fields", () => {
   });
 });
 
+const LOCATED = { bookUrl: "book2", url: "book2/w1.vcf", etag: '"e"', data: "..." };
+
 describe("cross-book lookup when addressBook is omitted", () => {
   const mk = (uid: string) => ({
     uid,
@@ -670,7 +672,7 @@ describe("cross-book lookup when addressBook is omitted", () => {
     fetchContacts: vi.fn(async (url: string) => (url === "book2" ? [mk("w1")] : [mk("p1")])),
     searchContacts: vi.fn(async (url: string) => (url === "book2" ? [mk("w1")] : [])),
     resolveContact: vi.fn().mockResolvedValue({ status: "not_found", message: "no" }),
-    locateContact: vi.fn().mockResolvedValue("book2"),
+    locateContact: vi.fn().mockResolvedValue(LOCATED),
     updateContact: vi.fn().mockResolvedValue(undefined),
     deleteContact: vi.fn().mockResolvedValue(undefined),
   });
@@ -699,14 +701,21 @@ describe("cross-book lookup when addressBook is omitted", () => {
     const service = twoBooks();
     await callTool("update_contact", { uid: "w1", note: "n" }, service);
     expect(service.locateContact).toHaveBeenCalledWith("w1", ["book1", "book2"]);
-    expect(service.updateContact).toHaveBeenCalledWith("book2", "w1", { note: "n" });
+    expect(service.updateContact).toHaveBeenCalledWith(
+      "book2",
+      "w1",
+      { note: "n" },
+      {
+        located: LOCATED,
+      },
+    );
   });
 
   it("delete_contact locates the contact's book first", async () => {
     const service = twoBooks();
     await callTool("delete_contact", { uid: "w1" }, service, confirmedCtx);
     expect(service.locateContact).toHaveBeenCalledWith("w1", ["book1", "book2"]);
-    expect(service.deleteContact).toHaveBeenCalledWith("book2", "w1");
+    expect(service.deleteContact).toHaveBeenCalledWith("book2", "w1", { located: LOCATED });
   });
 
   it("does not locate when the account has a single book", async () => {
@@ -715,5 +724,16 @@ describe("cross-book lookup when addressBook is omitted", () => {
     await callTool("update_contact", { uid: "w1", note: "n" }, service);
     expect(service.locateContact).not.toHaveBeenCalled();
     expect(service.updateContact).toHaveBeenCalledWith("only", "w1", { note: "n" });
+  });
+
+  it("get_contact refuses to guess when two books hold the same UID", async () => {
+    const service = twoBooks();
+    service.fetchContacts.mockImplementation(async () => [mk("dup")]);
+    const res = await callTool("get_contact", { uid: "dup" }, service);
+    expect(res.isError).toBe(true);
+    const err = JSON.parse(res.content[0].text);
+    expect(err.error).toBe("CONTACT_CONFLICT");
+    expect(err.message).toContain("Personal");
+    expect(err.message).toContain("Work");
   });
 });
