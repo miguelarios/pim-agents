@@ -41,5 +41,5 @@ export const groupWriteResultSchema = v.object({
   status: v.picklist(["created", "updated", "deleted"]),
   uid: v.string(),
   name: v.string(),
-  memberCount: v.optional(v.number()),
+  memberCount: v.number(),
 });
