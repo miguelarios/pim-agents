@@ -846,6 +846,16 @@ describe("buildVCard contact groups", () => {
     expect(built).not.toContain("ADDRESSBOOKSERVER");
   });
 
+  it("escapes member values on write and unescapes them on read", () => {
+    const built = buildVCard({ ...group, members: ["odd;uid\nline", "mailto:a,b@x.y"] });
+    expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:odd\\;uid\\nline");
+    expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:mailto:a\\,b@x.y");
+    expect(
+      built.split("\r\n").filter((l) => l.startsWith("X-ADDRESSBOOKSERVER-MEMBER")),
+    ).toHaveLength(2);
+    expect(parseVCard(built).members).toEqual(["odd;uid\nline", "mailto:a,b@x.y"]);
+  });
+
   it("does not prefix a member that already carries a scheme", () => {
     const built = buildVCard({ ...group, members: ["mailto:x@y.z", "urn:uuid:ddd"] });
     expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:mailto:x@y.z");

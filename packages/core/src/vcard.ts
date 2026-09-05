@@ -405,7 +405,9 @@ export function buildVCard(contact: Contact): string {
       // every server this targets mints UUID-shaped UIDs, and the parser keeps
       // such a value verbatim either way, so nothing is lost — only unprefixed.
       const uri = /^[a-z][a-z0-9+.-]*:/i.test(member) ? member : `${UID_URN}${member}`;
-      lines.push(`X-ADDRESSBOOKSERVER-MEMBER:${uri}`);
+      // Escaped like every other value, symmetric with extractAll's unescape:
+      // a stray newline in a member value must not split the card.
+      lines.push(`X-ADDRESSBOOKSERVER-MEMBER:${escapeVCardValue(uri)}`);
     }
   }
   if (contact.photo) {
