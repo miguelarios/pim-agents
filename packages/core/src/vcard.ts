@@ -197,10 +197,13 @@ export function parseVCard(data: string): Contact {
   const socialProfiles = extractSocialProfiles(lines);
   const kindRaw = extractFirst(lines, "KIND") ?? extractFirst(lines, "X-ADDRESSBOOKSERVER-KIND");
   const kind = kindRaw?.toLowerCase() === "group" ? "group" : undefined;
-  const memberValues = [
-    ...extractAll(lines, "MEMBER"),
-    ...extractAll(lines, "X-ADDRESSBOOKSERVER-MEMBER"),
-  ];
+  // Only a group's KIND/MEMBER lines are parsed into fields. Any other KIND
+  // (org, location, an explicit individual) and any MEMBER on a non-group
+  // stay raw in otherProperties, since the builder would not write them back.
+  const memberValues =
+    kind === "group"
+      ? [...extractAll(lines, "MEMBER"), ...extractAll(lines, "X-ADDRESSBOOKSERVER-MEMBER")]
+      : [];
   // Deduplicated: a card that carries both the RFC and the Apple form for
   // compatibility would otherwise list every member twice.
   const members =
@@ -244,6 +247,8 @@ export function parseVCard(data: string): Contact {
     "X-ABLABEL",
     "X-SOCIALPROFILE",
     "PHOTO",
+  ]);
+  const GROUP_PROPS = new Set([
     "KIND",
     "MEMBER",
     "X-ADDRESSBOOKSERVER-KIND",
@@ -254,6 +259,7 @@ export function parseVCard(data: string): Contact {
     const { canonical: line } = stripItemPrefix(rawLine);
     const propName = line.split(/[:;]/)[0].toUpperCase();
     if (KNOWN.has(propName) || APPLE_INTERNAL_PROPS.has(propName)) continue;
+    if (kind === "group" && GROUP_PROPS.has(propName)) continue;
     if (rawLine.trim()) {
       otherProperties.push(rawLine);
     }

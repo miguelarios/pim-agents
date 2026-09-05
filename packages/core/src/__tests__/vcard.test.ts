@@ -750,6 +750,24 @@ describe("parseVCard contact groups", () => {
     expect(c.otherProperties).toEqual([]);
   });
 
+  it("keeps a non-group KIND raw so it survives a round trip", () => {
+    for (const kindLine of ["KIND:org", "KIND:individual", "X-ADDRESSBOOKSERVER-KIND:location"]) {
+      const c = parseVCard(`BEGIN:VCARD\nVERSION:4.0\nUID:k1\nFN:Acme\n${kindLine}\nEND:VCARD`);
+      expect(c.kind, kindLine).toBeUndefined();
+      expect(c.otherProperties, kindLine).toEqual([kindLine]);
+      expect(buildVCard(c), kindLine).toContain(`\r\n${kindLine}\r\n`);
+    }
+  });
+
+  it("keeps MEMBER lines on a non-group raw rather than parsing them", () => {
+    const c = parseVCard(
+      "BEGIN:VCARD\nVERSION:4.0\nUID:k2\nFN:Odd\nMEMBER:urn:uuid:aaa\nEND:VCARD",
+    );
+    expect(c.members).toBeUndefined();
+    expect(c.otherProperties).toEqual(["MEMBER:urn:uuid:aaa"]);
+    expect(buildVCard(c)).toContain("MEMBER:urn:uuid:aaa");
+  });
+
   it("dedupes members when a card carries both forms", () => {
     const vcard = [
       "BEGIN:VCARD",

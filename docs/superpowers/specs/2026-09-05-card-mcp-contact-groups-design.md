@@ -30,6 +30,12 @@ cards. Writing `KIND`/`MEMBER` into a 3.0 card was rejected: Apple clients ignor
 there. A member value that already carries a scheme is written as-is; a bare UID gets
 `urn:uuid:`.
 
+Only a group's `KIND`/`MEMBER` lines become fields. Any other `KIND` (`org`, `location`, an
+explicit `individual`) and any `MEMBER` on a non-group stay raw in `otherProperties`, because
+the builder only writes the group form back — claiming them as known would drop them on the
+next update, breaking the "unknown properties survive a round trip" invariant the parser
+keeps for everything else.
+
 ### Tools
 
 Five tools in `groupTools.ts`, registered between the contact and address-book tools:
