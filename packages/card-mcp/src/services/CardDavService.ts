@@ -113,7 +113,10 @@ export function duplicateContactError(uid: string, labels: string[]): ContactErr
 
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
-  | { status: "ambiguous"; candidates: Array<{ fullName: string; email: string; uid: string }> }
+  | {
+      status: "ambiguous";
+      candidates: Array<{ fullName: string; email: string; uid: string; addressBook?: string }>;
+    }
   | { status: "not_found"; message: string };
 
 function applyDetailLevel(contact: Contact, level: DetailLevel): Contact {
@@ -530,7 +533,8 @@ export class CardDavService {
   ): Promise<void> {
     // The tool schema already keeps fullName non-nullable; this guards a direct
     // caller, since a cleared FN would otherwise serialise as "FN:undefined".
-    // Checked before the fetch, so an invalid request pays for no round trip.
+    // Checked before this method's own fetch; the tool handler runs the same
+    // check ahead of its locate scan so the multi-book path fast-fails too.
     if (updates.fullName === null) {
       throw new ValidationError(
         "fullName cannot be cleared: FN is required on every vCard",
@@ -623,12 +627,20 @@ export class CardDavService {
    * missing because "Personal" happened to sort first.
    */
   async resolveContact(
-    addressBookUrl: string | string[],
+    addressBook: string | Array<string | BookToSearch>,
     name: string,
   ): Promise<ResolveContactResult> {
-    const urls = Array.isArray(addressBookUrl) ? addressBookUrl : [addressBookUrl];
-    const matches = (await Promise.all(urls.map((url) => this.searchContacts(url, name)))).flat();
-    const withEmail = matches.filter((c) => c.emails.length > 0);
+    const refs = (Array.isArray(addressBook) ? addressBook : [addressBook]).map((b) =>
+      typeof b === "string" ? { url: b, label: undefined } : b,
+    );
+    const matches = (
+      await Promise.all(
+        refs.map(async (ref) =>
+          (await this.searchContacts(ref.url, name)).map((c) => ({ contact: c, label: ref.label })),
+        ),
+      )
+    ).flat();
+    const withEmail = matches.filter(({ contact }) => contact.emails.length > 0);
     if (withEmail.length === 0) {
       return {
         status: "not_found",
@@ -636,19 +648,22 @@ export class CardDavService {
       };
     }
     if (withEmail.length === 1) {
-      const c = withEmail[0];
+      const c = withEmail[0].contact;
       return {
         status: "resolved",
         fullName: c.fullName,
         email: c.emails[0].value,
       };
     }
+    // Candidates carry their book's label when one was given, so a caller can
+    // pass it back — the same contract every other read path keeps.
     const candidates = [...withEmail]
-      .sort((a, b) => a.fullName.localeCompare(b.fullName))
-      .map((c) => ({
+      .sort((a, b) => a.contact.fullName.localeCompare(b.contact.fullName))
+      .map(({ contact: c, label }) => ({
         fullName: c.fullName,
         email: c.emails[0].value,
         uid: c.uid,
+        ...(label ? { addressBook: label } : {}),
       }));
     return { status: "ambiguous", candidates };
   }

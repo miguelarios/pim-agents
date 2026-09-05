@@ -694,7 +694,13 @@ describe("cross-book lookup when addressBook is omitted", () => {
   it("resolve_contact passes every book URL to the service", async () => {
     const service = twoBooks();
     await callTool("resolve_contact", { name: "w" }, service);
-    expect(service.resolveContact).toHaveBeenCalledWith(["book1", "book2"], "w");
+    expect(service.resolveContact).toHaveBeenCalledWith(
+      [
+        { url: "book1", label: "Personal" },
+        { url: "book2", label: "Work" },
+      ],
+      "w",
+    );
   });
 
   it("update_contact locates the contact's book first", async () => {
@@ -732,6 +738,15 @@ describe("cross-book lookup when addressBook is omitted", () => {
     const [bookUrl, uid, updates, opts] = service.updateContact.mock.calls[0];
     expect([bookUrl, uid, updates]).toEqual(["only", "w1", { note: "n" }]);
     expect(opts?.located).toBeUndefined();
+  });
+
+  it("update_contact rejects fullName: null before scanning any book", async () => {
+    const service = twoBooks();
+    const res = await callTool("update_contact", { uid: "w1", fullName: null }, service);
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).error).toBe("VALIDATION_FAILED");
+    expect(service.locateContact).not.toHaveBeenCalled();
+    expect(service.updateContact).not.toHaveBeenCalled();
   });
 
   it("one unreachable book fails the whole read rather than returning a subset", async () => {

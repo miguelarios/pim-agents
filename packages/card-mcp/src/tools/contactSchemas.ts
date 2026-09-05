@@ -78,7 +78,14 @@ export const resolveResultSchema = v.variant("status", [
   }),
   v.object({
     status: v.literal("ambiguous"),
-    candidates: v.array(v.object({ fullName: v.string(), email: v.string(), uid: v.string() })),
+    candidates: v.array(
+      v.object({
+        fullName: v.string(),
+        email: v.string(),
+        uid: v.string(),
+        addressBook: v.optional(v.string()),
+      }),
+    ),
   }),
   v.object({
     status: v.literal("not_found"),
