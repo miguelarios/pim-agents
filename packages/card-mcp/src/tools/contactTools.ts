@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
-import type { CardDavService } from "../services/CardDavService.js";
+import type { CardDavService, ContactUpdates } from "../services/CardDavService.js";
 import {
   contactListSchema,
   contactSchema,
@@ -45,6 +45,31 @@ const ADDRESS_ITEMS = {
   },
 } as const;
 
+const SOCIAL_PROFILE_ITEMS = {
+  type: "object",
+  properties: {
+    type: { type: "string", description: "Network (e.g., 'twitter', 'linkedin', 'mastodon')" },
+    handle: { type: "string", description: "Username on that network" },
+    url: { type: "string", description: "Profile URL" },
+  },
+  required: ["type"],
+} as const;
+
+/**
+ * Marks a JSON Schema property nullable, so `update_contact` can clear it.
+ * Absent keeps the stored value; `null` clears it; a value replaces it.
+ */
+function nullable<T extends { type: string; description: string }>(
+  prop: T,
+): Omit<T, "type"> & { type: [T["type"], "null"] } {
+  const { type, description, ...rest } = prop;
+  return {
+    ...rest,
+    type: [type, "null"],
+    description: `${description}. Pass null to clear.`,
+  } as any;
+}
+
 const TRANSFER_UIDS_PROP = {
   type: "array",
   items: { type: "string", description: "UID of a contact to transfer" },
@@ -84,28 +109,32 @@ export const UPDATABLE_FIELDS = [
   "fullName",
   "firstName",
   "lastName",
+  "middleName",
+  "namePrefix",
+  "nameSuffix",
   "emails",
   "phones",
   "addresses",
   "urls",
   "organization",
+  "orgUnits",
   "title",
   "role",
   "nickname",
   "birthday",
   "categories",
   "note",
+  "socialProfiles",
 ] as const;
 
 type UpdatableField = (typeof UPDATABLE_FIELDS)[number];
 
 /** `addressBook` is not a contact field — it selects which book to act on. */
-type ContactFields = Partial<Pick<Contact, UpdatableField>> & { addressBook?: string };
-
-type ContactUpdates = Partial<Omit<Contact, "uid" | "otherProperties">>;
-
-type CreateArgs = ContactFields & { fullName: string };
-type UpdateArgs = ContactFields & { uid: string };
+type CreateArgs = Partial<Pick<Contact, UpdatableField>> & {
+  fullName: string;
+  addressBook?: string;
+};
+type UpdateArgs = Pick<ContactUpdates, UpdatableField> & { uid: string; addressBook?: string };
 type DeleteArgs = { uid: string; addressBook?: string };
 type ResolveArgs = { name: string; addressBook?: string };
 type TransferArgs = { uids: string[]; addressBook: string; targetAddressBook: string };
@@ -214,6 +243,9 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         fullName: { type: "string", description: "Full display name (e.g., 'John Doe')" },
         firstName: { type: "string", description: "First/given name" },
         lastName: { type: "string", description: "Last/family name" },
+        middleName: { type: "string", description: "Middle name(s)" },
+        namePrefix: { type: "string", description: "Honorific prefix (e.g., 'Dr.')" },
+        nameSuffix: { type: "string", description: "Honorific suffix (e.g., 'Jr.')" },
         emails: {
           type: "array",
           items: TYPED_VALUE_ITEMS("Email type (e.g., 'home', 'work')", "Email address"),
@@ -235,6 +267,11 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           description: "URLs with optional type",
         },
         organization: { type: "string", description: "Company/organization name" },
+        orgUnits: {
+          type: "array",
+          items: { type: "string" },
+          description: "Organizational units within the organization (e.g., ['Engineering'])",
+        },
         title: { type: "string", description: "Job title" },
         role: { type: "string", description: "Role/function within organization" },
         nickname: { type: "string", description: "Nickname" },
@@ -245,6 +282,11 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           description: "Contact categories/tags",
         },
         note: { type: "string", description: "Free-text note" },
+        socialProfiles: {
+          type: "array",
+          items: SOCIAL_PROFILE_ITEMS,
+          description: "Social media profiles",
+        },
         addressBook: ADDRESS_BOOK_PROP,
       },
       required: ["fullName"],
@@ -258,17 +300,22 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           fullName: args.fullName,
           firstName: args.firstName,
           lastName: args.lastName,
+          middleName: args.middleName,
+          namePrefix: args.namePrefix,
+          nameSuffix: args.nameSuffix,
           emails: args.emails ?? [],
           phones: args.phones ?? [],
           addresses: args.addresses ?? [],
           urls: args.urls ?? [],
           organization: args.organization,
+          orgUnits: args.orgUnits,
           title: args.title,
           role: args.role,
           nickname: args.nickname,
           birthday: args.birthday,
           categories: args.categories,
           note: args.note,
+          socialProfiles: args.socialProfiles,
           otherProperties: [],
         };
         await service.createContact(addressBookUrl, contact);
@@ -286,7 +333,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "update_contact",
     title: "Update Contact",
     description:
-      "Update an existing contact. Only provided fields are changed (merge update). Omitted fields keep their current values.",
+      "Update an existing contact. Only provided fields are changed (merge update). Omitted fields keep their current values; pass null to clear a field.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -298,39 +345,52 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       properties: {
         uid: { type: "string", description: "The UID of the contact to update" },
         fullName: { type: "string", description: "New full display name" },
-        firstName: { type: "string", description: "New first name" },
-        lastName: { type: "string", description: "New last name" },
-        emails: {
+        firstName: nullable({ type: "string", description: "New first name" }),
+        lastName: nullable({ type: "string", description: "New last name" }),
+        middleName: nullable({ type: "string", description: "New middle name(s)" }),
+        namePrefix: nullable({ type: "string", description: "New honorific prefix" }),
+        nameSuffix: nullable({ type: "string", description: "New honorific suffix" }),
+        emails: nullable({
           type: "array",
           items: TYPED_VALUE_ITEMS("Email type (e.g., 'home', 'work')", "Email address"),
           description: "New email addresses with optional type (replaces existing)",
-        },
-        phones: {
+        }),
+        phones: nullable({
           type: "array",
           items: TYPED_VALUE_ITEMS("Phone type (e.g., 'cell', 'home', 'work')", "Phone number"),
           description: "New phone numbers with optional type (replaces existing)",
-        },
-        addresses: {
+        }),
+        addresses: nullable({
           type: "array",
           items: ADDRESS_ITEMS,
           description: "New postal addresses (replaces existing)",
-        },
-        urls: {
+        }),
+        urls: nullable({
           type: "array",
           items: TYPED_VALUE_ITEMS("URL type (e.g., 'home', 'work')", "URL"),
           description: "New URLs with optional type (replaces existing)",
-        },
-        organization: { type: "string", description: "New organization" },
-        title: { type: "string", description: "New job title" },
-        role: { type: "string", description: "New role/function within organization" },
-        nickname: { type: "string", description: "New nickname" },
-        birthday: { type: "string", description: "New birthday (YYYY-MM-DD)" },
-        categories: {
+        }),
+        organization: nullable({ type: "string", description: "New organization" }),
+        orgUnits: nullable({
+          type: "array",
+          items: { type: "string" },
+          description: "New organizational units (replaces existing)",
+        }),
+        title: nullable({ type: "string", description: "New job title" }),
+        role: nullable({ type: "string", description: "New role/function within organization" }),
+        nickname: nullable({ type: "string", description: "New nickname" }),
+        birthday: nullable({ type: "string", description: "New birthday (YYYY-MM-DD)" }),
+        categories: nullable({
           type: "array",
           items: { type: "string" },
           description: "New contact categories/tags (replaces existing)",
-        },
-        note: { type: "string", description: "New note" },
+        }),
+        note: nullable({ type: "string", description: "New note" }),
+        socialProfiles: nullable({
+          type: "array",
+          items: SOCIAL_PROFILE_ITEMS,
+          description: "New social media profiles (replaces existing)",
+        }),
         addressBook: ADDRESS_BOOK_PROP,
       },
       required: ["uid"],

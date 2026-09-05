@@ -1330,3 +1330,78 @@ describe("CardDavService.resolveContact", () => {
     expect(r.candidates.every((c) => c.email.length > 0)).toBe(true);
   });
 });
+
+describe("CardDavService.updateContact clearing fields", () => {
+  const CARD = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    "UID:clr-1",
+    "FN:Alice Smith",
+    "N:Smith;Alice;Beth;Dr.;Jr.",
+    "EMAIL;TYPE=work:alice@work.example",
+    "TEL;TYPE=cell:+1 555 0100",
+    "ORG:Acme Corp;Engineering",
+    "NOTE:old note",
+    "NICKNAME:Al",
+    "X-SOCIALPROFILE;type=twitter:https://twitter.com/alice",
+    "END:VCARD",
+  ].join("\r\n");
+
+  async function updateWith(updates: Record<string, unknown>): Promise<string> {
+    const { __mockClient } = (await import("tsdav")) as any;
+    __mockClient.updateVCard.mockClear();
+    __mockClient.fetchVCards.mockResolvedValueOnce([
+      { url: "https://dav.example.com/c/clr-1.vcf", etag: '"e1"', data: CARD },
+    ]);
+    __mockClient.updateVCard.mockResolvedValueOnce({ ok: true });
+    const service = new CardDavService({
+      url: "https://dav.example.com/",
+      username: "u",
+      password: "p",
+    });
+    await service.updateContact("https://dav.example.com/c/", "clr-1", updates as any);
+    return __mockClient.updateVCard.mock.calls[0][0].vCard.data as string;
+  }
+
+  it("null clears a scalar field while undefined keeps it", async () => {
+    const sent = await updateWith({ note: null });
+    expect(sent).not.toContain("NOTE:");
+    expect(sent).toContain("NICKNAME:Al");
+  });
+
+  it("null empties a multi-valued field", async () => {
+    const sent = await updateWith({ phones: null, socialProfiles: null });
+    expect(sent).not.toContain("TEL");
+    expect(sent).not.toContain("X-SOCIALPROFILE");
+    expect(sent).toContain("EMAIL;TYPE=work:alice@work.example");
+  });
+
+  it("clearing orgUnits keeps the organization", async () => {
+    const sent = await updateWith({ orgUnits: null });
+    expect(sent).toContain("ORG:Acme Corp\r\n");
+  });
+
+  it("clearing every name part drops the N line", async () => {
+    const sent = await updateWith({
+      firstName: null,
+      lastName: null,
+      middleName: null,
+      namePrefix: null,
+      nameSuffix: null,
+    });
+    expect(sent).not.toMatch(/^N:/m);
+    expect(sent).toContain("FN:Alice Smith");
+  });
+
+  it("writes the newly exposed fields", async () => {
+    const sent = await updateWith({
+      middleName: "Grace",
+      orgUnits: ["Research"],
+      socialProfiles: [{ type: "mastodon", url: "https://m.example/@alice" }],
+    });
+    expect(sent).toContain("N:Smith;Alice;Grace;Dr.;Jr.");
+    expect(sent).toContain("ORG:Acme Corp;Research");
+    expect(sent).toContain("X-SOCIALPROFILE;type=mastodon:https://m.example/@alice");
+    expect(sent).not.toContain("twitter");
+  });
+});
