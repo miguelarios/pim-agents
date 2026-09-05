@@ -33,6 +33,7 @@ function fakeService() {
     fetchContacts: vi.fn().mockResolvedValue([CONTACT]),
     searchContacts: vi.fn().mockResolvedValue([CONTACT]),
     deleteContact: vi.fn().mockResolvedValue(undefined),
+    updateContact: vi.fn().mockResolvedValue(undefined),
     createAddressBook: vi.fn().mockResolvedValue({ url: "/dav/team/", displayName: "Team" }),
     renameAddressBook: vi.fn().mockResolvedValue(undefined),
     deleteAddressBook: vi.fn().mockResolvedValue(undefined),
@@ -159,6 +160,34 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
 
     expect(result.isError).toBe(true);
     expect(service.fetchContacts).not.toHaveBeenCalled();
+  });
+
+  it("accepts null for a nullable update_contact field through the real validator", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_contact",
+      arguments: { uid: "u1", note: null, phones: null, title: "Countess" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(service.updateContact).toHaveBeenCalledWith("book1", "u1", {
+      note: null,
+      phones: null,
+      title: "Countess",
+    });
+  });
+
+  it("still rejects a wrong type on a nullable update_contact field", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_contact",
+      arguments: { uid: "u1", note: 42 },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(service.updateContact).not.toHaveBeenCalled();
   });
 
   it("confirms before deleting, then deletes", async () => {

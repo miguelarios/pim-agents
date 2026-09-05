@@ -112,7 +112,7 @@ describe("CONTACT_TOOLS definitions", () => {
   it("update_contact has typed email/phone schemas and new fields", () => {
     const tool = CONTACT_TOOLS.find((t) => t.name === "update_contact")!;
     const props = (tool.inputSchema as any).properties as Record<string, any>;
-    expect(props.emails.type).toBe("array");
+    expect(props.emails.type).toEqual(["array", "null"]);
     expect(props.emails.items.type).toBe("object");
     expect(props.addresses).toBeDefined();
     expect(props.urls).toBeDefined();
@@ -537,5 +537,70 @@ describe("move_contacts / copy_contacts", () => {
 
     expect(res.isError).toBe(true);
     expect(JSON.parse(res.content[0].text).message).toMatch(/same/);
+  });
+});
+
+describe("update_contact field clearing", () => {
+  const fakeService = () => ({
+    listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "x" }]),
+    findAddressBook: vi.fn().mockResolvedValue("b"),
+    updateContact: vi.fn().mockResolvedValue(undefined),
+  });
+
+  it("every optional field in the schema accepts null so it can be cleared", () => {
+    const tool = CONTACT_TOOLS.find((t) => t.name === "update_contact")!;
+    const props = (tool.inputSchema as any).properties as Record<string, any>;
+    for (const field of UPDATABLE_FIELDS) {
+      if (field === "fullName") {
+        expect(props.fullName.type, "fullName").toBe("string");
+        continue;
+      }
+      expect(props[field].type, field).toContain("null");
+    }
+  });
+
+  it("forwards null through to the service rather than dropping it", async () => {
+    const service = fakeService();
+    await callTool("update_contact", { uid: "u1", note: null, phones: null }, service);
+    expect(service.updateContact.mock.calls[0][2]).toEqual({ note: null, phones: null });
+  });
+
+  it("exposes the structured-name, org-unit and social-profile fields", () => {
+    const tool = CONTACT_TOOLS.find((t) => t.name === "update_contact")!;
+    const props = (tool.inputSchema as any).properties as Record<string, any>;
+    for (const field of ["middleName", "namePrefix", "nameSuffix", "orgUnits", "socialProfiles"]) {
+      expect(props[field], field).toBeDefined();
+    }
+    expect(props.socialProfiles.items.required).toEqual(["type"]);
+  });
+});
+
+describe("create_contact extended fields", () => {
+  it("forwards name parts, org units and social profiles to the service", async () => {
+    const service = {
+      listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "x" }]),
+      createContact: vi.fn().mockResolvedValue(undefined),
+    };
+    await callTool(
+      "create_contact",
+      {
+        fullName: "Dr. Ada B. Lovelace Jr.",
+        middleName: "B.",
+        namePrefix: "Dr.",
+        nameSuffix: "Jr.",
+        organization: "Acme",
+        orgUnits: ["Engineering", "Platform"],
+        socialProfiles: [{ type: "twitter", handle: "ada" }],
+      },
+      service,
+    );
+    const contact = service.createContact.mock.calls[0][1];
+    expect(contact).toMatchObject({
+      middleName: "B.",
+      namePrefix: "Dr.",
+      nameSuffix: "Jr.",
+      orgUnits: ["Engineering", "Platform"],
+      socialProfiles: [{ type: "twitter", handle: "ada" }],
+    });
   });
 });

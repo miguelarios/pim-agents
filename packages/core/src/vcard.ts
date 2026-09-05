@@ -315,9 +315,12 @@ export function buildVCard(contact: Contact): string {
     const line = addr.type ? `ADR;TYPE=${addr.type}:${parts.join(";")}` : `ADR:${parts.join(";")}`;
     lines.push(line);
   }
-  if (contact.organization) {
-    const orgLine = [contact.organization, ...(contact.orgUnits ?? [])]
-      .map((p) => escapeVCardValue(p ?? ""))
+  // Gated on either part, like N: is on its five. Gating on `organization`
+  // alone dropped the units whenever it was empty — clearing the company
+  // silently lost the department too.
+  if (contact.organization || (contact.orgUnits && contact.orgUnits.length > 0)) {
+    const orgLine = [contact.organization ?? "", ...(contact.orgUnits ?? [])]
+      .map(escapeVCardValue)
       .join(";");
     lines.push(`ORG:${orgLine}`);
   }

@@ -89,6 +89,43 @@ function applyDetailLevel(contact: Contact, level: DetailLevel): Contact {
   return { ...rest, otherProperties: [] };
 }
 
+/**
+ * Fields `updateContact` can write. Three states per field, matching what a
+ * merge update has to distinguish: absent (`undefined`) keeps the stored
+ * value, `null` clears it, anything else replaces it. Without the `null`
+ * state a stale phone or note could never be removed short of deleting and
+ * recreating the contact, because "not supplied" and "empty" would collapse
+ * into the same thing.
+ */
+export type ContactUpdates = {
+  [K in keyof Omit<Contact, "uid" | "otherProperties" | "photo" | "fullName">]?: Contact[K] | null;
+} & { fullName?: string };
+
+/** Fields that are arrays on `Contact`, so clearing them means `[]` rather than `undefined`. */
+const REQUIRED_ARRAY_FIELDS = ["emails", "phones", "addresses", "urls"] as const;
+
+function mergeContactUpdates(current: Contact, updates: ContactUpdates): Contact {
+  const merged: Contact = { ...current };
+  for (const key of Object.keys(updates) as Array<keyof ContactUpdates>) {
+    const value = updates[key];
+    if (value === undefined) continue;
+    if (value === null) {
+      if ((REQUIRED_ARRAY_FIELDS as ReadonlyArray<string>).includes(key)) {
+        (merged as unknown as Record<string, unknown>)[key] = [];
+      } else {
+        delete (merged as unknown as Record<string, unknown>)[key];
+      }
+      continue;
+    }
+    (merged as unknown as Record<string, unknown>)[key] = value;
+  }
+  // `photo` and `otherProperties` are never writable here; they ride along untouched.
+  merged.uid = current.uid;
+  merged.photo = current.photo;
+  merged.otherProperties = current.otherProperties;
+  return merged;
+}
+
 export class CardDavService {
   private client: DAVClient | null = null;
   private config: CardDavConfig;
@@ -452,42 +489,23 @@ export class CardDavService {
     }
   }
 
-  async updateContact(
-    addressBookUrl: string,
-    uid: string,
-    updates: Partial<Omit<Contact, "uid" | "otherProperties">>,
-  ): Promise<void> {
+  async updateContact(addressBookUrl: string, uid: string, updates: ContactUpdates): Promise<void> {
+    // The tool schema already keeps fullName non-nullable; this guards a direct
+    // caller, since a cleared FN would otherwise serialise as "FN:undefined".
+    // Checked before the fetch, so an invalid request pays for no round trip.
+    if (updates.fullName === null) {
+      throw new ValidationError(
+        "fullName cannot be cleared: FN is required on every vCard",
+        "fullName",
+      );
+    }
     const client = await this.ensureConnected();
     const existing = await this.findVCard(addressBookUrl, uid);
     if (!existing) {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
 
-    const current = parseVCard(existing.data!);
-    const merged: Contact = {
-      uid: current.uid,
-      fullName: updates.fullName ?? current.fullName,
-      firstName: updates.firstName ?? current.firstName,
-      lastName: updates.lastName ?? current.lastName,
-      middleName: updates.middleName ?? current.middleName,
-      namePrefix: updates.namePrefix ?? current.namePrefix,
-      nameSuffix: updates.nameSuffix ?? current.nameSuffix,
-      emails: updates.emails ?? current.emails,
-      phones: updates.phones ?? current.phones,
-      addresses: updates.addresses ?? current.addresses,
-      urls: updates.urls ?? current.urls,
-      organization: updates.organization ?? current.organization,
-      orgUnits: updates.orgUnits ?? current.orgUnits,
-      title: updates.title ?? current.title,
-      role: updates.role ?? current.role,
-      nickname: updates.nickname ?? current.nickname,
-      birthday: updates.birthday ?? current.birthday,
-      categories: updates.categories ?? current.categories,
-      note: updates.note ?? current.note,
-      socialProfiles: updates.socialProfiles ?? current.socialProfiles,
-      photo: current.photo,
-      otherProperties: current.otherProperties,
-    };
+    const merged = mergeContactUpdates(parseVCard(existing.data!), updates);
 
     try {
       const response = await client.updateVCard({
