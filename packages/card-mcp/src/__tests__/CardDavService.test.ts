@@ -1473,6 +1473,21 @@ describe("CardDavService across address books", () => {
     expect(r.candidates.map((c) => c.addressBook)).toEqual(["Work", "Personal"]);
   });
 
+  it("resolveContact treats one UID in two books as one person", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u1", "Alice Smith", "a@x.com")],
+      }),
+    };
+    expect(await service.resolveContact(["b1", "b2"], "Alice")).toEqual({
+      status: "resolved",
+      fullName: "Alice Smith",
+      email: "a@x.com",
+    });
+  });
+
   it("locateContact returns the URL of the book holding the UID", async () => {
     const service = new CardDavService({ url: "x", username: "u", password: "p" });
     (service as any).client = {

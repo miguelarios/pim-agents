@@ -36,7 +36,10 @@ is read once, not twice.
 description says so, separately from the read tools' description.
 
 `resolveContact` takes one URL or several, so the resolution rules (single match, sorted
-candidates, not-found) run once over the merged matches rather than per book.
+candidates, not-found) run once over the merged matches rather than per book. One UID found
+in two books counts once there: for a name lookup that is one person synced twice, and the
+caller wants the email, not a false ambiguity. Writes treat the same state as a conflict
+because a write has to pick a book.
 
 The book-selection helpers (`booksToSearch`, `readAcrossBooks`, `locateBookFor`,
 `resolveAddressBook`) live in `tools/books.ts` so later tool files can share them.
