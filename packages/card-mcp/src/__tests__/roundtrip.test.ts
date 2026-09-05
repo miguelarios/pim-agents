@@ -34,6 +34,7 @@ function fakeService() {
     searchContacts: vi.fn().mockResolvedValue([CONTACT]),
     deleteContact: vi.fn().mockResolvedValue(undefined),
     updateContact: vi.fn().mockResolvedValue(undefined),
+    createContact: vi.fn().mockResolvedValue(undefined),
     createAddressBook: vi.fn().mockResolvedValue({ url: "/dav/team/", displayName: "Team" }),
     renameAddressBook: vi.fn().mockResolvedValue(undefined),
     deleteAddressBook: vi.fn().mockResolvedValue(undefined),
@@ -309,6 +310,112 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
     });
 
     expect(elicitations).toHaveLength(0);
+  });
+});
+
+describe.each<Era>(["legacy", "modern"])("card-mcp group tools over the wire (%s)", (era) => {
+  it("confirms before deleting a group, then deletes it", async () => {
+    const service = fakeService();
+    service.fetchContacts.mockResolvedValue([
+      { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
+    ]);
+    const { client, elicitations } = await connect(era, service);
+    const result = await client.callTool({ name: "delete_group", arguments: { uid: "g1" } });
+    expect(elicitations).toHaveLength(1);
+    expect(elicitations[0]).toContain("Book Club");
+    expect(result.structuredContent).toEqual({
+      status: "deleted",
+      uid: "g1",
+      name: "Book Club",
+      memberCount: 1,
+    });
+    expect(service.deleteContact).toHaveBeenCalledWith("book1", "g1");
+  });
+
+  it("lists groups with member counts through the real schema", async () => {
+    const service = fakeService();
+    service.fetchContacts.mockResolvedValue([
+      CONTACT,
+      { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1", "x"] },
+    ]);
+    const { client } = await connect(era, service);
+    const result = await client.callTool({ name: "list_groups", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      groups: [{ uid: "g1", name: "Book Club", memberCount: 2, addressBook: "Personal" }],
+      count: 1,
+    });
+  });
+
+  it("creates a group and validates the write result", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "create_group",
+      arguments: { name: "Chess", members: ["u1"] },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      status: "created",
+      name: "Chess",
+      memberCount: 1,
+    });
+    expect(service.createContact.mock.calls[0][1]).toMatchObject({
+      fullName: "Chess",
+      kind: "group",
+      members: ["u1"],
+    });
+  });
+
+  it("updates a group's members and validates the write result", async () => {
+    const service = fakeService();
+    service.fetchContacts.mockResolvedValue([
+      CONTACT,
+      { ...CONTACT, uid: "u2", fullName: "Bob" },
+      { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
+    ]);
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_group",
+      arguments: { uid: "g1", addMembers: ["u2"] },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      status: "updated",
+      uid: "g1",
+      name: "Book Club",
+      memberCount: 2,
+    });
+    expect(service.updateContact.mock.calls[0].slice(0, 3)).toEqual([
+      "book1",
+      "g1",
+      { members: ["u1", "u2"] },
+    ]);
+  });
+
+  it("rejects a malformed update_group argument without running the handler", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_group",
+      arguments: { uid: "g1", addMembers: "u2" },
+    });
+    expect(result.isError).toBe(true);
+    expect(service.fetchContacts).not.toHaveBeenCalled();
+  });
+
+  it("validates get_group output against its schema", async () => {
+    const service = fakeService();
+    service.fetchContacts.mockResolvedValue([
+      CONTACT,
+      { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
+    ]);
+    const { client } = await connect(era, service);
+    const result = await client.callTool({ name: "get_group", arguments: { uid: "g1" } });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as any).members).toEqual([
+      { uid: "u1", fullName: "Ada Lovelace", email: "ada@example.com" },
+    ]);
   });
 });
 
