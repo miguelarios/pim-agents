@@ -11,6 +11,8 @@
 - `create_contact` and `update_contact` accept `middleName`, `namePrefix`, `nameSuffix`,
   `orgUnits` and `socialProfiles`, which the parser already round-tripped but no tool
   could write.
+- Requires `@miguelarios/pim-core` 0.9.1, which keeps `orgUnits` on the card when
+  `organization` is cleared.
 
 ## 0.7.0 (2026-08-29)
 

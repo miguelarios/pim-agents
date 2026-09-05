@@ -1376,6 +1376,11 @@ describe("CardDavService.updateContact clearing fields", () => {
     expect(sent).toContain("EMAIL;TYPE=work:alice@work.example");
   });
 
+  it("clearing organization keeps the orgUnits", async () => {
+    const sent = await updateWith({ organization: null });
+    expect(sent).toContain("ORG:;Engineering\r\n");
+  });
+
   it("clearing orgUnits keeps the organization", async () => {
     const sent = await updateWith({ orgUnits: null });
     expect(sent).toContain("ORG:Acme Corp\r\n");
