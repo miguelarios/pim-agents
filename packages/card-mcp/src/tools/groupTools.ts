@@ -55,7 +55,9 @@ async function loadGroup(
   explicit: string | undefined,
   service: CardDavService,
 ): Promise<{ bookUrl: string; group: Contact; book: Contact[] }> {
-  const bookUrl = await locateBookFor(uid, explicit, service);
+  // Groups always need the whole book (members come from the same fetch), so
+  // the located vCard is not reused here; only the book URL is.
+  const { bookUrl } = await locateBookFor(uid, explicit, service);
   const book = await service.fetchContacts(bookUrl, { detailLevel: "summary" });
   const group = book.find((c) => c.uid === uid);
   if (!group) {

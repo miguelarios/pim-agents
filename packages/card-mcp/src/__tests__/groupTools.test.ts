@@ -54,9 +54,10 @@ function fakeService() {
     ]),
     findAddressBook: vi.fn(async (ref: string) => (ref === "Work" ? "/w/" : "/p/")),
     fetchContacts: vi.fn(async (url: string) => byUrl[url] ?? []),
-    locateContact: vi.fn(async (uid: string) =>
-      uid.startsWith("g2") || uid === "w" ? "/w/" : "/p/",
-    ),
+    locateContact: vi.fn(async (uid: string) => {
+      const bookUrl = uid.startsWith("g2") || uid === "w" ? "/w/" : "/p/";
+      return { bookUrl, url: `${bookUrl}${uid}.vcf`, etag: '"e"' };
+    }),
     createContact: vi.fn().mockResolvedValue(undefined),
     updateContact: vi.fn().mockResolvedValue(undefined),
     deleteContact: vi.fn().mockResolvedValue(undefined),
