@@ -6,7 +6,13 @@
  * membership is validated against the group's book, never the account.
  */
 import { randomUUID } from "node:crypto";
-import { type Contact, ContactError, ErrorCode, ValidationError } from "@miguelarios/pim-core";
+import {
+  type Contact,
+  ContactError,
+  ErrorCode,
+  ValidationError,
+  isGroup,
+} from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import type { CardDavService } from "../services/CardDavService.js";
 import {
@@ -42,8 +48,6 @@ type UpdateArgs = {
   addressBook?: string;
 };
 type DeleteArgs = { uid: string; addressBook?: string };
-
-const isGroup = (c: Contact): boolean => c.kind === "group";
 
 /**
  * Loads a group and the book it lives in. The whole book is read, since the

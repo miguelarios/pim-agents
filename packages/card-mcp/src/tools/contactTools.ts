@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { type Contact, ContactError, ErrorCode, ValidationError } from "@miguelarios/pim-core";
+import {
+  type Contact,
+  ContactError,
+  ErrorCode,
+  ValidationError,
+  isGroup,
+} from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import {
   type CardDavService,
@@ -219,7 +225,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
             ? service.searchContacts(url, query, { detailLevel })
             : service.fetchContacts(url, { detailLevel }),
         );
-        const contacts = args.include_groups ? all : all.filter((c) => c.kind !== "group");
+        const contacts = args.include_groups ? all : all.filter((c) => !isGroup(c));
         return structured({ contacts, count: contacts.length });
       } catch (err) {
         return toolError(err);

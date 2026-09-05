@@ -307,6 +307,11 @@ export function parseVCard(data: string): Contact {
   };
 }
 
+/** Whether a contact is a group (RFC 6350 `KIND:group` or Apple's 3.0 equivalent). */
+export function isGroup(contact: Pick<Contact, "kind">): boolean {
+  return contact.kind === "group";
+}
+
 export function buildVCard(contact: Contact): string {
   const lines: string[] = [
     "BEGIN:VCARD",

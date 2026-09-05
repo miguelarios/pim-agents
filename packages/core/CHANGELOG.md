@@ -7,8 +7,10 @@
   and Apple's vCard 3.0 `X-ADDRESSBOOKSERVER-KIND` / `X-ADDRESSBOOKSERVER-MEMBER` forms,
   stripping the `urn:uuid:` prefix and keeping any other URI scheme verbatim. `buildVCard`
   writes the `X-ADDRESSBOOKSERVER-*` form, since the builder emits `VERSION:3.0` and that
-  is the form Apple, iCloud and SabreDAV-based servers read. None of the four properties
-  land in `otherProperties` any more (issue #60).
+  is the form Apple, iCloud and SabreDAV-based servers read. On a group, none of the four
+  properties land in `otherProperties`; any other `KIND` (`org`, `location`, an explicit
+  `individual`) and any `MEMBER` on a non-group stay raw there, as before (issue #60).
+- `isGroup(contact)` — the one place "is this a group" is decided.
 
 ## 0.9.1 (2026-09-05)
 

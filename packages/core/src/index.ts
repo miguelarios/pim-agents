@@ -35,6 +35,7 @@ export {
   type PostalAddress,
   type SocialProfile,
   buildVCard,
+  isGroup,
   parseVCard,
   escapeVCardValue,
   unescapeVCardValue,

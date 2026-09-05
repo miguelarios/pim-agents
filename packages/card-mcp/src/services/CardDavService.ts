@@ -8,6 +8,7 @@ import {
   ValidationError,
   buildVCard,
   checkDavCollectionResponse,
+  isGroup,
   parseVCard,
   toPimError,
 } from "@miguelarios/pim-core";
@@ -881,7 +882,7 @@ export class CardDavService {
             url: vcard.url,
             etag: vcard.etag,
             data: vcard.data,
-            isGroup: parsed.kind === "group",
+            isGroup: isGroup(parsed),
           });
         }
       }
