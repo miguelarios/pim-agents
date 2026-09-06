@@ -2,7 +2,14 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    # One review per PR, when it is opened or leaves draft. Not on every push:
+    # a re-review after each fix-up round reads the whole diff again and
+    # always finds something new to say, which turns a PR into a loop of
+    # fix, re-review, fix. Ask for another pass with @claude (claude.yml).
+    types: [opened, ready_for_review]
+    # Stacked PRs are reviewed once they are retargeted to main, not while
+    # they sit on another feature branch and every base push re-triggers.
+    branches: [main]
     # Optional: Only run on specific file changes
     # paths:
     #   - "packages/**/*.ts"
@@ -31,14 +38,23 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
+            Review this pull request for bugs, data loss, security problems, and
+            missing tests for the behaviour it changes. Read the PR description and
+            the design doc it links first; they record decisions and rejected
+            alternatives, so do not re-raise what they already answer.
 
-            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+            Post only what you have verified against the code:
+            - Blocking findings: a concrete failure scenario each, with the file
+              and line. Verify the finding on the PR's current head before
+              posting; do not report something an earlier comment on this PR
+              already raised.
+            - At most two non-blocking notes, and only if they change what the
+              author should do. Skip style, naming, wording and "could be
+              tightened" observations; Biome and the repo conventions cover style.
+            - If nothing blocks, say so in one or two lines. Do not list what
+              looks good.
+
+            Use the repository's CLAUDE.md for conventions.
 
             Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
 
