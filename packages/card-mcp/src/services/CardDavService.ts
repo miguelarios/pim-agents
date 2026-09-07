@@ -8,6 +8,7 @@ import {
   ValidationError,
   buildVCard,
   checkDavCollectionResponse,
+  isGroup,
   parseVCard,
   toPimError,
 } from "@miguelarios/pim-core";
@@ -113,6 +114,25 @@ export function duplicateContactError(uid: string, labels: string[]): ContactErr
 
 /** Shared by the service guard and the tool's fast-fail, so the two cannot drift. */
 export const FULL_NAME_REQUIRED = "fullName cannot be cleared: FN is required on every vCard";
+
+/** One vCard read from a transfer's source book. */
+interface TransferSource {
+  url: string;
+  etag?: string;
+  data?: string;
+  isGroup: boolean;
+}
+
+/**
+ * A group's MEMBER lines name contacts by UID, and a server only resolves
+ * them within the group's own book. Moving or copying the group card leaves
+ * every member pointing at the source book — a dangling reference on every
+ * server that implements groups — so the transfer refuses it per contact and
+ * lets the rest of the batch proceed.
+ */
+function groupTransferRefusal(uid: string): string {
+  return `Contact ${uid} is a group; groups cannot be moved or copied because their members must stay in the same address book`;
+}
 
 export type ResolveContactResult =
   | { status: "resolved"; fullName: string; email: string }
@@ -532,7 +552,7 @@ export class CardDavService {
     addressBookUrl: string,
     uid: string,
     updates: ContactUpdates,
-    opts: { located?: LocatedContact } = {},
+    opts: { located?: LocatedContact; allowGroup?: boolean } = {},
   ): Promise<void> {
     // The tool schema already keeps fullName non-nullable; this guards a direct
     // caller, since a cleared FN would otherwise serialise as "FN:undefined".
@@ -547,7 +567,18 @@ export class CardDavService {
       throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }
 
-    const merged = mergeContactUpdates(parseVCard(existing.data), updates);
+    const current = parseVCard(existing.data);
+    // A group is edited through update_group, which validates members and
+    // keeps the group invariants (no EMAIL, so resolve_contact never returns
+    // a list as a person). Checked here, on the card actually read, so no
+    // locate path can bypass it.
+    if (isGroup(current) && !opts.allowGroup) {
+      throw new ValidationError(
+        `Contact ${uid} is a group; use update_group to rename it or edit its members`,
+        "uid",
+      );
+    }
+    const merged = mergeContactUpdates(current, updates);
 
     try {
       const response = await client.updateVCard({
@@ -640,12 +671,14 @@ export class CardDavService {
         ),
       )
     ).flat();
-    // One UID in two books is one person synced twice, not two candidates:
-    // resolve to it once rather than report a false ambiguity. (Writes treat
-    // the same state as a conflict, because a write has to pick a book.)
+    // A group is never a person to resolve to, even if one has been given an
+    // EMAIL by some client. And one UID in two books is one person synced
+    // twice, not two candidates: resolve to it once rather than report a
+    // false ambiguity. (Writes treat that state as a conflict, because a
+    // write has to pick a book.)
     const seen = new Set<string>();
     const withEmail = matches.filter(({ contact }) => {
-      if (contact.emails.length === 0 || seen.has(contact.uid)) return false;
+      if (isGroup(contact) || contact.emails.length === 0 || seen.has(contact.uid)) return false;
       seen.add(contact.uid);
       return true;
     });
@@ -740,6 +773,10 @@ export class CardDavService {
         failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
         continue;
       }
+      if (source.isGroup) {
+        failed.push({ uid, message: groupTransferRefusal(uid) });
+        continue;
+      }
 
       try {
         const destination = this.transferDestination(toUrl, source.url);
@@ -807,6 +844,10 @@ export class CardDavService {
         failed.push({ uid, message: `Contact ${uid} not found in the source address book` });
         continue;
       }
+      if (source.isGroup) {
+        failed.push({ uid, message: groupTransferRefusal(uid) });
+        continue;
+      }
 
       try {
         const copy: Contact = { ...parseVCard(source.data), uid: randomUUID() };
@@ -831,7 +872,7 @@ export class CardDavService {
     fromUrl: string,
     toUrl: string,
     uids: string[],
-  ): Promise<Map<string, { url: string; etag?: string; data?: string }>> {
+  ): Promise<Map<string, TransferSource>> {
     if (uids.length === 0) {
       throw new ValidationError("uids must name at least one contact", "uids");
     }
@@ -845,7 +886,7 @@ export class CardDavService {
     const client = await this.ensureConnected();
     try {
       const vcards = await client.fetchVCards({ addressBook: { url: fromUrl } as any });
-      const byUid = new Map<string, { url: string; etag?: string; data?: string }>();
+      const byUid = new Map<string, TransferSource>();
       for (const vcard of vcards) {
         if (!vcard.data) continue;
         const parsed = parseVCard(vcard.data);
@@ -854,6 +895,7 @@ export class CardDavService {
             url: vcard.url,
             etag: vcard.etag,
             data: vcard.data,
+            isGroup: isGroup(parsed),
           });
         }
       }

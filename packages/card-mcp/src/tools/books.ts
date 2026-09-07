@@ -1,5 +1,5 @@
 /**
- * Address-book selection shared by the contact tools: which book(s) a read
+ * Address-book selection shared by the contact and group tools: which book(s) a read
  * covers, where a write on a known UID goes, and where a create lands.
  */
 import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
@@ -26,6 +26,13 @@ export async function resolveAddressBook(
 function toBookRefs(books: AddressBook[]): BookRef[] {
   return books.map((b) => ({ url: b.url, label: b.displayName || b.url }));
 }
+
+/** The `addressBook` argument every read tool shares. */
+export const ADDRESS_BOOK_PROP = {
+  type: "string",
+  description:
+    "Address book URL or display name (e.g. 'Work'). If omitted, every address book in the account is searched.",
+} as const;
 
 /** A book to read, with the label its contacts are tagged with. */
 export interface BookRef {

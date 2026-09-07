@@ -771,3 +771,31 @@ describe("cross-book lookup when addressBook is omitted", () => {
     expect(err.message).toContain("Work");
   });
 });
+
+describe("list_contacts and groups", () => {
+  const mk = (uid: string, kind?: "group") => ({
+    uid,
+    fullName: uid,
+    ...(kind ? { kind, members: [] } : {}),
+    emails: [],
+    phones: [],
+    addresses: [],
+    urls: [],
+    otherProperties: [],
+  });
+  const service = () => ({
+    listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "B" }]),
+    fetchContacts: vi.fn().mockResolvedValue([mk("p"), mk("g", "group")]),
+  });
+
+  it("hides groups by default", async () => {
+    const res = await callTool("list_contacts", {}, service());
+    expect(res.structuredContent.contacts.map((c: any) => c.uid)).toEqual(["p"]);
+    expect(res.structuredContent.count).toBe(1);
+  });
+
+  it("includes groups on request", async () => {
+    const res = await callTool("list_contacts", { include_groups: true }, service());
+    expect(res.structuredContent.contacts.map((c: any) => c.uid)).toEqual(["p", "g"]);
+  });
+});

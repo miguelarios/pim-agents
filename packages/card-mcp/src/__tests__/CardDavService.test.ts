@@ -926,6 +926,51 @@ describe("CardDavService", () => {
     const okMove = () =>
       vi.fn().mockResolvedValue({ ok: true, status: 201, statusText: "Created" } as Response);
 
+    const groupCard = (uid: string, fullName: string, members: string[]) =>
+      [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        `UID:${uid}`,
+        `FN:${fullName}`,
+        "X-ADDRESSBOOKSERVER-KIND:group",
+        ...members.map((m) => `X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:${m}`),
+        "END:VCARD",
+      ].join("\r\n");
+
+    /** A person and a group that names them, both in the source book. */
+    const seedWithGroup = async () => {
+      const mock = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+      mock.fetchVCards.mockResolvedValue([
+        { url: `${BOOK_A}u1.vcf`, etag: '"etag-u1"', data: vcard("u1", "Jane Doe") },
+        { url: `${BOOK_A}g1.vcf`, etag: '"etag-g1"', data: groupCard("g1", "Team", ["u1"]) },
+      ]);
+      return mock;
+    };
+
+    describe("groups are refused per contact", () => {
+      it("moveContacts skips a group and moves the rest of the batch", async () => {
+        await seedWithGroup();
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["g1", "u1"]);
+
+        expect(outcome.transferred).toEqual([{ uid: "u1" }]);
+        expect(outcome.failed).toEqual([{ uid: "g1", message: expect.stringMatching(/group/) }]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("copyContacts skips a group and copies the rest of the batch", async () => {
+        const mock = await seedWithGroup();
+
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["g1", "u1"]);
+
+        expect(outcome.transferred.map((t) => t.uid)).toEqual(["u1"]);
+        expect(outcome.failed).toEqual([{ uid: "g1", message: expect.stringMatching(/group/) }]);
+        expect(mock.createVCard).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe("moveContacts", () => {
       it("issues one MOVE per contact, with Destination, Overwrite and If-Match", async () => {
         await seedSource([{ uid: "u1", name: "Jane Doe" }]);
@@ -1452,6 +1497,50 @@ describe("CardDavService across address books", () => {
     const r = await service.resolveContact(["b1", "b2"], "Alice");
     if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
     expect(r.candidates.map((c) => c.uid)).toEqual(["u2", "u1"]);
+  });
+
+  it("updateContact refuses a group on every path unless the caller is update_group", async () => {
+    const GROUP =
+      "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Team\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD";
+    const mk = () => {
+      const service = new CardDavService({ url: "x", username: "u", password: "p" });
+      const updateVCard = vi.fn().mockResolvedValue({ ok: true });
+      (service as any).client = {
+        fetchVCards: vi.fn().mockResolvedValue([{ url: "b/g1.vcf", etag: '"e"', data: GROUP }]),
+        updateVCard,
+      };
+      return { service, updateVCard };
+    };
+    // Single-book / explicit-book path: no `located`, the service reads the card itself.
+    const a = mk();
+    await expect(
+      a.service.updateContact("b", "g1", { emails: [{ value: "t@x" }] }),
+    ).rejects.toThrow(/update_group/);
+    expect(a.updateVCard).not.toHaveBeenCalled();
+    // Located path.
+    const b = mk();
+    const located = { bookUrl: "b", url: "b/g1.vcf", etag: '"e"', data: GROUP };
+    await expect(b.service.updateContact("b", "g1", { note: "n" }, { located })).rejects.toThrow(
+      /update_group/,
+    );
+    // update_group opts in.
+    const c = mk();
+    await c.service.updateContact("b", "g1", { members: ["u1"] }, { allowGroup: true });
+    expect(c.updateVCard).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolveContact never resolves to a group, even one carrying an EMAIL", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: vi.fn().mockResolvedValue([
+        {
+          url: "1",
+          etag: "",
+          data: "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Marketing Team\r\nEMAIL:team@x.io\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD",
+        },
+      ]),
+    };
+    expect((await service.resolveContact("b", "Marketing")).status).toBe("not_found");
   });
 
   it("resolveContact tags ambiguous candidates with the label of their book", async () => {

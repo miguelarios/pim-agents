@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0 (2026-09-05)
+
+- **Contact groups** (#60): `list_groups`, `get_group`, `create_group`, `update_group` and
+  `delete_group`. A group is a vCard with `KIND:group` whose `MEMBER` lines name other
+  contacts by UID; `get_group` resolves those to name and first email, and reports UIDs the
+  book no longer holds as `missingMembers` rather than dropping them. Membership is
+  validated against the group's own book, because that is the only place a server lets a
+  group point: a UID from another book would be a dangling reference, and nested groups
+  are refused. `delete_group` confirms first, naming the group and its member count, and
+  deletes only the group card. `list_contacts` hides groups unless `include_groups` is set.
+- Requires `@miguelarios/pim-core` 0.10.0 for the `kind` and `members` fields on `Contact`.
+
 ## 0.9.0 (2026-09-05)
 
 - **Every book is searched when none is named.** `list_contacts`, `get_contact` and

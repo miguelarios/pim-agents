@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { type Contact, ContactError, ErrorCode, ValidationError } from "@miguelarios/pim-core";
+import {
+  type Contact,
+  ContactError,
+  ErrorCode,
+  ValidationError,
+  isGroup,
+} from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import {
   type CardDavService,
@@ -7,7 +13,13 @@ import {
   FULL_NAME_REQUIRED,
   duplicateContactError,
 } from "../services/CardDavService.js";
-import { booksToSearch, locateBookFor, readAcrossBooks, resolveAddressBook } from "./books.js";
+import {
+  ADDRESS_BOOK_PROP,
+  booksToSearch,
+  locateBookFor,
+  readAcrossBooks,
+  resolveAddressBook,
+} from "./books.js";
 import {
   contactListSchema,
   contactSchema,
@@ -15,12 +27,6 @@ import {
   transferResultSchema,
   writeResultSchema,
 } from "./contactSchemas.js";
-
-const ADDRESS_BOOK_PROP = {
-  type: "string",
-  description:
-    "Address book URL or display name (e.g. 'Work'). If omitted, every address book in the account is searched.",
-} as const;
 
 /**
  * The write tools locate rather than search: an omitted book means "find the
@@ -120,7 +126,12 @@ const TARGET_BOOK_PROP = {
     "Target address book URL or display name (e.g. 'Work'). Must differ from the source.",
 } as const;
 
-type ListArgs = { query?: string; addressBook?: string; detail_level?: "summary" | "full" };
+type ListArgs = {
+  query?: string;
+  addressBook?: string;
+  detail_level?: "summary" | "full";
+  include_groups?: boolean;
+};
 type GetArgs = { uid: string; addressBook?: string; detail_level?: "summary" | "full" };
 /**
  * The `Contact` fields `update_contact` can write, and the single source of
@@ -196,6 +207,11 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         },
         addressBook: ADDRESS_BOOK_PROP,
         detail_level: DETAIL_LEVEL_PROP,
+        include_groups: {
+          type: "boolean",
+          description:
+            "Include contact groups (kind='group') in the results. Default false: groups are listed by list_groups.",
+        },
       },
     },
     outputSchema: contactListSchema,
@@ -204,11 +220,12 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         const books = await booksToSearch(args.addressBook, service);
         const detailLevel = args.detail_level ?? "summary";
         const query = args.query;
-        const contacts = await readAcrossBooks(books, (url) =>
+        const all = await readAcrossBooks(books, (url) =>
           query
             ? service.searchContacts(url, query, { detailLevel })
             : service.fetchContacts(url, { detailLevel }),
         );
+        const contacts = args.include_groups ? all : all.filter((c) => !isGroup(c));
         return structured({ contacts, count: contacts.length });
       } catch (err) {
         return toolError(err);
@@ -441,6 +458,8 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           throw new ValidationError(FULL_NAME_REQUIRED, "fullName");
         }
         const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
+        // The service refuses a group here (use update_group), on the card it
+        // actually reads, whichever locate path was taken.
         const updates: ContactUpdates = {};
         for (const field of UPDATABLE_FIELDS) {
           copyDefined(updates, args, field);
@@ -528,7 +547,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "move_contacts",
     title: "Move Contacts",
     description:
-      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch. Retrying a move that already succeeded reports its UIDs as not found in the source, because they are no longer there — that is a completed move, not a failed one.",
+      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch. Groups are refused (their members must stay in the same book). Retrying a move that already succeeded reports its UIDs as not found in the source, because they are no longer there — that is a completed move, not a failed one.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -568,7 +587,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "copy_contacts",
     title: "Copy Contacts",
     description:
-      "Copy contacts into another address book, leaving the originals in place. Each copy is a new contact and gets a new UID, returned as newUid — two vCards sharing a UID in one account is a sync hazard. Both address books must be named; neither defaults.",
+      "Copy contacts into another address book, leaving the originals in place. Each copy is a new contact and gets a new UID, returned as newUid — two vCards sharing a UID in one account is a sync hazard. Both address books must be named; neither defaults. Groups are refused (their members must stay in the same book).",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
