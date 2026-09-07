@@ -246,6 +246,29 @@ describe("buildVCard", () => {
   });
 });
 
+describe("buildVCard ORG line", () => {
+  const base: Contact = {
+    uid: "o1",
+    fullName: "X",
+    emails: [],
+    phones: [],
+    addresses: [],
+    urls: [],
+    otherProperties: [],
+  };
+
+  it("writes ORG with an empty first component when only orgUnits are set", () => {
+    const built = buildVCard({ ...base, orgUnits: ["Engineering", "Platform"] });
+    expect(built).toContain("ORG:;Engineering;Platform");
+    expect(parseVCard(built).orgUnits).toEqual(["Engineering", "Platform"]);
+    expect(parseVCard(built).organization).toBeUndefined();
+  });
+
+  it("writes no ORG line when neither is set", () => {
+    expect(buildVCard(base)).not.toContain("ORG:");
+  });
+});
+
 describe("buildVCard round-trip", () => {
   it("preserves socialProfiles through parse -> build -> parse", () => {
     const original = [

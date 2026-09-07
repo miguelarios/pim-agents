@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 (2026-09-05)
+
+- `buildVCard` writes the `ORG` line when either `organization` or `orgUnits` is set, with
+  an empty first component when only the units are. It was gated on `organization` alone,
+  so clearing the company silently dropped the department on the next round trip, and a
+  contact created with units but no company lost them on first save.
+
 ## 0.9.0 (2026-08-28)
 
 - `checkDavCollectionResponse` and `propstatStatusLines` (`dav.ts`) — shared judging of DAV collection-level responses (MKCALENDAR, extended MKCOL, PROPPATCH, DELETE). Extracted from card-mcp so both DAV servers distrust tsdav's response shapes the same way: `ok` is `!responseBody.error`, and a propstat-level PROPPATCH failure leaves the mapped `status` at the transport's 207, so a refused rename reads as success unless the raw propstat statuses are walked. Resource wording and the not-found error are supplied by the caller, so each server keeps its own vocabulary (issues #43, #44, #45).
