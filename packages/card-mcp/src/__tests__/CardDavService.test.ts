@@ -926,6 +926,51 @@ describe("CardDavService", () => {
     const okMove = () =>
       vi.fn().mockResolvedValue({ ok: true, status: 201, statusText: "Created" } as Response);
 
+    const groupCard = (uid: string, fullName: string, members: string[]) =>
+      [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        `UID:${uid}`,
+        `FN:${fullName}`,
+        "X-ADDRESSBOOKSERVER-KIND:group",
+        ...members.map((m) => `X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:${m}`),
+        "END:VCARD",
+      ].join("\r\n");
+
+    /** A person and a group that names them, both in the source book. */
+    const seedWithGroup = async () => {
+      const mock = await seedSource([{ uid: "u1", name: "Jane Doe" }]);
+      mock.fetchVCards.mockResolvedValue([
+        { url: `${BOOK_A}u1.vcf`, etag: '"etag-u1"', data: vcard("u1", "Jane Doe") },
+        { url: `${BOOK_A}g1.vcf`, etag: '"etag-g1"', data: groupCard("g1", "Team", ["u1"]) },
+      ]);
+      return mock;
+    };
+
+    describe("groups are refused per contact", () => {
+      it("moveContacts skips a group and moves the rest of the batch", async () => {
+        await seedWithGroup();
+        const fetchMock = okMove();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const outcome = await service.moveContacts(BOOK_A, BOOK_B, ["g1", "u1"]);
+
+        expect(outcome.transferred).toEqual([{ uid: "u1" }]);
+        expect(outcome.failed).toEqual([{ uid: "g1", message: expect.stringMatching(/group/) }]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("copyContacts skips a group and copies the rest of the batch", async () => {
+        const mock = await seedWithGroup();
+
+        const outcome = await service.copyContacts(BOOK_A, BOOK_B, ["g1", "u1"]);
+
+        expect(outcome.transferred.map((t) => t.uid)).toEqual(["u1"]);
+        expect(outcome.failed).toEqual([{ uid: "g1", message: expect.stringMatching(/group/) }]);
+        expect(mock.createVCard).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe("moveContacts", () => {
       it("issues one MOVE per contact, with Destination, Overwrite and If-Match", async () => {
         await seedSource([{ uid: "u1", name: "Jane Doe" }]);
@@ -1417,5 +1462,180 @@ describe("CardDavService.updateContact clearing fields", () => {
     expect(sent).toContain("ORG:Acme Corp;Research");
     expect(sent).toContain("X-SOCIALPROFILE;type=mastodon:https://m.example/@alice");
     expect(sent).not.toContain("twitter");
+  });
+});
+
+describe("CardDavService across address books", () => {
+  const mkVCard = (uid: string, fn: string, email?: string) =>
+    [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `UID:${uid}`,
+      `FN:${fn}`,
+      email ? `EMAIL:${email}` : "",
+      "END:VCARD",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+  const perBook = (cards: Record<string, string[]>) =>
+    vi.fn(async ({ addressBook }: { addressBook: { url: string } }) =>
+      (cards[addressBook.url] ?? []).map((data, i) => ({
+        url: `${addressBook.url}${i}.vcf`,
+        etag: '"e"',
+        data,
+      })),
+    );
+
+  it("resolveContact merges matches from several books", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u2", "Alice Brown", "b@y.com")],
+      }),
+    };
+    const r = await service.resolveContact(["b1", "b2"], "Alice");
+    if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+    expect(r.candidates.map((c) => c.uid)).toEqual(["u2", "u1"]);
+  });
+
+  it("updateContact refuses a group on every path unless the caller is update_group", async () => {
+    const GROUP =
+      "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Team\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD";
+    const mk = () => {
+      const service = new CardDavService({ url: "x", username: "u", password: "p" });
+      const updateVCard = vi.fn().mockResolvedValue({ ok: true });
+      (service as any).client = {
+        fetchVCards: vi.fn().mockResolvedValue([{ url: "b/g1.vcf", etag: '"e"', data: GROUP }]),
+        updateVCard,
+      };
+      return { service, updateVCard };
+    };
+    // Single-book / explicit-book path: no `located`, the service reads the card itself.
+    const a = mk();
+    await expect(
+      a.service.updateContact("b", "g1", { emails: [{ value: "t@x" }] }),
+    ).rejects.toThrow(/update_group/);
+    expect(a.updateVCard).not.toHaveBeenCalled();
+    // Located path.
+    const b = mk();
+    const located = { bookUrl: "b", url: "b/g1.vcf", etag: '"e"', data: GROUP };
+    await expect(b.service.updateContact("b", "g1", { note: "n" }, { located })).rejects.toThrow(
+      /update_group/,
+    );
+    // update_group opts in.
+    const c = mk();
+    await c.service.updateContact("b", "g1", { members: ["u1"] }, { allowGroup: true });
+    expect(c.updateVCard).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolveContact never resolves to a group, even one carrying an EMAIL", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: vi.fn().mockResolvedValue([
+        {
+          url: "1",
+          etag: "",
+          data: "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Marketing Team\r\nEMAIL:team@x.io\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD",
+        },
+      ]),
+    };
+    expect((await service.resolveContact("b", "Marketing")).status).toBe("not_found");
+  });
+
+  it("resolveContact tags ambiguous candidates with the label of their book", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u2", "Alice Brown", "b@y.com")],
+      }),
+    };
+    const r = await service.resolveContact(
+      [
+        { url: "b1", label: "Personal" },
+        { url: "b2", label: "Work" },
+      ],
+      "Alice",
+    );
+    if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+    expect(r.candidates.map((c) => c.addressBook)).toEqual(["Work", "Personal"]);
+  });
+
+  it("resolveContact treats one UID in two books as one person", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({
+        b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
+        b2: [mkVCard("u1", "Alice Smith", "a@x.com")],
+      }),
+    };
+    expect(await service.resolveContact(["b1", "b2"], "Alice")).toEqual({
+      status: "resolved",
+      fullName: "Alice Smith",
+      email: "a@x.com",
+    });
+  });
+
+  it("locateContact returns the URL of the book holding the UID", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u2", "B")] }),
+    };
+    expect(await service.locateContact("u2", ["b1", "b2"])).toMatchObject({
+      bookUrl: "b2",
+      url: "b20.vcf",
+      etag: '"e"',
+    });
+  });
+
+  it("locateContact fails as CONTACT_NOT_FOUND when no book holds the UID", async () => {
+    const { ErrorCode } = await import("@miguelarios/pim-core");
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = { fetchVCards: perBook({ b1: [mkVCard("u1", "A")] }) };
+    await expect(service.locateContact("nope", ["b1", "b2"])).rejects.toMatchObject({
+      code: ErrorCode.CONTACT_NOT_FOUND,
+    });
+  });
+
+  it("locateContact names books by the label it was given", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
+    };
+    await expect(
+      service.locateContact("u1", [
+        { url: "b1", label: "Personal" },
+        { url: "b2", label: "Work" },
+      ]),
+    ).rejects.toThrow(/Personal, Work/);
+  });
+
+  it("locateContact refuses to guess when two books hold the same UID", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    (service as any).client = {
+      fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
+    };
+    const { ErrorCode } = await import("@miguelarios/pim-core");
+    await expect(service.locateContact("u1", ["b1", "b2"])).rejects.toMatchObject({
+      code: ErrorCode.CONTACT_CONFLICT,
+      message: expect.stringMatching(/b1.*b2/),
+    });
+  });
+
+  it("updateContact and deleteContact reuse a located vCard instead of re-reading the book", async () => {
+    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const fetchVCards = vi.fn();
+    const updateVCard = vi.fn().mockResolvedValue({ ok: true });
+    const deleteVCard = vi.fn().mockResolvedValue({ ok: true });
+    (service as any).client = { fetchVCards, updateVCard, deleteVCard };
+    const located = { bookUrl: "b2", url: "b2/u1.vcf", etag: '"e1"', data: mkVCard("u1", "A") };
+
+    await service.updateContact("b2", "u1", { note: "n" }, { located });
+    await service.deleteContact("b2", "u1", { located });
+
+    expect(fetchVCards).not.toHaveBeenCalled();
+    expect(updateVCard.mock.calls[0][0].vCard).toMatchObject({ url: "b2/u1.vcf", etag: '"e1"' });
+    expect(deleteVCard.mock.calls[0][0].vCard).toMatchObject({ url: "b2/u1.vcf", etag: '"e1"' });
   });
 });

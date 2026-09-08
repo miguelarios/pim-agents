@@ -40,8 +40,23 @@ export interface Contact {
   note?: string;
   socialProfiles?: SocialProfile[];
   photo?: string;
+  /**
+   * `group` for a contact group (RFC 6350 `KIND:group`, or Apple's vCard 3.0
+   * `X-ADDRESSBOOKSERVER-KIND:group`). Unset means an individual; the parser
+   * never produces any other value, since only a group's KIND becomes a field.
+   */
+  kind?: "group";
+  /**
+   * Member UIDs of a group, with the `urn:uuid:` prefix stripped. A member
+   * expressed as anything other than a UID urn (e.g. `mailto:`) is kept
+   * verbatim, scheme included.
+   */
+  members?: string[];
   otherProperties: string[];
 }
+
+/** RFC 6350 §6.6.5 `MEMBER` values are URIs; contacts are referred to by UID urn. */
+const UID_URN = "urn:uuid:";
 
 /** RFC 6350 §3.4 value escaping. Backslash first, then newline, semicolon, comma. */
 export function escapeVCardValue(value: string): string {
@@ -181,6 +196,20 @@ export function parseVCard(data: string): Contact {
     ? splitUnescaped(categoriesRaw, ",").map((c) => unescapeVCardValue(c.trim()))
     : undefined;
   const socialProfiles = extractSocialProfiles(lines);
+  const kindRaw = extractFirst(lines, "KIND") ?? extractFirst(lines, "X-ADDRESSBOOKSERVER-KIND");
+  const kind = kindRaw?.toLowerCase() === "group" ? "group" : undefined;
+  // Only a group's KIND/MEMBER lines are parsed into fields. Any other KIND
+  // (org, location, an explicit individual) and any MEMBER on a non-group
+  // stay raw in otherProperties, since the builder would not write them back.
+  const memberValues =
+    kind === "group"
+      ? [...extractAll(lines, "MEMBER"), ...extractAll(lines, "X-ADDRESSBOOKSERVER-MEMBER")]
+      : [];
+  // Deduplicated: a card that carries both the RFC and the Apple form for
+  // compatibility would otherwise list every member twice. UUID urns are
+  // case-insensitive (RFC 4122), so two spellings of one urn count once; the
+  // first spelling seen is kept.
+  const members = memberValues.length > 0 ? dedupeMembers(memberValues) : undefined;
 
   let photo: string | undefined;
   for (const rawLine of lines) {
@@ -213,11 +242,18 @@ export function parseVCard(data: string): Contact {
     "X-SOCIALPROFILE",
     "PHOTO",
   ]);
+  const GROUP_PROPS = new Set([
+    "KIND",
+    "MEMBER",
+    "X-ADDRESSBOOKSERVER-KIND",
+    "X-ADDRESSBOOKSERVER-MEMBER",
+  ]);
   const otherProperties: string[] = [];
   for (const rawLine of lines) {
     const { canonical: line } = stripItemPrefix(rawLine);
     const propName = line.split(/[:;]/)[0].toUpperCase();
     if (KNOWN.has(propName) || APPLE_INTERNAL_PROPS.has(propName)) continue;
+    if (kind === "group" && GROUP_PROPS.has(propName)) continue;
     if (rawLine.trim()) {
       otherProperties.push(rawLine);
     }
@@ -259,8 +295,15 @@ export function parseVCard(data: string): Contact {
     note,
     photo,
     socialProfiles: socialProfiles.length > 0 ? socialProfiles : undefined,
+    kind,
+    members,
     otherProperties,
   };
+}
+
+/** Whether a contact is a group (RFC 6350 `KIND:group` or Apple's 3.0 equivalent). */
+export function isGroup(contact: Pick<Contact, "kind">): boolean {
+  return contact.kind === "group";
 }
 
 export function buildVCard(contact: Contact): string {
@@ -352,6 +395,21 @@ export function buildVCard(contact: Contact): string {
       lines.push(`X-SOCIALPROFILE;${params}:${value}`);
     }
   }
+  // Groups are written in the vCard 3.0 form, since that is the VERSION this
+  // builder emits: Apple, iCloud and SabreDAV-based servers all read it.
+  if (contact.kind === "group") {
+    lines.push("X-ADDRESSBOOKSERVER-KIND:group");
+    for (const member of contact.members ?? []) {
+      // Anything that already looks like a URI (mailto:, urn:uuid:) is written
+      // as-is. A bare UID containing a colon would be mistaken for one, but
+      // every server this targets mints UUID-shaped UIDs, and the parser keeps
+      // such a value verbatim either way, so nothing is lost — only unprefixed.
+      const uri = /^[a-z][a-z0-9+.-]*:/i.test(member) ? member : `${UID_URN}${member}`;
+      // Escaped like every other value, symmetric with extractAll's unescape:
+      // a stray newline in a member value must not split the card.
+      lines.push(`X-ADDRESSBOOKSERVER-MEMBER:${escapeVCardValue(uri)}`);
+    }
+  }
   if (contact.photo) {
     lines.push(contact.photo);
   }
@@ -384,6 +442,35 @@ function extractFirst(lines: string[], property: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function dedupeMembers(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    const isUrn = raw.toLowerCase().startsWith(UID_URN);
+    const value = isUrn ? raw.slice(UID_URN.length) : raw;
+    const key = isUrn ? `urn:${value.toLowerCase()}` : value;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+/** Extract every value of a property, parameters ignored, unescaped. */
+function extractAll(lines: string[], property: string): string[] {
+  const results: string[] = [];
+  for (const rawLine of lines) {
+    const { canonical: line } = stripItemPrefix(rawLine);
+    const upper = line.toUpperCase();
+    if (!upper.startsWith(`${property}:`) && !upper.startsWith(`${property};`)) continue;
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) continue;
+    const value = unescapeVCardValue(line.slice(colonIndex + 1).trim());
+    if (value) results.push(value);
+  }
+  return results;
 }
 
 /** Extract all values for a property with optional TYPE parameter */

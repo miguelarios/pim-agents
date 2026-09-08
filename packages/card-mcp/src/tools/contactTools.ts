@@ -1,7 +1,25 @@
 import { randomUUID } from "node:crypto";
-import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
+import {
+  type Contact,
+  ContactError,
+  ErrorCode,
+  ValidationError,
+  isGroup,
+} from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
-import type { CardDavService, ContactUpdates } from "../services/CardDavService.js";
+import {
+  type CardDavService,
+  type ContactUpdates,
+  FULL_NAME_REQUIRED,
+  duplicateContactError,
+} from "../services/CardDavService.js";
+import {
+  ADDRESS_BOOK_PROP,
+  booksToSearch,
+  locateBookFor,
+  readAcrossBooks,
+  resolveAddressBook,
+} from "./books.js";
 import {
   contactListSchema,
   contactSchema,
@@ -10,10 +28,22 @@ import {
   writeResultSchema,
 } from "./contactSchemas.js";
 
-const ADDRESS_BOOK_PROP = {
+/**
+ * The write tools locate rather than search: an omitted book means "find the
+ * one book holding this UID", and a UID in two books is a conflict, never an
+ * update-everywhere.
+ */
+const WRITE_BOOK_PROP = {
   type: "string",
   description:
-    "Address book URL or display name (e.g. 'Work'). If omitted, uses the first available address book.",
+    "Address book URL or display name (e.g. 'Work') holding the contact. If omitted, every address book is checked to locate the UID; fails if more than one holds it.",
+} as const;
+
+/** `create_contact` has to land somewhere, so its omitted-book default differs. */
+const CREATE_BOOK_PROP = {
+  type: "string",
+  description:
+    "Address book URL or display name (e.g. 'Work') to create the contact in. If omitted, uses the first available address book.",
 } as const;
 
 const DETAIL_LEVEL_PROP = {
@@ -96,7 +126,12 @@ const TARGET_BOOK_PROP = {
     "Target address book URL or display name (e.g. 'Work'). Must differ from the source.",
 } as const;
 
-type ListArgs = { query?: string; addressBook?: string; detail_level?: "summary" | "full" };
+type ListArgs = {
+  query?: string;
+  addressBook?: string;
+  detail_level?: "summary" | "full";
+  include_groups?: boolean;
+};
 type GetArgs = { uid: string; addressBook?: string; detail_level?: "summary" | "full" };
 /**
  * The `Contact` fields `update_contact` can write, and the single source of
@@ -172,16 +207,25 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         },
         addressBook: ADDRESS_BOOK_PROP,
         detail_level: DETAIL_LEVEL_PROP,
+        include_groups: {
+          type: "boolean",
+          description:
+            "Include contact groups (kind='group') in the results. Default false: groups are listed by list_groups.",
+        },
       },
     },
     outputSchema: contactListSchema,
     handler: async (args: ListArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const books = await booksToSearch(args.addressBook, service);
         const detailLevel = args.detail_level ?? "summary";
-        const contacts = args.query
-          ? await service.searchContacts(addressBookUrl, args.query, { detailLevel })
-          : await service.fetchContacts(addressBookUrl, { detailLevel });
+        const query = args.query;
+        const all = await readAcrossBooks(books, (url) =>
+          query
+            ? service.searchContacts(url, query, { detailLevel })
+            : service.fetchContacts(url, { detailLevel }),
+        );
+        const contacts = args.include_groups ? all : all.filter((c) => !isGroup(c));
         return structured({ contacts, count: contacts.length });
       } catch (err) {
         return toolError(err);
@@ -210,18 +254,28 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: contactSchema,
     handler: async (args: GetArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        const books = await booksToSearch(args.addressBook, service);
         const detailLevel = args.detail_level ?? "summary";
-        const contacts = await service.fetchContacts(addressBookUrl, { detailLevel });
-        const contact = contacts.find((c) => c.uid === args.uid);
-        if (!contact) {
+        const contacts = await readAcrossBooks(books, (url) =>
+          service.fetchContacts(url, { detailLevel }),
+        );
+        const matches = contacts.filter((c) => c.uid === args.uid);
+        if (matches.length === 0) {
           throw new ContactError(
             `Contact ${args.uid} not found`,
             ErrorCode.CONTACT_NOT_FOUND,
             args.uid,
           );
         }
-        return structured(contact);
+        // Reads treat a UID duplicated across books the way writes do: a
+        // conflict to surface, not a coin toss on whichever book sorted first.
+        if (matches.length > 1) {
+          throw duplicateContactError(
+            args.uid,
+            matches.map((c) => c.addressBook),
+          );
+        }
+        return structured(matches[0]);
       } catch (err) {
         return toolError(err);
       }
@@ -287,7 +341,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           items: SOCIAL_PROFILE_ITEMS,
           description: "Social media profiles",
         },
-        addressBook: ADDRESS_BOOK_PROP,
+        addressBook: CREATE_BOOK_PROP,
       },
       required: ["fullName"],
     },
@@ -391,20 +445,27 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
           items: SOCIAL_PROFILE_ITEMS,
           description: "New social media profiles (replaces existing)",
         }),
-        addressBook: ADDRESS_BOOK_PROP,
+        addressBook: WRITE_BOOK_PROP,
       },
       required: ["uid"],
     },
     outputSchema: writeResultSchema,
     handler: async (args: UpdateArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
+        // Cheap validation first: on a multi-book account the locate below
+        // scans every book, and an invalid request should not pay for that.
+        if (args.fullName === null) {
+          throw new ValidationError(FULL_NAME_REQUIRED, "fullName");
+        }
+        const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
+        // The service refuses a group here (use update_group), on the card it
+        // actually reads, whichever locate path was taken.
         const updates: ContactUpdates = {};
         for (const field of UPDATABLE_FIELDS) {
           copyDefined(updates, args, field);
         }
 
-        await service.updateContact(addressBookUrl, args.uid, updates);
+        await service.updateContact(bookUrl, args.uid, updates, { located });
         return structured({ status: "updated" as const, uid: args.uid });
       } catch (err) {
         return toolError(err);
@@ -426,7 +487,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       type: "object",
       properties: {
         uid: { type: "string", description: "The UID of the contact to delete" },
-        addressBook: ADDRESS_BOOK_PROP,
+        addressBook: WRITE_BOOK_PROP,
       },
       required: ["uid"],
     },
@@ -440,8 +501,8 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       if (gate.status === "interrupt") return gate.result;
 
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
-        await service.deleteContact(addressBookUrl, args.uid);
+        const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
+        await service.deleteContact(bookUrl, args.uid, { located });
         return structured({ status: "deleted" as const, uid: args.uid });
       } catch (err) {
         return toolError(err);
@@ -470,8 +531,13 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: resolveResultSchema,
     handler: async (args: ResolveArgs, service) => {
       try {
-        const addressBookUrl = await resolveAddressBook(args.addressBook, service);
-        return structured(await service.resolveContact(addressBookUrl, args.name));
+        const books = await booksToSearch(args.addressBook, service);
+        return structured(
+          await service.resolveContact(
+            books.map((b) => ({ url: b.url, label: b.label })),
+            args.name,
+          ),
+        );
       } catch (err) {
         return toolError(err);
       }
@@ -481,7 +547,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "move_contacts",
     title: "Move Contacts",
     description:
-      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch. Retrying a move that already succeeded reports its UIDs as not found in the source, because they are no longer there — that is a completed move, not a failed one.",
+      "Move contacts to another address book. Each contact keeps its UID — it is the same person, filed somewhere else. Both address books must be named; neither defaults. Reports per contact, so one unknown UID does not strand the rest of the batch. Groups are refused (their members must stay in the same book). Retrying a move that already succeeded reports its UIDs as not found in the source, because they are no longer there — that is a completed move, not a failed one.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -521,7 +587,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     name: "copy_contacts",
     title: "Copy Contacts",
     description:
-      "Copy contacts into another address book, leaving the originals in place. Each copy is a new contact and gets a new UID, returned as newUid — two vCards sharing a UID in one account is a sync hazard. Both address books must be named; neither defaults.",
+      "Copy contacts into another address book, leaving the originals in place. Each copy is a new contact and gets a new UID, returned as newUid — two vCards sharing a UID in one account is a sync hazard. Both address books must be named; neither defaults. Groups are refused (their members must stay in the same book).",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -558,15 +624,3 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     },
   },
 ];
-
-async function resolveAddressBook(
-  explicit: string | undefined,
-  service: CardDavService,
-): Promise<string> {
-  if (explicit) return service.findAddressBook(explicit);
-  const books = await service.listAddressBooks();
-  if (books.length === 0) {
-    throw new ContactError("No address books found", ErrorCode.ADDRESSBOOK_NOT_FOUND);
-  }
-  return books[0].url;
-}

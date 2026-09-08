@@ -27,9 +27,15 @@ const socialProfile = v.object({
   url: v.optional(v.string()),
 });
 
-/** Mirrors `Contact`. `summary` detail level omits `photo` and `otherProperties` content. */
+/**
+ * Mirrors `Contact`, plus `addressBook`: the book the contact was read from,
+ * as a display name (or URL for a nameless book) that can be passed straight
+ * back as the `addressBook` argument of any contact tool. `summary` detail
+ * level omits `photo` and `otherProperties` content.
+ */
 export const contactSchema = v.object({
   uid: v.string(),
+  addressBook: v.optional(v.string()),
   fullName: v.string(),
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),
@@ -50,6 +56,8 @@ export const contactSchema = v.object({
   note: v.optional(v.string()),
   socialProfiles: v.optional(v.array(socialProfile)),
   photo: v.optional(v.string()),
+  kind: v.optional(v.literal("group")),
+  members: v.optional(v.array(v.string())),
   otherProperties: v.array(v.string()),
 });
 
@@ -72,7 +80,14 @@ export const resolveResultSchema = v.variant("status", [
   }),
   v.object({
     status: v.literal("ambiguous"),
-    candidates: v.array(v.object({ fullName: v.string(), email: v.string(), uid: v.string() })),
+    candidates: v.array(
+      v.object({
+        fullName: v.string(),
+        email: v.string(),
+        uid: v.string(),
+        addressBook: v.optional(v.string()),
+      }),
+    ),
   }),
   v.object({
     status: v.literal("not_found"),

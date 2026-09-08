@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.10.0 (2026-09-05)
+
+- **Contact groups** (#60): `list_groups`, `get_group`, `create_group`, `update_group` and
+  `delete_group`. A group is a vCard with `KIND:group` whose `MEMBER` lines name other
+  contacts by UID; `get_group` resolves those to name and first email, and reports UIDs the
+  book no longer holds as `missingMembers` rather than dropping them. Membership is
+  validated against the group's own book, because that is the only place a server lets a
+  group point: a UID from another book would be a dangling reference, and nested groups
+  are refused. `delete_group` confirms first, naming the group and its member count, and
+  deletes only the group card. `list_contacts` hides groups unless `include_groups` is set.
+- Requires `@miguelarios/pim-core` 0.10.0 for the `kind` and `members` fields on `Contact`.
+
+## 0.9.0 (2026-09-05)
+
+- **Every book is searched when none is named.** `list_contacts`, `get_contact` and
+  `resolve_contact` used to default to the first address book, so a name filed in `Work`
+  went missing whenever `Personal` sorted first. Each returned contact now carries an
+  `addressBook` label (display name, or URL for a nameless book) that can be passed back
+  to any contact tool. `update_contact` and `delete_contact` on an unqualified UID locate
+  the contact's book first via the new `CardDavService.locateContact`, and refuse to guess
+  when two books hold the same UID; a single-book account skips the lookup.
+  `create_contact` keeps the first-book default: a new contact has to land somewhere.
+
 ## 0.8.0 (2026-09-05)
 
 - **`update_contact` can clear a field.** Absent keeps the stored value, `null` clears it,
