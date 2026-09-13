@@ -93,6 +93,12 @@ export interface LocatedContact {
   data: string;
 }
 
+/** One card of a book read by {@link CardDavService.fetchBook}: parsed, plus where it lives. */
+export interface BookEntry {
+  contact: Contact;
+  located: LocatedContact;
+}
+
 /** A book to search, with the label it is reported under in messages. */
 export interface BookToSearch {
   url: string;
@@ -464,6 +470,27 @@ export class CardDavService {
       throw new ValidationError("Nothing to change — provide a displayName and/or a description");
     }
     const client = await this.ensureConnected();
+    if (opts.displayName !== undefined) {
+      // Same rule as createAddressBook: a name two books share is unusable as
+      // an `addressBook` reference, and since every contact read is labelled
+      // with its book's name, a rename into a collision would break the
+      // labels of both books at once. The book itself is exempt, so a
+      // case-only rename ("work" -> "Work") still goes through.
+      if (opts.displayName.trim() === "") {
+        throw new ValidationError("displayName cannot be empty", "displayName");
+      }
+      const wanted = opts.displayName.toLowerCase();
+      const duplicate = (await this.listAddressBooks()).find(
+        (b) =>
+          b.displayName.toLowerCase() === wanted && collectionPath(b.url) !== collectionPath(url),
+      );
+      if (duplicate) {
+        throw new ContactError(
+          `An address book named "${duplicate.displayName}" already exists at ${duplicate.url}`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+    }
     try {
       const [response] = await client.davRequest({
         url,
@@ -490,7 +517,7 @@ export class CardDavService {
       });
       checkDavCollectionResponse(response, "rename", url, BOOK_DAV_CHECK);
     } catch (error) {
-      // No ValidationError branch: the only one this method throws happens
+      // No ValidationError branch: the ones this method throws all happen
       // before the try, so a branch for it here would be dead code implying a
       // path that does not exist.
       if (error instanceof ContactError) throw error;
@@ -514,6 +541,20 @@ export class CardDavService {
     addressBookUrl: string,
     opts: { detailLevel?: DetailLevel } = {},
   ): Promise<Contact[]> {
+    return (await this.fetchBook(addressBookUrl, opts)).map((entry) => entry.contact);
+  }
+
+  /**
+   * Reads a whole book like {@link fetchContacts}, but keeps each card's URL,
+   * etag and raw data alongside the parsed contact. A caller that has to read
+   * the book anyway (a group and its members come from the same fetch) can
+   * then pass the card back to `updateContact`/`deleteContact` as `located`
+   * instead of having the write fetch the same book a second time.
+   */
+  async fetchBook(
+    addressBookUrl: string,
+    opts: { detailLevel?: DetailLevel } = {},
+  ): Promise<BookEntry[]> {
     const detailLevel = opts.detailLevel ?? "summary";
     const client = await this.ensureConnected();
     try {
@@ -522,7 +563,10 @@ export class CardDavService {
       });
       return vcards
         .filter((v) => v.data)
-        .map((v) => applyDetailLevel(parseVCard(v.data!), detailLevel));
+        .map((v) => ({
+          contact: applyDetailLevel(parseVCard(v.data!), detailLevel),
+          located: { bookUrl: addressBookUrl, url: v.url, etag: v.etag, data: v.data! },
+        }));
     } catch (error) {
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
