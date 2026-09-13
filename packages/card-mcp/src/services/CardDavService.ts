@@ -476,6 +476,13 @@ export class CardDavService {
       // with its book's name, a rename into a collision would break the
       // labels of both books at once. The book itself is exempt, so a
       // case-only rename ("work" -> "Work") still goes through.
+      //
+      // Unlike create, this check is the only guard. Create's race is closed
+      // by the server (a deterministic slug means the losing MKCOL gets a
+      // 405), but a PROPPATCH targets each book's own URL, so two concurrent
+      // renames to the same name can both pass here and both succeed. That
+      // race is accepted: the outcome is the pre-existing duplicate-name
+      // state, still recoverable by renaming one of the books again.
       if (opts.displayName.trim() === "") {
         throw new ValidationError("displayName cannot be empty", "displayName");
       }
