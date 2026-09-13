@@ -1,3 +1,4 @@
+import type { Contact } from "@miguelarios/pim-core";
 /**
  * End-to-end wire conformance: a real MCP client talking to the real server
  * over an in-memory transport pair, on both protocol eras.
@@ -31,6 +32,11 @@ function fakeService() {
       .fn()
       .mockImplementation(async (ref: string) => ({ displayName: ref, url: ref })),
     fetchContacts: vi.fn().mockResolvedValue([CONTACT]),
+    fetchBook: vi
+      .fn()
+      .mockResolvedValue([
+        { contact: CONTACT, located: { bookUrl: "book1", url: "book1/u1.vcf", data: "" } },
+      ]),
     searchContacts: vi.fn().mockResolvedValue([CONTACT]),
     deleteContact: vi.fn().mockResolvedValue(undefined),
     updateContact: vi.fn().mockResolvedValue(undefined),
@@ -45,6 +51,17 @@ function fakeService() {
       .mockResolvedValue({ transferred: [{ uid: "uid-1", newUid: "uid-copy" }], failed: [] }),
     disconnect: vi.fn().mockResolvedValue(undefined),
   };
+}
+
+/** Stocks the single fake book with these cards, for both the parsed and the located reads. */
+function stockBook(service: ReturnType<typeof fakeService>, contacts: Contact[]): void {
+  service.fetchContacts.mockResolvedValue(contacts);
+  service.fetchBook.mockResolvedValue(
+    contacts.map((contact) => ({
+      contact,
+      located: { bookUrl: "book1", url: `book1/${contact.uid}.vcf`, data: "" },
+    })),
+  );
 }
 
 type Era = "legacy" | "modern";
@@ -316,7 +333,7 @@ describe.each<Era>(["legacy", "modern"])("card-mcp over the wire (%s era)", (era
 describe.each<Era>(["legacy", "modern"])("card-mcp group tools over the wire (%s)", (era) => {
   it("confirms before deleting a group, then deletes it", async () => {
     const service = fakeService();
-    service.fetchContacts.mockResolvedValue([
+    stockBook(service, [
       { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
     ]);
     const { client, elicitations } = await connect(era, service);
@@ -329,7 +346,9 @@ describe.each<Era>(["legacy", "modern"])("card-mcp group tools over the wire (%s
       name: "Book Club",
       memberCount: 1,
     });
-    expect(service.deleteContact).toHaveBeenCalledWith("book1", "g1");
+    expect(service.deleteContact).toHaveBeenCalledWith("book1", "g1", {
+      located: expect.objectContaining({ url: "book1/g1.vcf" }),
+    });
   });
 
   it("lists groups with member counts through the real schema", async () => {
@@ -369,7 +388,7 @@ describe.each<Era>(["legacy", "modern"])("card-mcp group tools over the wire (%s
 
   it("updates a group's members and validates the write result", async () => {
     const service = fakeService();
-    service.fetchContacts.mockResolvedValue([
+    stockBook(service, [
       CONTACT,
       { ...CONTACT, uid: "u2", fullName: "Bob" },
       { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
@@ -406,7 +425,7 @@ describe.each<Era>(["legacy", "modern"])("card-mcp group tools over the wire (%s
 
   it("validates get_group output against its schema", async () => {
     const service = fakeService();
-    service.fetchContacts.mockResolvedValue([
+    stockBook(service, [
       CONTACT,
       { ...CONTACT, uid: "g1", fullName: "Book Club", kind: "group", members: ["u1"] },
     ]);

@@ -12,9 +12,10 @@ import {
   ErrorCode,
   ValidationError,
   isGroup,
+  parseVCard,
 } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
-import type { CardDavService } from "../services/CardDavService.js";
+import type { CardDavService, LocatedContact } from "../services/CardDavService.js";
 import {
   ADDRESS_BOOK_PROP,
   booksToSearch,
@@ -43,28 +44,61 @@ type UpdateArgs = {
 };
 type DeleteArgs = { uid: string; addressBook?: string };
 
+interface LoadedGroup {
+  bookUrl: string;
+  label: string;
+  group: Contact;
+  /** The group's own card, so a write can reuse this read instead of fetching the book again. */
+  located: LocatedContact;
+}
+
+/** An individual's UID is refused rather than treated as an empty group. */
+function assertIsGroup(uid: string, group: Contact): void {
+  if (!isGroup(group)) {
+    throw new ValidationError(`Contact ${uid} (${group.fullName}) is not a group`, "uid");
+  }
+}
+
 /**
- * Loads a group and the book it lives in. The whole book is read, since the
- * members have to come from the same fetch anyway, and an individual's UID
- * is refused rather than treated as an empty group.
+ * Loads a group together with the whole book it lives in, for callers that
+ * need the members: one fetch serves both the lookup and the member list.
+ */
+async function loadGroupWithBook(
+  uid: string,
+  explicit: string | undefined,
+  service: CardDavService,
+): Promise<LoadedGroup & { book: Contact[] }> {
+  const { bookUrl, label } = await locateBookFor(uid, explicit, service);
+  const entries = await service.fetchBook(bookUrl, { detailLevel: "summary" });
+  const entry = entries.find((e) => e.contact.uid === uid);
+  if (!entry) {
+    throw new ContactError(`Group ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
+  }
+  assertIsGroup(uid, entry.contact);
+  return {
+    bookUrl,
+    label,
+    group: entry.contact,
+    located: entry.located,
+    book: entries.map((e) => e.contact),
+  };
+}
+
+/**
+ * Loads just the group card. When `locateBookFor` already found it (several
+ * books, none named) no book is fetched at all; otherwise the book is read
+ * once, the same as {@link loadGroupWithBook}.
  */
 async function loadGroup(
   uid: string,
   explicit: string | undefined,
   service: CardDavService,
-): Promise<{ bookUrl: string; label: string; group: Contact; book: Contact[] }> {
-  // Groups always need the whole book (members come from the same fetch), so
-  // the located vCard is not reused here; only the book URL is.
-  const { bookUrl, label } = await locateBookFor(uid, explicit, service);
-  const book = await service.fetchContacts(bookUrl, { detailLevel: "summary" });
-  const group = book.find((c) => c.uid === uid);
-  if (!group) {
-    throw new ContactError(`Group ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
-  }
-  if (!isGroup(group)) {
-    throw new ValidationError(`Contact ${uid} (${group.fullName}) is not a group`, "uid");
-  }
-  return { bookUrl, label, group, book };
+): Promise<LoadedGroup> {
+  const { bookUrl, label, located } = await locateBookFor(uid, explicit, service);
+  if (!located) return loadGroupWithBook(uid, explicit, service);
+  const group = parseVCard(located.data);
+  assertIsGroup(uid, group);
+  return { bookUrl, label, group, located };
 }
 
 /**
@@ -145,7 +179,7 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     outputSchema: groupDetailSchema,
     handler: async (args: GetArgs, service) => {
       try {
-        const { label, group, book } = await loadGroup(args.uid, args.addressBook, service);
+        const { label, group, book } = await loadGroupWithBook(args.uid, args.addressBook, service);
         const byUid = new Map(book.map((c) => [c.uid, c]));
         const members: Array<{ uid: string; fullName: string; email?: string }> = [];
         const missingMembers: string[] = [];
@@ -263,8 +297,17 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
             "addMembers",
           );
         }
-        const { bookUrl, group, book } = await loadGroup(args.uid, args.addressBook, service);
-        assertMembersInBook(add, book);
+        // Only an addition needs the rest of the book, to validate the new
+        // members; a rename or removal works from the group card alone.
+        let loaded: LoadedGroup;
+        if (add.length > 0) {
+          const withBook = await loadGroupWithBook(args.uid, args.addressBook, service);
+          assertMembersInBook(add, withBook.book);
+          loaded = withBook;
+        } else {
+          loaded = await loadGroup(args.uid, args.addressBook, service);
+        }
+        const { bookUrl, group, located } = loaded;
         const members = dedupe([...(group.members ?? []), ...add]).filter(
           (uid) => !remove.has(uid),
         );
@@ -279,7 +322,7 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
             ...(args.name !== undefined ? { fullName: args.name } : {}),
             members,
           },
-          { allowGroup: true },
+          { located, allowGroup: true },
         );
         return structured({
           status: "updated" as const,
@@ -316,13 +359,13 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       // The group is loaded before the gate so the prompt can name it: "delete
       // group Book Club (3 members)" is a question the user can answer, a bare
       // UID is not.
-      let loaded: Awaited<ReturnType<typeof loadGroup>>;
+      let loaded: LoadedGroup;
       try {
         loaded = await loadGroup(args.uid, args.addressBook, service);
       } catch (err) {
         return toolError(err);
       }
-      const { bookUrl, group } = loaded;
+      const { bookUrl, group, located } = loaded;
       const gate = confirmDestructive(
         ctx,
         "confirm_delete_group",
@@ -331,7 +374,7 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
       if (gate.status === "interrupt") return gate.result;
 
       try {
-        await service.deleteContact(bookUrl, group.uid);
+        await service.deleteContact(bookUrl, group.uid, { located });
         return structured({
           status: "deleted" as const,
           uid: group.uid,

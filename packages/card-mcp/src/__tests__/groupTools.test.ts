@@ -1,3 +1,4 @@
+import { type Contact, ContactError, ErrorCode, buildVCard } from "@miguelarios/pim-core";
 import type { ServerContext } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
 import { GROUP_TOOLS } from "../tools/groupTools.js";
@@ -46,7 +47,13 @@ function fakeService() {
     group("g1", "Book Club", ["a", "b", "ghost"]),
   ];
   const work = [person("w", "Wu", "wu@corp.io"), group("g2", "Team", ["w"])];
-  const byUrl: Record<string, unknown[]> = { "/p/": personal, "/w/": work };
+  const byUrl: Record<string, Contact[]> = { "/p/": personal, "/w/": work };
+  const locate = (bookUrl: string, contact: Contact) => ({
+    bookUrl,
+    url: `${bookUrl}${contact.uid}.vcf`,
+    etag: '"e"',
+    data: buildVCard(contact),
+  });
   return {
     listAddressBooks: vi.fn().mockResolvedValue([
       { url: "/p/", displayName: "Personal" },
@@ -54,9 +61,15 @@ function fakeService() {
     ]),
     findAddressBook: vi.fn(async (ref: string) => (ref === "Work" ? "/w/" : "/p/")),
     fetchContacts: vi.fn(async (url: string) => byUrl[url] ?? []),
+    fetchBook: vi.fn(async (url: string) =>
+      (byUrl[url] ?? []).map((contact) => ({ contact, located: locate(url, contact) })),
+    ),
     locateContact: vi.fn(async (uid: string) => {
-      const bookUrl = uid.startsWith("g2") || uid === "w" ? "/w/" : "/p/";
-      return { bookUrl, url: `${bookUrl}${uid}.vcf`, etag: '"e"' };
+      for (const [bookUrl, contacts] of Object.entries(byUrl)) {
+        const contact = contacts.find((c) => c.uid === uid);
+        if (contact) return locate(bookUrl, contact);
+      }
+      throw new ContactError(`Contact ${uid} not found`, ErrorCode.CONTACT_NOT_FOUND, uid);
     }),
     createContact: vi.fn().mockResolvedValue(undefined),
     updateContact: vi.fn().mockResolvedValue(undefined),
@@ -124,6 +137,14 @@ describe("get_group", () => {
       ],
       missingMembers: ["ghost"],
     });
+  });
+
+  it("reads the book once, and lists the books once", async () => {
+    const service = fakeService();
+    await callTool("get_group", { uid: "g1" }, service);
+    expect(service.listAddressBooks).toHaveBeenCalledTimes(1);
+    expect(service.fetchBook).toHaveBeenCalledTimes(1);
+    expect(service.fetchContacts).not.toHaveBeenCalled();
   });
 
   it("fails as CONTACT_NOT_FOUND for an unknown UID", async () => {
@@ -211,8 +232,11 @@ describe("update_group", () => {
       "/p/",
       "g1",
       { fullName: "Readers", members: ["a", "b"] },
-      { allowGroup: true },
+      { located: expect.objectContaining({ url: "/p/g1.vcf", etag: '"e"' }), allowGroup: true },
     );
+    // Adding members needs the book once, to validate them; nothing reads it twice.
+    expect(service.fetchBook).toHaveBeenCalledTimes(1);
+    expect(service.fetchContacts).not.toHaveBeenCalled();
   });
 
   it("renames without touching membership", async () => {
@@ -228,7 +252,28 @@ describe("update_group", () => {
       "/p/",
       "g1",
       { fullName: "Readers", members: ["a", "b", "ghost"] },
-      { allowGroup: true },
+      { located: expect.objectContaining({ url: "/p/g1.vcf", etag: '"e"' }), allowGroup: true },
+    );
+    // The card locateContact found is enough for a rename: the book is not read.
+    expect(service.fetchBook).not.toHaveBeenCalled();
+    expect(service.fetchContacts).not.toHaveBeenCalled();
+  });
+
+  it("reads the book once when the book is named explicitly", async () => {
+    const service = fakeService();
+    const res = await callTool(
+      "update_group",
+      { uid: "g1", removeMembers: ["ghost"], addressBook: "Personal" },
+      service,
+    );
+    expect(res.structuredContent.memberCount).toBe(2);
+    expect(service.locateContact).not.toHaveBeenCalled();
+    expect(service.fetchBook).toHaveBeenCalledTimes(1);
+    expect(service.updateContact).toHaveBeenCalledWith(
+      "/p/",
+      "g1",
+      { members: ["a", "b"] },
+      { located: expect.objectContaining({ url: "/p/g1.vcf" }), allowGroup: true },
     );
   });
 
@@ -261,6 +306,19 @@ describe("delete_group", () => {
       name: "Book Club",
       memberCount: 3,
     });
-    expect(service.deleteContact).toHaveBeenCalledWith("/p/", "g1");
+    expect(service.deleteContact).toHaveBeenCalledWith("/p/", "g1", {
+      located: expect.objectContaining({ url: "/p/g1.vcf", etag: '"e"' }),
+    });
+    // Deleting needs only the group card, which locateContact already found.
+    expect(service.fetchBook).not.toHaveBeenCalled();
+    expect(service.fetchContacts).not.toHaveBeenCalled();
+  });
+
+  it("still refuses an individual's UID when the card came from locateContact", async () => {
+    const service = fakeService();
+    const res = await callTool("delete_group", { uid: "a" }, service);
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.content[0].text).message).toMatch(/not a group/);
+    expect(service.deleteContact).not.toHaveBeenCalled();
   });
 });

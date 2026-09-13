@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.1 (2026-09-13)
+
+- **`rename_address_book` refuses a name another book already has** (#79). It applied
+  none of the duplicate check `create_address_book` does, so a rename could leave two books
+  with the same display name — and since every contact read is labelled with its book's
+  name, that made the labels of both books unusable as an `addressBook` reference until
+  one was renamed again. The check is case-insensitive and exempts the book itself, so a
+  case-only rename still goes through. An empty name is refused for the same reason it is
+  on create: a nameless book cannot be addressed by name.
+- **Group writes no longer re-read the book they just loaded** (#80). `update_group` and
+  `delete_group` fetched the book to find the group, then fetched it again inside the
+  write to find the card's URL and etag. The card found by the first read is now passed
+  through, and when no `addressBook` is named and the account has several, the lookup
+  that located the card is enough on its own: a rename, removal or delete fetches no book
+  at all. Adding members still reads the book once, to validate them.
+- `CardDavService.fetchBook` reads a book like `fetchContacts` but keeps each card's URL,
+  etag and raw data alongside the parsed contact.
+
 ## 0.10.0 (2026-09-05)
 
 - **Contact groups** (#60): `list_groups`, `get_group`, `create_group`, `update_group` and

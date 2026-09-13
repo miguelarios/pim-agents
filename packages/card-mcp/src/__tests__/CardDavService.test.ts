@@ -404,6 +404,49 @@ describe("CardDavService", () => {
   });
 
   describe("renameAddressBook", () => {
+    it("refuses a display name another book already has, case-insensitively, without a request", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockClear();
+      await expect(
+        service.renameAddressBook("/dav/addressbooks/users/miguel/work/", {
+          displayName: "contacts",
+        }),
+      ).rejects.toMatchObject({
+        code: "OPERATION_FAILED",
+        message: expect.stringContaining("/dav/addressbooks/users/miguel/contacts/"),
+      });
+      expect(__mockClient.davRequest).not.toHaveBeenCalled();
+    });
+
+    it("lets a book keep its own name in a different case", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockResolvedValueOnce([
+        {
+          ok: true,
+          status: 207,
+          raw: { multistatus: { response: { propstat: { status: "HTTP/1.1 200 OK" } } } },
+        },
+      ]);
+      await service.renameAddressBook(
+        "https://cloud.example.com/dav/addressbooks/users/miguel/work/",
+        {
+          displayName: "WORK",
+        },
+      );
+      expect(__mockClient.davRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ init: expect.objectContaining({ method: "PROPPATCH" }) }),
+      );
+    });
+
+    it("refuses an empty display name before any request", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.davRequest.mockClear();
+      await expect(
+        service.renameAddressBook("/dav/a/work/", { displayName: "  " }),
+      ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+      expect(__mockClient.davRequest).not.toHaveBeenCalled();
+    });
+
     it("issues a namespaced PROPPATCH setting displayname", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.davRequest.mockResolvedValueOnce([
@@ -564,6 +607,26 @@ describe("CardDavService", () => {
       await expect(service.findAddressBook("Work")).rejects.toMatchObject({
         code: "ADDRESSBOOK_NOT_FOUND",
         message: expect.stringMatching(/\/dav\/a\/work\/.*\/dav\/b\/work\//s),
+      });
+    });
+  });
+
+  describe("fetchBook", () => {
+    it("returns each parsed contact with its card's URL, etag and data", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const data = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u1\r\nFN:Ada\r\nEND:VCARD";
+      __mockClient.fetchVCards.mockResolvedValueOnce([
+        { url: "/book/u1.vcf", etag: '"e1"', data },
+        { url: "/book/empty.vcf", etag: '"e2"' },
+      ]);
+      const entries = await service.fetchBook("/book/");
+      expect(entries).toHaveLength(1);
+      expect(entries[0].contact).toMatchObject({ uid: "u1", fullName: "Ada" });
+      expect(entries[0].located).toEqual({
+        bookUrl: "/book/",
+        url: "/book/u1.vcf",
+        etag: '"e1"',
+        data,
       });
     });
   });
