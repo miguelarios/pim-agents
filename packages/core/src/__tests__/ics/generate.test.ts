@@ -144,8 +144,6 @@ describe("generateVTimezoneIcs", () => {
 describe("generateEventIcs — shared VTIMEZONE", () => {
   it("keeps the VTIMEZONE in a calendar built earlier when another is built for the same zone", () => {
     const zone = ICAL.TimezoneService.get("America/Chicago")!;
-    const first = new ICAL.Component(["vcalendar", [], []]);
-    first.addSubcomponent(ICAL.Component.fromString(zone.component!.toString()));
     // Simulate the old behaviour's hazard: hold a component that shares the
     // service's zone object, then generate an event for the same zone.
     const shared = new ICAL.Component(["vcalendar", [], []]);
@@ -158,6 +156,5 @@ describe("generateEventIcs — shared VTIMEZONE", () => {
       timezone: "America/Chicago",
     });
     expect(shared.toString()).toContain("BEGIN:VTIMEZONE");
-    expect(first.toString()).toContain("BEGIN:VTIMEZONE");
   });
 });
