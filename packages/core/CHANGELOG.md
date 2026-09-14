@@ -2,7 +2,7 @@
 
 ## 0.12.1 (2026-09-14)
 
-- `updateMasterEventIcs` moves a series' `EXDATE` values and its overrides' `RECURRENCE-ID`s by the same delta as `DTSTART` when `start` changes. They were left at the old times, where they matched nothing: moving a series from 10:00 to 11:00 silently resurrected every cancelled occurrence and detached every per-occurrence edit (cal-mcp #40). Zoned values shift in wall-clock terms, `DATE` values by whole days.
+- `updateMasterEventIcs` moves a series' `EXDATE` and `RDATE` values and its overrides' `RECURRENCE-ID`s by the same delta as `DTSTART` when `start` changes. They were left at the old times, where they matched nothing: moving a series from 10:00 to 11:00 silently resurrected every cancelled occurrence, left every added occurrence pinned at the old slot, and detached every per-occurrence edit (cal-mcp #40). Zoned values shift in wall-clock terms, so exclusions stay at the same local hour across a DST change; `DATE` values shift by whole days.
 - `combineIcsComponents` removes an `EXDATE` that names the occurrence an override is being added for, since RFC 5545 §3.8.5.1 excludes the instance outright and the override would otherwise never show. Editing a cancelled occurrence with `update_event span: "this"` now brings it back; only the matching value of a multi-value `EXDATE` is dropped.
 - Tests now cover TZID-form, UTC-form and comma-separated multi-value `EXDATE`s through expansion, `addExdateToIcs` idempotency and plain edits.
 

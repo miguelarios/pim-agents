@@ -332,10 +332,11 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
   if (updates.end !== undefined) setTime("dtend", updates.end);
 
   // Moving the series moves its occurrences, so everything that names an
-  // occurrence by its old time — EXDATE exclusions and the RECURRENCE-ID of
-  // each override — has to move with it. Left at the old times they would
-  // match nothing: cancelled occurrences would come back and per-occurrence
-  // edits would silently detach.
+  // occurrence by its old time — EXDATE exclusions, RDATE additions and the
+  // RECURRENCE-ID of each override — has to move with it. Left at the old
+  // times they would match nothing: cancelled occurrences would come back,
+  // added ones would stay pinned at the old slot, and per-occurrence edits
+  // would silently detach.
   const newDtstart = master.getFirstPropertyValue("dtstart");
   if (
     updates.start !== undefined &&
@@ -345,10 +346,12 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
   ) {
     const deltaMs = newDtstart.toJSDate().getTime() - previousStartMs;
     if (deltaMs !== 0) {
-      for (const prop of master.getAllProperties("exdate")) {
-        prop.setValues(
-          prop.getValues().map((v) => (v instanceof ICAL.Time ? shiftTime(v, deltaMs) : v)),
-        );
+      for (const name of ["exdate", "rdate"] as const) {
+        for (const prop of master.getAllProperties(name)) {
+          prop.setValues(
+            prop.getValues().map((v) => (v instanceof ICAL.Time ? shiftTime(v, deltaMs) : v)),
+          );
+        }
       }
       for (const comp of root.getAllSubcomponents("vevent")) {
         const recurProp = comp.getFirstProperty("recurrence-id");
@@ -483,16 +486,6 @@ export function truncateRecurrenceIcs(
   return root.toString();
 }
 
-/** Whether a DATE or DATE-TIME value names the given occurrence instant. */
-function isSameOccurrence(time: ICAL.Time, occurrenceMs: number, allDay: boolean): boolean {
-  if (allDay && time.isDate) {
-    const ymd = `${time.year}-${String(time.month).padStart(2, "0")}-${String(time.day).padStart(2, "0")}`;
-    return ymd === new Date(occurrenceMs).toISOString().slice(0, 10);
-  }
-  if (allDay !== time.isDate) return false;
-  return time.toJSDate().getTime() === occurrenceMs;
-}
-
 /**
  * Splits a recurring series at `occurrenceDate` into two calendar objects:
  * `before`, the original series ended just before the cut (via
@@ -553,13 +546,13 @@ export function splitRecurrenceIcs(
   let isOccurrence = master
     .getAllProperties("rdate")
     .flatMap((p) => p.getValues())
-    .some((v) => v instanceof ICAL.Time && isSameOccurrence(v, cutMs, allDay));
+    .some((v) => v instanceof ICAL.Time && timeMatches(v, cutMs, allDay));
   for (let next = iterator.next(); next; next = iterator.next()) {
     if (timeIsBefore(next, cutMs, allDay)) {
       consumed++;
       continue;
     }
-    if (isSameOccurrence(next, cutMs, allDay)) isOccurrence = true;
+    if (timeMatches(next, cutMs, allDay)) isOccurrence = true;
     break;
   }
   if (!isOccurrence) {
