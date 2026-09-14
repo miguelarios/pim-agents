@@ -727,19 +727,21 @@ describe("EXDATE handling (#40)", () => {
   });
 
   it("moving the series moves an RDATE-added occurrence with it", () => {
+    // An extra 14:00 CST occurrence, a time the daily 10:00 rule never
+    // generates, so the expansion checks below can only be satisfied by RDATE.
     const series = zonedSeries().replace(
       "EXDATE:20260304T160000Z",
-      "EXDATE:20260304T160000Z\r\nRDATE:20260307T160000Z",
+      "EXDATE:20260304T160000Z\r\nRDATE:20260307T200000Z",
     );
-    expect(starts(series)).toContain("Std@03-07T16:00");
+    expect(starts(series)).toContain("Std@03-07T20:00");
     const moved = updateMasterEventIcs(series, {
       start: "2026-03-02T17:00:00.000Z",
       end: "2026-03-02T17:30:00.000Z",
       timezone: "America/Chicago",
     });
-    expect(moved).toContain("RDATE:20260307T170000Z");
-    expect(starts(moved)).toContain("Std@03-07T17:00");
-    expect(starts(moved)).not.toContain("Std@03-07T16:00");
+    expect(moved).toContain("RDATE:20260307T210000Z");
+    expect(starts(moved)).toContain("Std@03-07T21:00");
+    expect(starts(moved)).not.toContain("Std@03-07T20:00");
   });
 
   it("moving an all-day series shifts DATE-valued exclusions by whole days", () => {
