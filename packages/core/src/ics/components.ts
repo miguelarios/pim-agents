@@ -47,6 +47,51 @@ function parseRoot(ics: string): ICAL.Component {
   }
 }
 
+/** YYYY-MM-DD of a time's own calendar date, for DATE-valued comparisons. */
+function ymdOf(time: ICAL.Time): string {
+  return `${time.year}-${String(time.month).padStart(2, "0")}-${String(time.day).padStart(2, "0")}`;
+}
+
+/** Whether a DATE or DATE-TIME value names the given occurrence instant. */
+function timeMatches(time: ICAL.Time, occurrenceMs: number, allDay: boolean): boolean {
+  if (allDay && time.isDate)
+    return ymdOf(time) === new Date(occurrenceMs).toISOString().slice(0, 10);
+  if (allDay !== time.isDate) return false;
+  return time.toJSDate().getTime() === occurrenceMs;
+}
+
+/**
+ * Drops every EXDATE value on the master that names `occurrenceMs`. Used when
+ * an override is added for that occurrence: RFC 5545 §3.8.5.1 excludes the
+ * instance outright, so an override left behind an EXDATE is invisible.
+ */
+function removeExdate(master: ICAL.Component, occurrenceMs: number, allDay: boolean): boolean {
+  let removed = false;
+  for (const prop of master.getAllProperties("exdate")) {
+    const values = prop.getValues();
+    const kept = values.filter(
+      (v) => !(v instanceof ICAL.Time) || !timeMatches(v, occurrenceMs, allDay),
+    );
+    if (kept.length === values.length) continue;
+    removed = true;
+    if (kept.length === 0) master.removeProperty(prop);
+    else prop.setValues(kept);
+  }
+  return removed;
+}
+
+/**
+ * Shifts a date or date-time by `deltaMs`, in wall-clock terms for a zoned
+ * value (so a series moved from 10:00 to 11:00 keeps its exclusions at the
+ * same local hour across a DST change) and by whole days for a DATE.
+ */
+function shiftTime(time: ICAL.Time, deltaMs: number): ICAL.Time {
+  const shifted = time.clone();
+  if (time.isDate) shifted.adjust(Math.round(deltaMs / 86_400_000), 0, 0, 0);
+  else shifted.adjust(0, 0, 0, Math.round(deltaMs / 1000));
+  return shifted;
+}
+
 export function createExceptionComponent(
   masterIcs: string,
   componentType: "vevent" | "vtodo",
@@ -203,6 +248,14 @@ export function combineIcsComponents(masterIcs: string, exceptionComponent: stri
       masterRoot.removeSubcomponent(sub);
     }
   }
+
+  // An occurrence that was cancelled and is now being edited is being brought
+  // back on purpose: the exclusion has to go, or the override never shows.
+  const master = existing.find(
+    (sub) => sub.getFirstPropertyValue("uid") === exUid && !sub.getFirstProperty("recurrence-id"),
+  );
+  if (master) removeExdate(master, exRecurMs, exRecurId.isDate);
+
   masterRoot.addSubcomponent(exComp);
   return masterRoot.toString();
 }
@@ -273,8 +326,39 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
       prop.setParameter("tzid", effectiveTz);
     }
   };
+  const previousStartMs =
+    currentDtstart instanceof ICAL.Time ? currentDtstart.toJSDate().getTime() : null;
   if (updates.start !== undefined) setTime("dtstart", updates.start);
   if (updates.end !== undefined) setTime("dtend", updates.end);
+
+  // Moving the series moves its occurrences, so everything that names an
+  // occurrence by its old time — EXDATE exclusions and the RECURRENCE-ID of
+  // each override — has to move with it. Left at the old times they would
+  // match nothing: cancelled occurrences would come back and per-occurrence
+  // edits would silently detach.
+  const newDtstart = master.getFirstPropertyValue("dtstart");
+  if (
+    updates.start !== undefined &&
+    previousStartMs !== null &&
+    newDtstart instanceof ICAL.Time &&
+    master.getFirstProperty("rrule")
+  ) {
+    const deltaMs = newDtstart.toJSDate().getTime() - previousStartMs;
+    if (deltaMs !== 0) {
+      for (const prop of master.getAllProperties("exdate")) {
+        prop.setValues(
+          prop.getValues().map((v) => (v instanceof ICAL.Time ? shiftTime(v, deltaMs) : v)),
+        );
+      }
+      for (const comp of root.getAllSubcomponents("vevent")) {
+        const recurProp = comp.getFirstProperty("recurrence-id");
+        const recurId = recurProp?.getFirstValue();
+        if (recurProp && recurId instanceof ICAL.Time) {
+          recurProp.setValue(shiftTime(recurId, deltaMs));
+        }
+      }
+    }
+  }
 
   const setOrRemove = (propName: string, value: string | undefined) => {
     if (value === undefined) return;

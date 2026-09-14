@@ -610,3 +610,156 @@ describe("splitRecurrenceIcs", () => {
     expect(droppedOverrides).toBe(1);
   });
 });
+
+describe("EXDATE handling (#40)", () => {
+  const RANGE = { start: "2026-03-01T00:00:00Z", end: "2026-03-20T00:00:00Z" };
+  const starts = (ics: string) =>
+    parseIcsEvents(ics, RANGE).map((e) => `${e.title}@${e.start.slice(5, 16)}`);
+
+  /** A zoned daily series with one TZID-form and one UTC-form exclusion, plus an override. */
+  function zonedSeries(): string {
+    const base = generateEventIcs({
+      title: "Std",
+      start: "2026-03-02T16:00:00.000Z",
+      end: "2026-03-02T16:30:00.000Z",
+      uid: "exdate@pim-core",
+      recurrence_rule: "FREQ=DAILY;COUNT=6",
+      timezone: "America/Chicago",
+    }).replace(
+      "RRULE:FREQ=DAILY;COUNT=6",
+      "RRULE:FREQ=DAILY;COUNT=6\r\nEXDATE;TZID=America/Chicago:20260303T100000\r\nEXDATE:20260304T160000Z",
+    );
+    return combineIcsComponents(
+      base,
+      createExceptionComponent(
+        base,
+        "vevent",
+        "2026-03-06T16:00:00.000Z",
+        { title: "moved6" },
+        false,
+      ),
+    );
+  }
+
+  it("expands with TZID-form, UTC-form and multi-value EXDATEs all honoured", () => {
+    const multi = zonedSeries().replace(
+      "EXDATE;TZID=America/Chicago:20260303T100000\r\nEXDATE:20260304T160000Z",
+      "EXDATE;TZID=America/Chicago:20260303T100000,20260304T100000",
+    );
+    expect(starts(zonedSeries())).toEqual([
+      "Std@03-02T16:00",
+      "Std@03-05T16:00",
+      "moved6@03-06T16:00",
+      "Std@03-07T16:00",
+    ]);
+    expect(starts(multi)).toEqual(starts(zonedSeries()));
+  });
+
+  it("addExdateToIcs is idempotent against TZID-form and multi-value exclusions", () => {
+    const ics = zonedSeries();
+    expect(addExdateToIcs(ics, "2026-03-03T16:00:00.000Z", false)).toBe(ics);
+    expect(addExdateToIcs(ics, "2026-03-04T16:00:00.000Z", false)).toBe(ics);
+    const multi = ics.replace(
+      "EXDATE;TZID=America/Chicago:20260303T100000\r\nEXDATE:20260304T160000Z",
+      "EXDATE;TZID=America/Chicago:20260303T100000,20260304T100000",
+    );
+    expect(addExdateToIcs(multi, "2026-03-04T16:00:00.000Z", false)).toBe(multi);
+  });
+
+  it("a plain field edit on the master leaves every exclusion in place", () => {
+    const edited = updateMasterEventIcs(zonedSeries(), { title: "Renamed" });
+    expect(edited).toContain("EXDATE;TZID=America/Chicago:20260303T100000");
+    expect(edited).toContain("EXDATE:20260304T160000Z");
+    expect(starts(edited)).toEqual([
+      "Renamed@03-02T16:00",
+      "Renamed@03-05T16:00",
+      "moved6@03-06T16:00",
+      "Renamed@03-07T16:00",
+    ]);
+  });
+
+  it("moving the series moves its exclusions and overrides with it", () => {
+    const moved = updateMasterEventIcs(zonedSeries(), {
+      start: "2026-03-02T17:00:00.000Z",
+      end: "2026-03-02T17:30:00.000Z",
+      timezone: "America/Chicago",
+    });
+    expect(moved).toContain("EXDATE;TZID=America/Chicago:20260303T110000");
+    expect(moved).toContain("EXDATE:20260304T170000Z");
+    expect(moved).toContain("RECURRENCE-ID:20260306T170000Z");
+    // Cancelled occurrences stay cancelled; the override still applies and
+    // keeps the time it was explicitly given.
+    expect(starts(moved)).toEqual([
+      "Std@03-02T17:00",
+      "Std@03-05T17:00",
+      "moved6@03-06T16:00",
+      "Std@03-07T17:00",
+    ]);
+  });
+
+  it("moving an all-day series shifts DATE-valued exclusions by whole days", () => {
+    const allDay = generateEventIcs({
+      title: "Day",
+      start: "2026-03-02T00:00:00.000Z",
+      end: "2026-03-03T00:00:00.000Z",
+      uid: "exdate-all-day@pim-core",
+      all_day: true,
+      recurrence_rule: "FREQ=DAILY;COUNT=5",
+    });
+    const excluded = addExdateToIcs(allDay, "2026-03-04T00:00:00.000Z", true);
+    const moved = updateMasterEventIcs(excluded, {
+      start: "2026-03-09T00:00:00.000Z",
+      end: "2026-03-10T00:00:00.000Z",
+    });
+    expect(moved).toContain("EXDATE;VALUE=DATE:20260311");
+    expect(parseIcsEvents(moved, RANGE).map((e) => e.start.slice(5, 10))).toEqual([
+      "03-09",
+      "03-10",
+      "03-12",
+      "03-13",
+    ]);
+  });
+
+  it("editing a cancelled occurrence brings it back as the override", () => {
+    const ics = zonedSeries();
+    const back = combineIcsComponents(
+      ics,
+      createExceptionComponent(
+        ics,
+        "vevent",
+        "2026-03-04T16:00:00.000Z",
+        { title: "back4" },
+        false,
+      ),
+    );
+    expect(back).not.toContain("EXDATE:20260304T160000Z");
+    expect(back).toContain("EXDATE;TZID=America/Chicago:20260303T100000");
+    expect(starts(back)).toEqual([
+      "Std@03-02T16:00",
+      "back4@03-04T16:00",
+      "Std@03-05T16:00",
+      "moved6@03-06T16:00",
+      "Std@03-07T16:00",
+    ]);
+  });
+
+  it("drops only the matching value from a multi-value EXDATE", () => {
+    const multi = zonedSeries().replace(
+      "EXDATE;TZID=America/Chicago:20260303T100000\r\nEXDATE:20260304T160000Z",
+      "EXDATE;TZID=America/Chicago:20260303T100000,20260304T100000",
+    );
+    const back = combineIcsComponents(
+      multi,
+      createExceptionComponent(
+        multi,
+        "vevent",
+        "2026-03-04T16:00:00.000Z",
+        { title: "back4" },
+        false,
+      ),
+    );
+    expect(back).toContain("EXDATE;TZID=America/Chicago:20260303T100000\r\n");
+    expect(back).not.toContain("20260304T100000");
+    expect(starts(back)).toContain("back4@03-04T16:00");
+  });
+});
