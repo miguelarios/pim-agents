@@ -210,6 +210,26 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect((result.structuredContent as { events: unknown[] }).events).toHaveLength(1);
   });
 
+  it("queries only the calendars named in `calendars` over the wire (#49)", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "list_events",
+      arguments: {
+        start: "2026-08-01T00:00:00Z",
+        end: "2026-08-02T00:00:00Z",
+        calendars: ["mailbox/Work", "mailbox/Team"],
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(service.listCalendars).not.toHaveBeenCalled();
+    expect(service.listEvents.mock.calls.map((c) => c[0])).toEqual([
+      "mailbox/Work",
+      "mailbox/Team",
+    ]);
+  });
+
   it("rejects malformed arguments without running the handler", async () => {
     const service = fakeService();
     const { client } = await connect(era, service);

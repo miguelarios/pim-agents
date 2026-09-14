@@ -175,6 +175,17 @@ describe("calendarTools", () => {
     expect((tool.inputSchema as any).required).not.toContain("calendars");
   });
 
+  it("the three read tools expose a `calendars` array alongside `calendar` (#49)", () => {
+    for (const name of ["list_events", "get_today_events", "search_events"]) {
+      const tool = CALENDAR_TOOLS.find((t) => t.name === name)!;
+      const props = (tool.inputSchema as any).properties;
+      expect(props.calendar?.type, name).toBe("string");
+      expect(props.calendars?.type, name).toBe("array");
+      expect(props.calendars.items.type, name).toBe("string");
+      expect((tool.inputSchema as any).required ?? [], name).not.toContain("calendars");
+    }
+  });
+
   it("list_events schema has detail_level and optional calendar", () => {
     const tool = CALENDAR_TOOLS.find((t) => t.name === "list_events")!;
     const props = (tool.inputSchema as any).properties;
@@ -637,6 +648,95 @@ describe("calendarTools", () => {
       expect(mockService.listEventsFull).toHaveBeenCalledTimes(2);
       expect(mockService.listEvents).not.toHaveBeenCalled();
       expect(mockService.getEvent).not.toHaveBeenCalled();
+    });
+
+    it("list_events with `calendars` queries exactly those, without listing calendars (#49)", async () => {
+      mockService.listEvents
+        .mockResolvedValueOnce([{ uid: "a", calendar_id: "prov/A" }])
+        .mockResolvedValueOnce([{ uid: "b", calendar_id: "prov/B" }]);
+
+      const result = await handleCalendarTool(
+        "list_events",
+        { start: "2026-03-01", end: "2026-03-31", calendars: ["prov/A", "prov/B"] },
+        mockService as any,
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.events.map((e: { uid: string }) => e.uid).sort()).toEqual(["a", "b"]);
+      expect(mockService.listCalendars).not.toHaveBeenCalled();
+      expect(mockService.listEvents.mock.calls.map((c) => c[0])).toEqual(["prov/A", "prov/B"]);
+    });
+
+    it("list_events unions `calendar` and `calendars`, deduplicated (#49)", async () => {
+      mockService.listEvents.mockResolvedValue([]);
+
+      await handleCalendarTool(
+        "list_events",
+        {
+          start: "2026-03-01",
+          end: "2026-03-31",
+          calendar: "prov/A",
+          calendars: ["prov/A", "prov/B"],
+        },
+        mockService as any,
+      );
+
+      expect(mockService.listEvents.mock.calls.map((c) => c[0]).sort()).toEqual([
+        "prov/A",
+        "prov/B",
+      ]);
+    });
+
+    it("list_events with an empty `calendars` falls back to every calendar (#49)", async () => {
+      mockService.listCalendars.mockResolvedValueOnce([{ calendar_id: "prov/Only" }]);
+      mockService.listEvents.mockResolvedValue([]);
+
+      await handleCalendarTool(
+        "list_events",
+        { start: "2026-03-01", end: "2026-03-31", calendars: [] },
+        mockService as any,
+      );
+
+      expect(mockService.listCalendars).toHaveBeenCalledTimes(1);
+      expect(mockService.listEvents).toHaveBeenCalledWith("prov/Only", "2026-03-01", "2026-03-31");
+    });
+
+    it("list_events reports an unknown calendar in `calendars` as not_found (#49)", async () => {
+      mockService.listEvents.mockRejectedValueOnce(
+        Object.assign(new Error('Calendar "Nope" not found on provider "prov"'), {
+          code: "CALENDAR_NOT_FOUND",
+        }),
+      );
+
+      const result = await handleCalendarTool(
+        "list_events",
+        { start: "2026-03-01", end: "2026-03-31", calendars: ["prov/Nope"] },
+        mockService as any,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toBe("not_found");
+    });
+
+    it("get_today_events and search_events honour `calendars` (#49)", async () => {
+      mockService.listEvents.mockResolvedValue([]);
+      await handleCalendarTool(
+        "get_today_events",
+        { calendars: ["prov/A", "prov/B"] },
+        mockService as any,
+      );
+      expect(mockService.listCalendars).not.toHaveBeenCalled();
+      expect(mockService.listEvents.mock.calls.map((c) => c[0])).toEqual(["prov/A", "prov/B"]);
+
+      vi.clearAllMocks();
+      mockService.listEvents.mockResolvedValue([]);
+      await handleCalendarTool(
+        "search_events",
+        { query: "x", calendars: ["prov/B"] },
+        mockService as any,
+      );
+      expect(mockService.listCalendars).not.toHaveBeenCalled();
+      expect(mockService.listEvents.mock.calls.map((c) => c[0])).toEqual(["prov/B"]);
     });
 
     it("get_today_events detail_level=full uses listEventsFull", async () => {

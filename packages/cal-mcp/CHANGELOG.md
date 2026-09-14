@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0 (2026-09-14)
+
+- `list_events`, `get_today_events` and `search_events` take a `calendars` array, so a query can be limited to a chosen set of calendars instead of one or all of them (#49). The existing single `calendar` still works; when both are given the sets are unioned, so a caller gets exactly the calendars it named. The named calendars are queried in parallel without a `list_calendars` round trip, and an unknown ID is reported as `not_found` rather than silently skipped.
+
 ## 0.13.0 (2026-08-28)
 
 - `create_calendar` — create a calendar collection with `MKCALENDAR` (RFC 4791 §5.3.1). Display name, description, and colour ride in the one atomic request, so a refused property cannot leave a half-configured calendar behind. On multi-provider setups `provider` names the account to create on; it defaults only when a single account is configured, and is refused with the list of provider IDs otherwise rather than guessed (#43).
