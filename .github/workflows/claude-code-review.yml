@@ -2,17 +2,15 @@ name: Claude Code Review
 
 on:
   pull_request:
-    # One review per PR, when it is opened or leaves draft. Not on every push:
-    # a re-review after each fix-up round reads the whole diff again and
-    # always finds something new to say, which turns a PR into a loop of
-    # fix, re-review, fix. Ask for another pass with @claude (claude.yml).
+    # One review per PR, when it is opened or leaves draft. NOT on every push:
+    # a re-review after each fix-up round reads the whole diff again and always
+    # finds something new to say, which turns a PR into a loop of fix,
+    # re-review, fix — and burns quota for no added signal.
+    # Ask for another pass with @claude (claude.yml).
     types: [opened, ready_for_review]
-    # Stacked PRs are reviewed once they are retargeted to main, not while
-    # they sit on another feature branch and every base push re-triggers.
+    # Stacked PRs are reviewed once retargeted to main, not while they sit on
+    # another feature branch where every base push re-triggers.
     branches: [main]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "packages/**/*.ts"
 
 jobs:
   claude-review:
@@ -39,25 +37,42 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
 
             Review this pull request for bugs, data loss, security problems, and
-            missing tests for the behaviour it changes. Read the PR description and
-            the design doc it links first; they record decisions and rejected
+            missing tests for the behaviour it changes. Read the PR description
+            and anything it links first; they record decisions and rejected
             alternatives, so do not re-raise what they already answer.
 
-            Post only what you have verified against the code:
-            - Blocking findings: a concrete failure scenario each, with the file
-              and line. Verify the finding on the PR's current head before
-              posting; do not report something an earlier comment on this PR
-              already raised.
-            - At most two non-blocking notes, and only if they change what the
-              author should do. Skip style, naming, wording and "could be
-              tightened" observations; Biome and the repo conventions cover style.
-            - If nothing blocks, say so in one or two lines. Do not list what
-              looks good.
+            Post only what you have verified against the code on this PR's
+            current head. Do not repeat a point an earlier comment already made.
+
+            Structure the comment exactly like this, omitting any empty section:
+
+            **Blocking** — findings that should stop a merge. Each needs a
+            concrete failure scenario and the file and line. If there are none,
+            do not write the heading.
+
+            **Worth verifying before merge** — at most two. Only include a note
+            if it changes what the author should actually do. A claim in the PR
+            that is not backed by pasted evidence belongs here.
+
+            **Minor** — at most one, and only if it is genuinely actionable.
+            Skip style, naming, wording, and "could be tightened" observations;
+            the repo's linter and conventions cover those.
+
+            Close with a single line on what is solid. One line, not a list, and
+            not a restatement of the diff.
+
+            If nothing blocks and nothing needs verifying, say so in one or two
+            lines and stop.
 
             Use the repository's CLAUDE.md for conventions.
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            Use `gh pr comment` with your Bash tool to leave your review as a
+            comment on the PR.
 
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          # --model pins the review model so it does not drift with defaults.
+          # --max-turns is the real cost ceiling: it bounds a runaway review
+          # regardless of how much the prompt asks for.
+          claude_args: >-
+            --model claude-fable-5-1
+            --max-turns 15
+            --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
