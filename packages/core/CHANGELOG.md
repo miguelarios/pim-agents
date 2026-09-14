@@ -2,7 +2,7 @@
 
 ## 0.12.0 (2026-09-14)
 
-- `splitRecurrenceIcs(ics, occurrenceDate, allDay, newUid)` — splits a recurring series at an occurrence into `before` (the original ended just before it, via `truncateRecurrenceIcs`) and `after` (a copy of the master under `newUid`, starting at the occurrence, with a `COUNT` reduced by the instances already consumed, later `EXDATE`/`RDATE` values kept and earlier ones dropped, `SEQUENCE` reset, and no overrides). Returns `null` at or before the first occurrence, and throws when no occurrence remains at or after the cut (cal-mcp #38).
+- `splitRecurrenceIcs(ics, occurrenceDate, allDay, newUid)` — splits a recurring series at an occurrence into `before` (the original ended just before it, via `truncateRecurrenceIcs`) and `after` (a copy of the master under `newUid`, starting at the occurrence, with a `COUNT` reduced by the instances already consumed, later `EXDATE`/`RDATE` values kept and earlier ones dropped, `SEQUENCE` reset, and no overrides), plus `droppedOverrides`, the number of overrides at or after the cut that neither half keeps. Returns `null` at or before the first occurrence, and throws when the date is not an occurrence the series generates — a rule instance or an `RDATE` (cal-mcp #38).
 
 ## 0.11.0 (2026-09-14)
 

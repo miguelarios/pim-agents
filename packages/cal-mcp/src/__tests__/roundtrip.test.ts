@@ -360,6 +360,67 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     );
   });
 
+  it("confirms before a span=future split discards an override, then proceeds (#38)", async () => {
+    // An override on 6 August, after the 5 August cut, is what the split loses.
+    const withOverride = RECURRING_ICS.replace(
+      "END:VCALENDAR",
+      [
+        "BEGIN:VEVENT",
+        "UID:evt-1",
+        "RECURRENCE-ID:20260806T090000Z",
+        "DTSTAMP:20260701T000000Z",
+        "DTSTART:20260806T100000Z",
+        "DTEND:20260806T101500Z",
+        "SUMMARY:Standup moved",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n"),
+    );
+    const service = fakeService();
+    service.getEventWithMeta.mockResolvedValue({
+      event: { ...EVENT, is_recurring: true },
+      meta: { url: "u", etag: "e" },
+    });
+    service.fetchRawCalendarObject.mockResolvedValue({ data: withOverride, url: "u", etag: "e" });
+    service.createEvent.mockImplementation(async (_cal: string, _ics: string, uid: string) => ({
+      ...EVENT,
+      uid,
+    }));
+
+    const declined = await connect(era, service, { action: "decline" });
+    const refused = await declined.client.callTool({
+      name: "update_event",
+      arguments: {
+        calendar: "mailbox/Work",
+        uid: "evt-1",
+        span: "future",
+        occurrence_date: "2026-08-05T09:00:00.000Z",
+        title: "Standup v2",
+      },
+    });
+    expect(declined.elicitations).toHaveLength(1);
+    expect(JSON.stringify(declined.elicitations[0])).toContain("discards 1 per-occurrence change");
+    expect(refused.isError).toBe(true);
+    expect(service.createEvent).not.toHaveBeenCalled();
+    expect(service.updateEvent).not.toHaveBeenCalled();
+
+    const accepted = await connect(era, service, { action: "accept", content: { confirm: true } });
+    const result = await accepted.client.callTool({
+      name: "update_event",
+      arguments: {
+        calendar: "mailbox/Work",
+        uid: "evt-1",
+        span: "future",
+        occurrence_date: "2026-08-05T09:00:00.000Z",
+        title: "Standup v2",
+      },
+    });
+    expect(accepted.elicitations).toHaveLength(1);
+    expect(result.isError).toBeFalsy();
+    expect(service.createEvent).toHaveBeenCalledTimes(1);
+    expect(service.updateEvent).toHaveBeenCalledTimes(1);
+  });
+
   it("excludes a single occurrence of a recurring event without asking", async () => {
     const service = fakeService();
     service.getEventWithMeta.mockResolvedValue({
