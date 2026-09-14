@@ -122,7 +122,15 @@ interface BusyCandidate {
   calendar_id: string;
 }
 
-/** Merges overlapping or touching periods of the same type; output is sorted by start. */
+/**
+ * Merges overlapping or touching periods of the same type; output is sorted
+ * by start. Periods are visited in start order, so by the time one is
+ * considered every merged interval of its type that could overlap it already
+ * exists, and there is at most one: two intervals of the same type that
+ * overlapped each other would have been merged when the second arrived. That
+ * is why matching against any existing interval, not just the last, is both
+ * safe and needed — the last interval may be of another type.
+ */
 export function mergeFreeBusy(periods: FreeBusyPeriod[]): FreeBusyPeriod[] {
   const sorted = [...periods].sort(
     (a, b) => a.start.localeCompare(b.start) || a.type.localeCompare(b.type),
@@ -1366,6 +1374,8 @@ export class CalDavService {
         headers: {
           Authorization: `Basic ${Buffer.from(`${account.username}:${account.password}`).toString("base64")}`,
           "Content-Type": "application/xml; charset=utf-8",
+          // As in the RFC 4791 §7.10.1 example: the report is applied to the
+          // collection's members, with the time-range in the body as scope.
           Depth: "1",
         },
         body,
