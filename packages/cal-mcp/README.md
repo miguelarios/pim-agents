@@ -39,7 +39,7 @@ Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_N
 
 Optional env vars: `PIM_TIMEZONE`.
 
-## Tools (11)
+## Tools (16)
 
 See [docs/tools/cal-mcp.md](../../docs/tools/cal-mcp.md) for full parameter and output details.
 
@@ -57,6 +57,10 @@ See [docs/tools/cal-mcp.md](../../docs/tools/cal-mcp.md) for full parameter and 
 | `create_events_batch` | Create multiple events at once |
 | `import_ics` | Import events from .ics content |
 | `find_free_slots` | Find available time slots across calendars |
+| `get_free_busy` | Busy periods in a range, typed, without event details |
+| `create_calendar` | Create a calendar collection |
+| `update_calendar` | Rename or recolour a calendar |
+| `delete_calendar` | Delete a calendar and every event in it |
 
 ## License
 

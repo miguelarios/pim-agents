@@ -39,7 +39,7 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `get_email_raw` | Export email as raw .eml, as an embedded `message/rfc822` resource |
 | `get_folder_status` | Get total and unread message counts for a folder |
 
-### [Calendar (15 tools)](docs/tools/cal-mcp.md)
+### [Calendar (16 tools)](docs/tools/cal-mcp.md)
 
 | Tool | Description |
 |------|-------------|

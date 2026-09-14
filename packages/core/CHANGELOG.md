@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.0 (2026-09-14)
+
+- `parseIcsFreeBusy(ics)` and the `FreeBusyPeriod` / `FreeBusyType` types — reads the `FREEBUSY` periods out of a `VFREEBUSY` reply (a CalDAV `free-busy-query` REPORT or an iTIP reply), resolving `start/duration` forms to ends, mapping `FBTYPE` to `busy` / `tentative` / `unavailable` (unknown and x-name types count as busy, per RFC 5545) and dropping `FREE` periods (cal-mcp #48).
+
 ## 0.12.1 (2026-09-14)
 
 - `updateMasterEventIcs` moves a series' `EXDATE` and `RDATE` values and its overrides' `RECURRENCE-ID`s by the same delta as `DTSTART` when `start` changes. They were left at the old times, where they matched nothing: moving a series from 10:00 to 11:00 silently resurrected every cancelled occurrence, left every added occurrence pinned at the old slot, and detached every per-occurrence edit (cal-mcp #40). Zoned values shift in wall-clock terms, so exclusions stay at the same local hour across a DST change; `DATE` values shift by whole days.

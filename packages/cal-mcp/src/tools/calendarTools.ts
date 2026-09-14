@@ -34,6 +34,7 @@ import {
   calendarListSchema,
   deleteResultSchema,
   eventListSchema,
+  freeBusySchema,
   freeSlotsSchema,
   importResultSchema,
   singleEventSchema,
@@ -1045,6 +1046,72 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           imported: importedEvents.length,
           ...(failed.length > 0 ? { failed } : {}),
           events: importedEvents,
+        });
+      }),
+  },
+  {
+    name: "get_free_busy",
+    title: "Get Free/Busy",
+    description:
+      "When is a calendar busy? Returns the busy periods in a date range — merged, typed as busy, tentative or unavailable — without event details, so availability questions cost one call and expose nothing else. Uses the server's own free-busy-query where it supports one, otherwise computes from the events. Use find_free_slots to get the free windows of a given length instead.",
+    annotations: READ_ONLY,
+    inputSchema: {
+      type: "object",
+      properties: {
+        calendars: {
+          type: "array",
+          items: { type: "string", description: "Provider-prefixed calendar ID" },
+          description:
+            "Provider-prefixed calendar IDs to report on. If omitted, uses all calendars.",
+        },
+        start: { type: "string", description: "Start of range (ISO 8601)" },
+        end: { type: "string", description: "End of range (ISO 8601)" },
+        include_all_day_as_busy: {
+          type: "boolean",
+          description:
+            "Treat all-day events as busy when computing from events (default: false). A server-side answer decides this itself.",
+        },
+        ignore_tentative: {
+          type: "boolean",
+          description: "If true, tentative periods are left out (default: false)",
+        },
+      },
+      required: ["start", "end"],
+    },
+    outputSchema: freeBusySchema,
+    handler: (
+      args: {
+        calendars?: string[];
+        start: string;
+        end: string;
+        include_all_day_as_busy?: boolean;
+        ignore_tentative?: boolean;
+      },
+      service,
+    ) =>
+      run(async () => {
+        const startMs = new Date(args.start).getTime();
+        const endMs = new Date(args.end).getTime();
+        if (Number.isNaN(startMs) || Number.isNaN(endMs) || startMs >= endMs) {
+          return calFail(
+            "validation_error",
+            "start and end must be ISO 8601 with start before end",
+          );
+        }
+        let calendarIds = args.calendars;
+        if (!calendarIds || calendarIds.length === 0) {
+          calendarIds = (await service.listCalendars()).map((c) => c.calendar_id);
+        }
+        const { busy, sources } = await service.getFreeBusy(calendarIds, args.start, args.end, {
+          includeAllDayAsBusy: args.include_all_day_as_busy ?? false,
+          ignoreTentative: args.ignore_tentative ?? false,
+        });
+        return ok({
+          start: new Date(startMs).toISOString(),
+          end: new Date(endMs).toISOString(),
+          busy,
+          count: busy.length,
+          sources,
         });
       }),
   },

@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { CalDavService, buildCanonicalHref } from "../services/CalDavService.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { CalDavService, buildCanonicalHref, mergeFreeBusy } from "../services/CalDavService.js";
 
 // Mock tsdav — same pattern as card-mcp
 vi.mock("tsdav", () => {
@@ -36,7 +36,8 @@ vi.mock("tsdav", () => {
 });
 
 // Mock ical helpers
-vi.mock("@miguelarios/pim-core/ics", () => ({
+vi.mock("@miguelarios/pim-core/ics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@miguelarios/pim-core/ics")>()),
   parseIcsEvents: vi.fn().mockReturnValue([]),
   generateEventIcs: vi.fn().mockReturnValue("BEGIN:VCALENDAR\nEND:VCALENDAR"),
 }));
@@ -1333,6 +1334,201 @@ describe("CalDavService", () => {
       );
       // Initial DELETE + one retry
       expect(__mockClient.deleteCalendarObject).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("getFreeBusy (#48)", () => {
+    const VFREEBUSY = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//server//EN",
+      "BEGIN:VFREEBUSY",
+      "DTSTART:20260310T080000Z",
+      "DTEND:20260310T170000Z",
+      "FREEBUSY:20260310T090000Z/20260310T100000Z",
+      "FREEBUSY;FBTYPE=BUSY-TENTATIVE:20260310T140000Z/20260310T150000Z",
+      "END:VFREEBUSY",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const serverReply = (ok = true) =>
+      vi.fn().mockResolvedValue({
+        ok,
+        status: ok ? 200 : 403,
+        headers: new Headers({ "content-type": ok ? "text/calendar; charset=utf-8" : "text/html" }),
+        text: async () => (ok ? VFREEBUSY : "<html>Forbidden</html>"),
+      });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("asks the server with a free-busy-query REPORT and returns its typed periods", async () => {
+      const fetchMock = serverReply();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await service.getFreeBusy(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://dav.mailbox.org/caldav/work/");
+      expect(init.method).toBe("REPORT");
+      expect(init.headers.Depth).toBe("0");
+      expect(init.headers.Authorization).toMatch(/^Basic /);
+      expect(init.body).toContain("<C:free-busy-query");
+      expect(init.body).toContain('start="20260310T080000Z" end="20260310T170000Z"');
+      expect(result.sources).toEqual({ "mailbox/Work": "server" });
+      expect(result.busy).toEqual([
+        { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
+        { start: "2026-03-10T14:00:00.000Z", end: "2026-03-10T15:00:00.000Z", type: "tentative" },
+      ]);
+      const { __mockClient } = (await import("tsdav")) as any;
+      expect(__mockClient.fetchCalendarObjects).not.toHaveBeenCalled();
+    });
+
+    it("drops tentative periods from a server answer when asked to", async () => {
+      vi.stubGlobal("fetch", serverReply());
+      const result = await service.getFreeBusy(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+        { ignoreTentative: true },
+      );
+      expect(result.busy.map((p) => p.type)).toEqual(["busy"]);
+    });
+
+    it("computes from the events when the server declines the report", async () => {
+      vi.stubGlobal("fetch", serverReply(false));
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("@miguelarios/pim-core/ics")) as any;
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "ics-0", url: "/cal/evt-0.ics", etag: '"e0"' },
+      ]);
+      parseIcsEvents.mockReturnValueOnce([
+        {
+          uid: "a",
+          start: "2026-03-10T09:00:00.000Z",
+          end: "2026-03-10T10:00:00.000Z",
+          all_day: false,
+          status: "confirmed",
+          availability: "busy",
+        },
+        {
+          uid: "b",
+          start: "2026-03-10T09:30:00.000Z",
+          end: "2026-03-10T11:00:00.000Z",
+          all_day: false,
+          status: "tentative",
+          availability: "busy",
+        },
+        {
+          uid: "c",
+          start: "2026-03-10T12:00:00.000Z",
+          end: "2026-03-10T13:00:00.000Z",
+          all_day: false,
+          status: "confirmed",
+          availability: "free",
+        },
+        {
+          uid: "d",
+          start: "2026-03-10T00:00:00.000Z",
+          end: "2026-03-11T00:00:00.000Z",
+          all_day: true,
+          status: "confirmed",
+          availability: "busy",
+        },
+      ]);
+
+      const result = await service.getFreeBusy(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+      );
+
+      expect(result.sources).toEqual({ "mailbox/Work": "computed" });
+      // Free and all-day events do not block; tentative keeps its own type.
+      expect(result.busy).toEqual([
+        { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
+        { start: "2026-03-10T09:30:00.000Z", end: "2026-03-10T11:00:00.000Z", type: "tentative" },
+      ]);
+    });
+
+    it("clips an all-day event to the range when it counts as busy", async () => {
+      vi.stubGlobal("fetch", serverReply(false));
+      const { __mockClient } = (await import("tsdav")) as any;
+      const { parseIcsEvents } = (await import("@miguelarios/pim-core/ics")) as any;
+      __mockClient.fetchCalendarObjects.mockResolvedValue([
+        { data: "ics-0", url: "/cal/evt-0.ics", etag: '"e0"' },
+      ]);
+      parseIcsEvents.mockReturnValueOnce([
+        {
+          uid: "d",
+          start: "2026-03-10T00:00:00.000Z",
+          end: "2026-03-11T00:00:00.000Z",
+          all_day: true,
+          status: "confirmed",
+          availability: "busy",
+        },
+      ]);
+      const result = await service.getFreeBusy(
+        ["mailbox/Work"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+        { includeAllDayAsBusy: true },
+      );
+      expect(result.busy).toEqual([
+        { start: "2026-03-10T08:00:00.000Z", end: "2026-03-10T17:00:00.000Z", type: "busy" },
+      ]);
+    });
+
+    it("reports the source per calendar when they differ", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/calendar" }),
+          text: async () => VFREEBUSY,
+        })
+        .mockRejectedValueOnce(new Error("ECONNRESET"));
+      vi.stubGlobal("fetch", fetchMock);
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchCalendarObjects.mockResolvedValue([]);
+
+      const result = await service.getFreeBusy(
+        ["mailbox/Work", "mailbox/Personal"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+      );
+      expect(result.sources).toEqual({ "mailbox/Work": "server", "mailbox/Personal": "computed" });
+    });
+
+    it("throws CalendarError for an unknown calendar", async () => {
+      vi.stubGlobal("fetch", serverReply());
+      await expect(
+        service.getFreeBusy(["mailbox/Nope"], "2026-03-10T08:00:00Z", "2026-03-10T17:00:00Z"),
+      ).rejects.toMatchObject({ code: "CALENDAR_NOT_FOUND" });
+    });
+  });
+
+  describe("mergeFreeBusy", () => {
+    it("merges overlapping and touching periods of the same type only", () => {
+      expect(
+        mergeFreeBusy([
+          { start: "2026-03-10T10:00:00.000Z", end: "2026-03-10T11:00:00.000Z", type: "busy" },
+          { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
+          { start: "2026-03-10T10:30:00.000Z", end: "2026-03-10T11:30:00.000Z", type: "tentative" },
+          { start: "2026-03-10T13:00:00.000Z", end: "2026-03-10T14:00:00.000Z", type: "busy" },
+        ]),
+      ).toEqual([
+        { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T11:00:00.000Z", type: "busy" },
+        { start: "2026-03-10T10:30:00.000Z", end: "2026-03-10T11:30:00.000Z", type: "tentative" },
+        { start: "2026-03-10T13:00:00.000Z", end: "2026-03-10T14:00:00.000Z", type: "busy" },
+      ]);
     });
   });
 

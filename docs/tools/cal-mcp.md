@@ -1,6 +1,6 @@
 # Calendar MCP Tools
 
-`@miguelarios/cal-mcp` — CalDAV calendar server with 15 tools.
+`@miguelarios/cal-mcp` — CalDAV calendar server with 16 tools.
 
 > Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts` (events) and `packages/cal-mcp/src/tools/calendarManagementTools.ts` (calendar collections). Output shapes from `packages/cal-mcp/src/services/CalDavService.ts`.
 
@@ -166,6 +166,24 @@ When `span: "this"` is applied to a recurring event, the response reflects the m
 
 When `span: "future"` is applied to a recurring event, the series is split at the occurrence: the existing object is ended just before it (`UNTIL` on its `RRULE`, keeping earlier occurrences and their overrides), and a **new calendar object with a new UID** carries the remaining pattern with the changes applied — the response is that new series' event, so use its `uid` for later edits. A `COUNT` is reduced by the occurrences already consumed; `EXDATE`s and `RDATE`s are divided between the two halves; per-occurrence overrides at or after the cut are not carried over, and when there are any the user is asked to confirm first (`confirm_update_event`), since that is the one thing this update can lose. `occurrence_date` must be an occurrence the series actually generates (a rule instance or an `RDATE`), otherwise `validation_error`: a nearby date would silently become the new series' start and shift every later occurrence. A cut at the first occurrence is the same as `span: "all"`. The new series is written before the old one is cut, so a failure part-way leaves a visible duplicate tail rather than missing occurrences. Giving `start` without `end` keeps the series' duration.
 
+## move_event
+
+Move an event to another calendar, equivalent to reassigning its calendar in a CalDAV client. Both calendars must belong to the same account: the move is a WebDAV `MOVE` of the calendar object, with `If-Match` on the current etag and one retry on `412`.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID the event is in. |
+| `uid` | string | yes | Event UID to move. |
+| `target_calendar` | string | yes | Destination provider-prefixed calendar ID, on the same account. |
+
+**Output**
+
+```ts
+{ event: EventFull }   // as read back from the target calendar
+```
+
 ## delete_event
 
 Delete a calendar event by UID.
@@ -224,6 +242,38 @@ Import events from iCalendar (.ics) content into a calendar.
 ```
 
 Errors with `validation_error` if no events parse from the ICS content.
+
+## get_free_busy
+
+When is a calendar busy? Returns the busy periods in a date range — merged, typed as `busy`, `tentative` or `unavailable` — without event details, so availability questions cost one call and expose nothing else. Uses the server's own `free-busy-query` REPORT (RFC 4791 §7.10) where it answers one, otherwise computes from the expanded events the same way `find_free_slots` does. Use `find_free_slots` to get the free windows of a given length instead.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendars` | string[] | | Provider-prefixed calendar IDs to report on. If omitted, uses all calendars. |
+| `start` | string | yes | Start of range (ISO 8601). |
+| `end` | string | yes | End of range (ISO 8601). Must be after `start`. |
+| `include_all_day_as_busy` | boolean | | Treat all-day events as busy when computing from events (default: false). A server-side answer decides this itself. |
+| `ignore_tentative` | boolean | | If true, tentative periods are left out (default: false). |
+
+**Output**
+
+```ts
+{
+  start: string;             // ISO 8601, normalised
+  end: string;
+  busy: Array<{
+    start: string;           // ISO 8601 UTC, clipped to the range
+    end: string;
+    type: "busy" | "tentative" | "unavailable";
+  }>;
+  count: number;
+  sources: Record<string, "server" | "computed">;   // per calendar_id
+}
+```
+
+Overlapping periods of the same type are merged; a `busy` and a `tentative` period can still overlap. `sources` says which path each calendar took: the two can differ on all-day and transparent (`availability: free`) events, which are the server's call on its path and the options' on ours. SabreDAV-based servers (Nextcloud) only answer `free-busy-query` on the scheduling outbox, so they report `computed`.
 
 ## find_free_slots
 

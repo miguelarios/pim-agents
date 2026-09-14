@@ -66,6 +66,10 @@ function fakeService() {
     createEvent: vi.fn().mockResolvedValue(EVENT),
     fetchRawCalendarObject: vi.fn().mockResolvedValue({ data: RECURRING_ICS, url: "u", etag: "e" }),
     findFreeSlots: vi.fn().mockResolvedValue([]),
+    getFreeBusy: vi.fn().mockResolvedValue({
+      busy: [{ start: "2026-08-01T09:00:00.000Z", end: "2026-08-01T09:15:00.000Z", type: "busy" }],
+      sources: { "mailbox/Work": "server" },
+    }),
     getAccountEmail: vi.fn(() => "user@example.com"),
     listProviders: vi.fn(() => ["mailbox"]),
     findCalendarEntry: vi.fn().mockResolvedValue({
@@ -229,6 +233,20 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
       "mailbox/Work",
       "mailbox/Team",
     ]);
+  });
+
+  it("returns typed busy periods from get_free_busy that validate against its schema (#48)", async () => {
+    const { client } = await connect(era, fakeService());
+    const result = await client.callTool({
+      name: "get_free_busy",
+      arguments: { start: "2026-08-01T00:00:00Z", end: "2026-08-02T00:00:00Z" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      count: 1,
+      busy: [{ type: "busy" }],
+      sources: { "mailbox/Work": "server" },
+    });
   });
 
   it("rejects malformed arguments without running the handler", async () => {

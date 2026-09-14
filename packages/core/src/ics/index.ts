@@ -14,11 +14,14 @@ export type {
   ParsedJournal,
   TimeRange,
   EventCreateProps,
+  FreeBusyPeriod,
+  FreeBusyType,
 } from "./types.js";
 export { normalizeRecurrenceRule } from "./rrule.js";
 export { parseIcsEvents } from "./parse-events.js";
 export { parseIcsTodos } from "./parse-todos.js";
 export { parseIcsJournals } from "./parse-journals.js";
+export { parseIcsFreeBusy } from "./parse-freebusy.js";
 export { generateEventIcs, toIcalTime } from "./generate.js";
 // Exported so callers that build an event response by hand (rather than by
 // re-reading it) can render `trigger_human` exactly as the parser would.

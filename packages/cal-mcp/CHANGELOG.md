@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.0 (2026-09-14)
+
+- `get_free_busy` — busy periods across one or more calendars in a range, merged and typed as `busy`, `tentative` or `unavailable`, with no event details (#48). The server's own `free-busy-query` REPORT (RFC 4791 §7.10) is used where it answers one; otherwise the answer is computed from the expanded events, with the same all-day and transparency rules as `find_free_slots`. `sources` reports which path each calendar took.
+- `findFreeSlots` and `getFreeBusy` share one event-collection path; `find_free_slots` output is unchanged.
+- Bumped `@miguelarios/pim-core` dependency to `^0.13.0` for `parseIcsFreeBusy`.
+
 ## 0.17.0 (2026-09-14)
 
 - `update_event` accepts `span: "future"`: changes the given occurrence of a recurring event and every later one (#38). The series is split at that occurrence — the existing object is ended just before it, keeping earlier occurrences and their overrides, and a new object with a new UID carries the remaining pattern with the changes applied. The result is the new series' event, so callers pick up the UID to use from now on. A `COUNT` is reduced by the occurrences already spent, `EXDATE`/`RDATE` values are divided between the halves, and a cut at the first occurrence edits the whole series in place. Per-occurrence overrides on or after the cut are discarded, and only then is the user asked to confirm. `occurrence_date` must be an occurrence the series generates, otherwise `validation_error`. The new object is written before the old one is cut, so a mid-way failure can only leave a visible duplicate tail, never missing occurrences.

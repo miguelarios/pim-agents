@@ -78,6 +78,15 @@ export interface ParsedJournal {
   last_modified: string | null;
 }
 
+/** How a busy period blocks time; `FREE` periods are never reported. */
+export type FreeBusyType = "busy" | "tentative" | "unavailable";
+
+export interface FreeBusyPeriod {
+  start: string; // ISO 8601 UTC
+  end: string;
+  type: FreeBusyType;
+}
+
 export interface TimeRange {
   start: string;
   end: string;
