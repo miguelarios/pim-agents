@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.0 (2026-09-14)
+
+- `delete_event` accepts `span: "future"`: deletes the given occurrence of a recurring event and every later one, keeping earlier occurrences and their overrides (#41). The master `RRULE` gets `UNTIL` set to just before the occurrence (replacing any `COUNT`), and overrides, `RDATE`s and `EXDATE`s past the cut are dropped. Cutting at the first occurrence deletes the object outright rather than leaving an empty series. Gated on confirmation like a full delete, since the removed occurrences cannot be recovered.
+- Bumped `@miguelarios/pim-core` dependency to `^0.11.0` for `truncateRecurrenceIcs`.
+
 ## 0.15.0 (2026-09-14)
 
 - `get_event` takes an optional `occurrence_date` and returns that one occurrence of a recurring event instead of the master series (#39). A modified occurrence (an override `VEVENT` with a matching `RECURRENCE-ID`) comes back with its own time and fields, exactly as `list_events` expands it; an ordinary occurrence comes back at its own slot with the master's fields. Passing it on a non-recurring event is a `validation_error`, and a date the rule never generates is `not_found`, so a stale `occurrence_date` cannot silently hand back the master.

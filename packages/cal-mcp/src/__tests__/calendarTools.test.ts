@@ -432,11 +432,11 @@ describe("calendarTools", () => {
       expect(props.span.enum).toEqual(["this", "all"]);
     });
 
-    it("delete_event schema has occurrence_date and span enum without future", () => {
+    it("delete_event schema has occurrence_date and a span enum including future (#41)", () => {
       const tool = CALENDAR_TOOLS.find((t) => t.name === "delete_event")!;
       const props = (tool.inputSchema as any).properties;
       expect(props.occurrence_date).toBeDefined();
-      expect(props.span.enum).toEqual(["this", "all"]);
+      expect(props.span.enum).toEqual(["this", "all", "future"]);
     });
 
     it("update_event succeeds with span this on non-recurring event", async () => {
@@ -1042,6 +1042,149 @@ describe("calendarTools", () => {
       const icsArg = mockService.updateEvent.mock.calls[0][2];
       expect(icsArg).toContain("EXDATE");
       expect(icsArg).not.toContain("RECURRENCE-ID");
+    });
+  });
+
+  describe("delete_event span=future (#41)", () => {
+    const SERIES = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//test//EN",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260302T150000Z",
+      "DTEND:20260302T153000Z",
+      "SUMMARY:Standup",
+      "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=20",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "RECURRENCE-ID:20260309T150000Z",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260309T160000Z",
+      "DTEND:20260309T163000Z",
+      "SUMMARY:Standup moved",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "RECURRENCE-ID:20260420T150000Z",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260420T160000Z",
+      "DTEND:20260420T163000Z",
+      "SUMMARY:Standup moved later",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: { uid: "standup", is_recurring: true, all_day: false },
+        meta: { url: "/cal/standup.ics", etag: '"s1"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: SERIES,
+        url: "/cal/standup.ics",
+        etag: '"s1"',
+      });
+      mockService.updateEvent.mockResolvedValue({});
+      mockService.deleteEvent.mockResolvedValue(undefined);
+    });
+
+    it("asks for confirmation before cutting the series", async () => {
+      const result = await handleCalendarTool(
+        "delete_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-04-06T15:00:00.000Z",
+        },
+        mockService as any,
+      );
+      expect(result.resultType).toBe("input_required");
+      expect(JSON.stringify(result.inputRequests.confirm_delete_event)).toContain("2026-04-06");
+      expect(mockService.updateEvent).not.toHaveBeenCalled();
+      expect(mockService.deleteEvent).not.toHaveBeenCalled();
+    });
+
+    it("ends the series before the occurrence, keeping earlier overrides, once confirmed", async () => {
+      const result = await handleCalendarTool(
+        "delete_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-04-06T15:00:00.000Z",
+        },
+        mockService as any,
+        confirmed("confirm_delete_event"),
+      );
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse(result.content[0].text)).toEqual({ deleted: true, uid: "standup" });
+      expect(mockService.deleteEvent).not.toHaveBeenCalled();
+      const [cal, uid, ics, meta] = mockService.updateEvent.mock.calls[0];
+      expect(cal).toBe("prov/Cal");
+      expect(uid).toBe("standup");
+      expect(meta).toEqual({ url: "/cal/standup.ics", etag: '"s1"' });
+      expect(ics).toContain("UNTIL=20260406T145959Z");
+      expect(ics).not.toContain("COUNT=20");
+      expect(ics).toContain("SUMMARY:Standup moved\r\n");
+      expect(ics).not.toContain("Standup moved later");
+    });
+
+    it("deletes the whole object when the cut is at the first occurrence", async () => {
+      const result = await handleCalendarTool(
+        "delete_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-03-02T15:00:00.000Z",
+        },
+        mockService as any,
+        confirmed("confirm_delete_event"),
+      );
+      expect(result.isError).toBeFalsy();
+      expect(mockService.updateEvent).not.toHaveBeenCalled();
+      expect(mockService.deleteEvent).toHaveBeenCalledWith("prov/Cal", "standup", {
+        url: "/cal/standup.ics",
+        etag: '"s1"',
+      });
+    });
+
+    it("rejects span=future without occurrence_date", async () => {
+      const result = await handleCalendarTool(
+        "delete_event",
+        { calendar: "prov/Cal", uid: "standup", span: "future" },
+        mockService as any,
+      );
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("occurrence_date");
+      expect(mockService.fetchRawCalendarObject).not.toHaveBeenCalled();
+    });
+
+    it("rejects span=future on a non-recurring event without touching it", async () => {
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: { uid: "one-off", is_recurring: false, all_day: false },
+        meta: { url: "/cal/one-off.ics", etag: '"o1"' },
+      });
+      const result = await handleCalendarTool(
+        "delete_event",
+        {
+          calendar: "prov/Cal",
+          uid: "one-off",
+          span: "future",
+          occurrence_date: "2026-03-02T15:00:00.000Z",
+        },
+        mockService as any,
+        confirmed("confirm_delete_event"),
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toBe("validation_error");
+      expect(mockService.deleteEvent).not.toHaveBeenCalled();
+      expect(mockService.updateEvent).not.toHaveBeenCalled();
     });
   });
 

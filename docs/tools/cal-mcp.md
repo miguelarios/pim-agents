@@ -168,7 +168,7 @@ When `span: "this"` is applied to a recurring event, the response reflects the m
 
 Delete a calendar event by UID.
 
-> **Asks for confirmation.** Gated whenever the calendar object is actually removed — that is `span: "all"`, and also `span: "this"` on a **non-recurring** event, where there is no occurrence to exclude. Only excluding one occurrence of a recurring event (`span: "this"` on a recurring event, which adds an `EXDATE`) is ungated, since it can be undone by re-adding the occurrence. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
+> **Asks for confirmation.** Gated whenever the calendar object is actually removed — that is `span: "all"`, and also `span: "this"` on a **non-recurring** event, where there is no occurrence to exclude — and whenever a series is cut short with `span: "future"`, since the removed occurrences (and any overrides among them) cannot be recovered. Only excluding one occurrence of a recurring event (`span: "this"` on a recurring event, which adds an `EXDATE`) is ungated, since it can be undone by re-adding the occurrence. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
@@ -176,8 +176,10 @@ Delete a calendar event by UID.
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
 | `uid` | string | yes | Event UID to delete. |
-| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to delete. **Required** when `span` is `"this"` on a recurring event. |
-| `span` | `"this"` \| `"all"` | | `this` deletes only this occurrence (adds EXDATE), `all` (default) deletes the entire series. |
+| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to delete. **Required** when `span` is `"this"` or `"future"` on a recurring event. |
+| `span` | `"this"` \| `"all"` \| `"future"` | | `this` deletes only this occurrence (adds EXDATE), `future` deletes this occurrence and every later one, `all` (default) deletes the entire series. |
+
+`span: "future"` sets `UNTIL` on the master `RRULE` to just before the occurrence (one second before for a timed series, the previous day for an all-day one), replacing any `COUNT`; overrides, `RDATE`s and `EXDATE`s at or after the cut are removed, earlier ones are kept. When the occurrence is the first one, nothing would remain, so the whole object is deleted instead. `validation_error` on a non-recurring event.
 
 **Output**
 
