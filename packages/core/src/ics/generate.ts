@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import ICAL from "ical.js";
 import "./_tz-init.js";
+import { setAlarms, setCategories } from "./_shared.js";
 import { IcsGenerateError } from "./errors.js";
 import { normalizeRecurrenceRule } from "./rrule.js";
 import type { EventCreateProps } from "./types.js";
@@ -80,7 +81,7 @@ export function generateEventIcs(props: EventCreateProps): string {
   }
 
   if (props.categories && props.categories.length > 0) {
-    vevent.addPropertyWithValue("categories", props.categories.join(","));
+    setCategories(vevent, props.categories);
   }
 
   if (props.recurrence_rule) {
@@ -91,21 +92,7 @@ export function generateEventIcs(props: EventCreateProps): string {
     vevent.addProperty(ICAL.Property.fromString(`RRULE:${normalized}`));
   }
 
-  if (props.alarms) {
-    for (const alarm of props.alarms) {
-      const valarm = new ICAL.Component("valarm");
-      valarm.updatePropertyWithValue("action", "DISPLAY");
-      valarm.updatePropertyWithValue("description", props.title);
-      if (alarm.type === "relative" && typeof alarm.trigger === "number") {
-        const dur = ICAL.Duration.fromSeconds(alarm.trigger);
-        valarm.updatePropertyWithValue("trigger", dur);
-      } else if (alarm.type === "absolute" && typeof alarm.trigger === "string") {
-        const t = ICAL.Time.fromJSDate(new Date(alarm.trigger), true);
-        valarm.updatePropertyWithValue("trigger", t);
-      }
-      vevent.addSubcomponent(valarm);
-    }
-  }
+  if (props.alarms) setAlarms(vevent, props.alarms);
 
   calendar.addSubcomponent(vevent);
   return calendar.toString();

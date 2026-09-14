@@ -1,6 +1,12 @@
 import ICAL from "ical.js";
 import "./_tz-init.js";
-import { parseAttendees, parseCategories, parseOrganizer } from "./_shared.js";
+import {
+  parseAttendees,
+  parseCategories,
+  parseOrganizer,
+  setAlarms,
+  setCategories,
+} from "./_shared.js";
 import { IcsParseError } from "./errors.js";
 import { toIcalTime } from "./generate.js";
 
@@ -136,15 +142,24 @@ export function createExceptionComponent(
   }
 
   const categories = overrides.categories ?? masterCategories;
-  if (categories && categories.length > 0) {
-    ex.addPropertyWithValue("categories", categories.join(","));
-  }
+  if (categories && categories.length > 0) setCategories(ex, categories);
 
   const availability = overrides.availability ?? masterAvailability;
   if (availability === "free") ex.updatePropertyWithValue("transp", "TRANSPARENT");
   else if (availability === "busy") ex.updatePropertyWithValue("transp", "OPAQUE");
 
   ex.updatePropertyWithValue("status", "CONFIRMED");
+
+  // An override VEVENT stands alone — nothing is inherited from the master —
+  // so the master's VALARMs have to be copied across or the occurrence
+  // silently loses its reminders. An explicit `alarms` replaces them.
+  if (overrides.alarms !== undefined) {
+    setAlarms(ex, overrides.alarms);
+  } else {
+    for (const valarm of masterComp.getAllSubcomponents("valarm")) {
+      ex.addSubcomponent(ICAL.Component.fromString(valarm.toString()));
+    }
+  }
 
   return ex.toString();
 }
@@ -288,39 +303,12 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
     }
   }
 
-  if (updates.categories !== undefined) {
-    master.removeAllProperties("categories");
-    if (updates.categories.length > 0) {
-      master.addPropertyWithValue("categories", updates.categories.join(","));
-    }
-  }
+  if (updates.categories !== undefined) setCategories(master, updates.categories);
 
   if (updates.availability === "free") master.updatePropertyWithValue("transp", "TRANSPARENT");
   else if (updates.availability === "busy") master.updatePropertyWithValue("transp", "OPAQUE");
 
-  if (updates.alarms !== undefined) {
-    for (const valarm of master.getAllSubcomponents("valarm")) {
-      master.removeSubcomponent(valarm);
-    }
-    for (const alarm of updates.alarms) {
-      const valarm = new ICAL.Component("valarm");
-      valarm.updatePropertyWithValue("action", "DISPLAY");
-      const summary = master.getFirstPropertyValue("summary");
-      valarm.updatePropertyWithValue(
-        "description",
-        typeof summary === "string" ? summary : "Reminder",
-      );
-      if (alarm.type === "relative" && typeof alarm.trigger === "number") {
-        valarm.updatePropertyWithValue("trigger", ICAL.Duration.fromSeconds(alarm.trigger));
-      } else if (alarm.type === "absolute" && typeof alarm.trigger === "string") {
-        valarm.updatePropertyWithValue(
-          "trigger",
-          ICAL.Time.fromJSDate(new Date(alarm.trigger), true),
-        );
-      }
-      master.addSubcomponent(valarm);
-    }
-  }
+  if (updates.alarms !== undefined) setAlarms(master, updates.alarms);
 
   const seq = master.getFirstPropertyValue("sequence");
   master.updatePropertyWithValue("sequence", (typeof seq === "number" ? seq : 0) + 1);

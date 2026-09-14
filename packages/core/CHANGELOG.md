@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.1 (2026-09-14)
+
+- `CATEGORIES` is written as one property with one value per category on every ICS write
+  path (`generateEventIcs`, `updateMasterEventIcs`, `createExceptionComponent`). The names
+  were joined with "," into a single value, which ical.js escaped as `\,`, so two categories
+  written by cal-mcp read back as one `"Work,Sync"` category — in cal-mcp and in every
+  other client. An empty list still removes the property.
+- `createExceptionComponent` no longer drops reminders. An override VEVENT stands alone, so
+  the master's `VALARM`s are now copied onto it; an explicit `alarms` override replaces them
+  (and `[]` clears them). Before, editing a single occurrence with `update_event` silently
+  lost its alarms, and an `alarms` override was ignored.
+- `setCategories` and `setAlarms` (`ics/_shared.ts`) are the one place each of those is
+  written now, so the three paths cannot drift again.
+
 ## 0.10.0 (2026-09-05)
 
 - `Contact` gains `kind` (`"group"` for a contact group, unset for an individual) and
