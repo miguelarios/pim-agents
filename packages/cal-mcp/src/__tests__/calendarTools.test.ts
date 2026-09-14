@@ -1268,4 +1268,148 @@ describe("calendarTools", () => {
       expect(sentIcs).toContain("STATUS:TENTATIVE");
     });
   });
+  describe("update_event forwards every updatable field (#67)", () => {
+    const RECURRING = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//test//EN",
+      "BEGIN:VEVENT",
+      "UID:fwd-1",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260302T150000Z",
+      "DTEND:20260302T153000Z",
+      "SUMMARY:Old title",
+      "LOCATION:Old room",
+      "DESCRIPTION:Old notes",
+      "RRULE:FREQ=WEEKLY;BYDAY=MO",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const EXISTING = {
+      uid: "fwd-1",
+      calendar_id: "mailbox/Calendar",
+      title: "Old title",
+      start: "2026-03-02T15:00:00.000Z",
+      end: "2026-03-02T15:30:00.000Z",
+      all_day: false,
+      location: "Old room",
+      description: "Old notes",
+      status: null,
+      is_recurring: true,
+      occurrence_date: null,
+      url: null,
+      availability: null,
+      attendees: [],
+      organizer: { email: "me@example.com", name: null },
+      recurrence_rule: "FREQ=WEEKLY;BYDAY=MO",
+      created: null,
+      last_modified: null,
+      alarms: [],
+      categories: [],
+      geo: null,
+    };
+
+    /** One value for every field the handler copies, so a dropped one is visible. */
+    const ALL_FIELDS = {
+      title: "New title",
+      start: "2026-03-09T16:00:00.000Z",
+      end: "2026-03-09T17:00:00.000Z",
+      location: "New room",
+      description: "New notes",
+      attendees: [{ email: "bob@example.com" }],
+      alarms: [{ type: "relative" as const, trigger: -600 }],
+      categories: ["Work", "Sync"],
+      availability: "free" as const,
+    };
+
+    function expectAllFieldsIn(ics: string) {
+      expect(ics).toContain("SUMMARY:New title");
+      expect(ics).toContain("LOCATION:New room");
+      expect(ics).toContain("DESCRIPTION:New notes");
+      expect(ics).toContain("mailto:bob@example.com");
+      expect(ics).toContain("TRIGGER:-PT10M");
+      expect(ics).toContain("CATEGORIES:Work,Sync");
+      expect(ics).toContain("TRANSP:TRANSPARENT");
+      expect(ics).toMatch(/DTSTART[^\r\n]*20260309T1[67]0000/);
+      expect(ics).toMatch(/DTEND[^\r\n]*20260309T1[78]0000/);
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: EXISTING,
+        meta: { url: "/cal/fwd-1.ics", etag: '"e1"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: RECURRING,
+        url: "/cal/fwd-1.ics",
+        etag: '"e1"',
+      });
+      mockService.updateEvent.mockResolvedValue({ uid: "fwd-1" });
+    });
+
+    it("master branch (span=all) writes every field into the master VEVENT", async () => {
+      const result = await handleCalendarTool(
+        "update_event",
+        { calendar: "mailbox/Calendar", uid: "fwd-1", span: "all", ...ALL_FIELDS },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+      const sent = mockService.updateEvent.mock.calls[0][2] as string;
+      expectAllFieldsIn(sent);
+      expect(sent).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO");
+    });
+
+    it("exception branch (span=this) writes every field into the override VEVENT", async () => {
+      const result = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "mailbox/Calendar",
+          uid: "fwd-1",
+          span: "this",
+          occurrence_date: "2026-03-09T15:00:00.000Z",
+          ...ALL_FIELDS,
+        },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+      const sent = mockService.updateEvent.mock.calls[0][2] as string;
+      const override = sent.slice(sent.indexOf("RECURRENCE-ID"));
+      expectAllFieldsIn(override);
+      // The master is untouched by a single-occurrence edit.
+      const master = sent.slice(0, sent.indexOf("RECURRENCE-ID"));
+      expect(master).toContain("SUMMARY:Old title");
+    });
+
+    it("leaves fields that were not given alone on both branches", async () => {
+      await handleCalendarTool(
+        "update_event",
+        { calendar: "mailbox/Calendar", uid: "fwd-1", span: "all", title: "Only title" },
+        mockService as any,
+      );
+      const sentAll = mockService.updateEvent.mock.calls[0][2] as string;
+      expect(sentAll).toContain("SUMMARY:Only title");
+      expect(sentAll).toContain("LOCATION:Old room");
+      expect(sentAll).toContain("DESCRIPTION:Old notes");
+      expect(sentAll).not.toContain("TRANSP:");
+
+      await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "mailbox/Calendar",
+          uid: "fwd-1",
+          span: "this",
+          occurrence_date: "2026-03-09T15:00:00.000Z",
+          title: "Only title",
+        },
+        mockService as any,
+      );
+      const sentThis = mockService.updateEvent.mock.calls[1][2] as string;
+      const override = sentThis.slice(sentThis.indexOf("RECURRENCE-ID"));
+      expect(override).toContain("SUMMARY:Only title");
+      expect(override).toContain("LOCATION:Old room");
+      expect(override).toContain("DESCRIPTION:Old notes");
+    });
+  });
 });
