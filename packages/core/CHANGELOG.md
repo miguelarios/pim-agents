@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.0 (2026-09-14)
+
+- `splitRecurrenceIcs(ics, occurrenceDate, allDay, newUid)` — splits a recurring series at an occurrence into `before` (the original ended just before it, via `truncateRecurrenceIcs`) and `after` (a copy of the master under `newUid`, starting at the occurrence, with a `COUNT` reduced by the instances already consumed, later `EXDATE`/`RDATE` values kept and earlier ones dropped, `SEQUENCE` reset, and no overrides), plus `droppedOverrides`, the number of overrides at or after the cut that neither half keeps. Returns `null` at or before the first occurrence, and throws when the date is not an occurrence the series generates — a rule instance or an `RDATE` (cal-mcp #38).
+
 ## 0.11.0 (2026-09-14)
 
 - `truncateRecurrenceIcs(ics, occurrenceDate, allDay)` — ends a recurring series just before an occurrence: `UNTIL` replaces `COUNT` on the master `RRULE` (one second before for a timed series, the previous day as a `DATE` for an all-day one), and override VEVENTs, `RDATE`s and `EXDATE`s at or after the cut are removed while earlier ones are kept. Returns `null` when the cut is at or before the first occurrence, so a caller can delete the object instead of writing an empty series (cal-mcp #41, and the split half of #38).

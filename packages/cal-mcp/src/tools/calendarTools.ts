@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getLocalDateParts, getTimezone, zonedTimeToUtc } from "@miguelarios/pim-core";
 import {
   type ExceptionOverrides,
@@ -9,6 +10,7 @@ import {
   generateEventIcs,
   removeExceptionFromIcs,
   splitIcsByUid,
+  splitRecurrenceIcs,
   truncateRecurrenceIcs,
   updateMasterEventIcs,
 } from "@miguelarios/pim-core/ics";
@@ -40,9 +42,7 @@ import {
 type Attendee = { email: string };
 type Alarm = { type: "relative" | "absolute"; trigger: number | string };
 type DetailLevel = "summary" | "full";
-type Span = "this" | "all";
-/** `delete_event` also cuts a series short; `update_event` gains this in #38. */
-type DeleteSpan = Span | "future";
+type Span = "this" | "all" | "future";
 
 interface EventInput {
   title: string;
@@ -502,7 +502,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
   {
     name: "update_event",
     title: "Update Event",
-    description: "Update an existing event. Only provided fields are changed.",
+    description:
+      "Update an existing event. Only provided fields are changed. On a recurring event, span picks the scope: 'this' changes one occurrence, 'future' changes that occurrence and every later one (the series is split there; the returned event carries the new series' UID, and the user is asked to confirm if per-occurrence changes after that date would be discarded), 'all' changes the whole series.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -526,13 +527,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
         occurrence_date: {
           type: "string",
           description:
-            "ISO 8601 date of the specific occurrence to modify. Required when span is 'this' on a recurring event. Get this value from list_events results.",
+            "ISO 8601 date of the specific occurrence to modify. Required when span is 'this' or 'future' on a recurring event. Get this value from list_events results.",
         },
         span: {
           type: "string",
-          enum: ["this", "all"],
+          enum: ["this", "all", "future"],
           description:
-            "'this' modifies only this occurrence, 'all' modifies the entire series. Default: this.",
+            "'this' modifies only this occurrence, 'future' modifies this occurrence and every later one, 'all' modifies the entire series. Default: this.",
         },
         availability: {
           type: "string",
@@ -552,6 +553,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
         span?: Span;
       },
       service,
+      ctx,
     ) =>
       run(async () => {
         const span = args.span ?? "this";
@@ -623,9 +625,6 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           });
         }
 
-        // Non-exception path (span "all", or non-recurring event): mutate the
-        // existing object in place — preserves RRULE/EXDATE/RDATE, exception
-        // overrides, attendee participation state, STATUS, and unknown props.
         const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
 
         const updates: MasterEventUpdates = { timezone: getTimezone() };
@@ -638,6 +637,71 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           updates.organizer = { email: service.getAccountEmail(args.calendar) };
         }
 
+        // span="future" on a recurring event: split the series at the
+        // occurrence. The old object is ended just before it and a new object
+        // (new UID) carries the remaining pattern with the changes applied.
+        // A cut at the first occurrence has nothing to keep behind it, so it
+        // falls through to the whole-series edit below (#38).
+        if (existing.is_recurring && span === "future") {
+          if (!args.occurrence_date) {
+            return calFail(
+              "validation_error",
+              "occurrence_date is required when span is 'future' on a recurring event",
+            );
+          }
+          const occurrenceDate = args.occurrence_date;
+          if (Number.isNaN(new Date(occurrenceDate).getTime())) {
+            return calFail(
+              "validation_error",
+              `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
+            );
+          }
+          const newUid = `${randomUUID()}@pim-core`;
+          let split: ReturnType<typeof splitRecurrenceIcs>;
+          try {
+            split = splitRecurrenceIcs(rawObj.data, occurrenceDate, existing.all_day, newUid);
+          } catch (err) {
+            if (err instanceof Error && err.message.startsWith("No occurrence at")) {
+              return calFail("validation_error", err.message);
+            }
+            throw err;
+          }
+          if (split !== null) {
+            // Per-occurrence edits at or after the cut do not survive the
+            // split. That is the one thing this update can lose, so it is the
+            // one case that asks first; a series without them is rewritten
+            // without a prompt, like any other update.
+            if (split.droppedOverrides > 0) {
+              const gate = confirmDestructive(
+                ctx,
+                "confirm_update_event",
+                `Changing this and all future occurrences of event ${args.uid} from ${occurrenceDate} discards ${split.droppedOverrides} per-occurrence ${split.droppedOverrides === 1 ? "change" : "changes"} made on or after that date. Continue?`,
+              );
+              if (gate.status === "interrupt") return gate.result;
+            }
+            // A moved start without a new end keeps the series' duration,
+            // rather than pinning the end to the old slot.
+            if (updates.start !== undefined && updates.end === undefined) {
+              const durationMs =
+                new Date(existing.end).getTime() - new Date(existing.start).getTime();
+              updates.end = new Date(new Date(updates.start).getTime() + durationMs).toISOString();
+            }
+            const tailIcs = updateMasterEventIcs(split.after, updates);
+            // The new series is written first: if it fails nothing has changed,
+            // and if ending the old one then fails, the worst case is a visible
+            // duplicate tail rather than occurrences that vanished.
+            const created = await service.createEvent(args.calendar, tailIcs, newUid);
+            await service.updateEvent(args.calendar, args.uid, split.before, {
+              url: rawObj.url,
+              etag: rawObj.etag,
+            });
+            return ok({ event: created });
+          }
+        }
+
+        // Non-exception path (span "all", or non-recurring event): mutate the
+        // existing object in place — preserves RRULE/EXDATE/RDATE, exception
+        // overrides, attendee participation state, STATUS, and unknown props.
         const updatedIcs = updateMasterEventIcs(rawObj.data, updates);
         return ok({
           event: await service.updateEvent(args.calendar, args.uid, updatedIcs, {
@@ -711,7 +775,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     },
     outputSchema: deleteResultSchema,
     handler: async (
-      args: { calendar: string; uid: string; occurrence_date?: string; span?: DeleteSpan },
+      args: { calendar: string; uid: string; occurrence_date?: string; span?: Span },
       service,
       ctx,
     ) => {

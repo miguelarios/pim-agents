@@ -31,5 +31,6 @@ export {
   updateMasterEventIcs,
   splitIcsByUid,
   truncateRecurrenceIcs,
+  splitRecurrenceIcs,
 } from "./components.js";
 export type { ExceptionOverrides, MasterEventUpdates } from "./components.js";

@@ -152,8 +152,8 @@ Update an existing event. Only provided fields are changed.
 | `attendees` | `{ email: string }[]` | | New attendee list (replaces existing). Display name is resolved server-side. |
 | `alarms` | `{ type: "relative" \| "absolute", trigger: string \| number }[]` | | Event reminders/alarms. |
 | `categories` | string[] | | Event categories/tags. |
-| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to modify. **Required** when `span` is `"this"` on a recurring event. Get this value from `list_events` results. |
-| `span` | `"this"` \| `"all"` | | `this` modifies only this occurrence (default), `all` modifies the entire series. |
+| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to modify. **Required** when `span` is `"this"` or `"future"` on a recurring event. Get this value from `list_events` results. |
+| `span` | `"this"` \| `"all"` \| `"future"` | | `this` modifies only this occurrence (default), `future` modifies this occurrence and every later one, `all` modifies the entire series. |
 | `availability` | `"busy"` \| `"free"` | | Free/busy transparency. If omitted, existing value is preserved. |
 
 **Output**
@@ -163,6 +163,8 @@ Update an existing event. Only provided fields are changed.
 ```
 
 When `span: "this"` is applied to a recurring event, the response reflects the modified occurrence (with `occurrence_date` set and `recurrence_rule: null`); the underlying series gets a RECURRENCE-ID exception.
+
+When `span: "future"` is applied to a recurring event, the series is split at the occurrence: the existing object is ended just before it (`UNTIL` on its `RRULE`, keeping earlier occurrences and their overrides), and a **new calendar object with a new UID** carries the remaining pattern with the changes applied — the response is that new series' event, so use its `uid` for later edits. A `COUNT` is reduced by the occurrences already consumed; `EXDATE`s and `RDATE`s are divided between the two halves; per-occurrence overrides at or after the cut are not carried over, and when there are any the user is asked to confirm first (`confirm_update_event`), since that is the one thing this update can lose. `occurrence_date` must be an occurrence the series actually generates (a rule instance or an `RDATE`), otherwise `validation_error`: a nearby date would silently become the new series' start and shift every later occurrence. A cut at the first occurrence is the same as `span: "all"`. The new series is written before the old one is cut, so a failure part-way leaves a visible duplicate tail rather than missing occurrences. Giving `start` without `end` keeps the series' duration.
 
 ## delete_event
 
