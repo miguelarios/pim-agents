@@ -37,6 +37,7 @@ Query events in a date range. Recurring events are expanded into individual inst
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `calendar` | string | | Provider-prefixed calendar ID (e.g., `mailbox/Work`). If omitted, queries all calendars. |
+| `calendars` | string[] | | Provider-prefixed calendar IDs to query (e.g., `["mailbox/Work", "mailbox/Team"]`). Combined with `calendar` if both are given. If neither is given, queries all calendars. |
 | `start` | string | yes | Start of date range (ISO 8601). |
 | `end` | string | yes | End of date range (ISO 8601). |
 | `detail_level` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
@@ -59,6 +60,7 @@ Get all events for today. Convenience wrapper over `list_events`.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `calendar` | string | | Provider-prefixed calendar ID. If omitted, queries all calendars. |
+| `calendars` | string[] | | Provider-prefixed calendar IDs to query. Combined with `calendar` if both are given. If neither is given, queries all calendars. |
 | `detail_level` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
 
 **Output**
@@ -75,6 +77,7 @@ Keyword search across event title, description, and location.
 |-----------|------|----------|-------------|
 | `query` | string | yes | Search term. |
 | `calendar` | string | | Provider-prefixed calendar ID. If omitted, searches all calendars. |
+| `calendars` | string[] | | Provider-prefixed calendar IDs to search. Combined with `calendar` if both are given. If neither is given, searches all calendars. |
 | `start` | string | | Range start (ISO 8601). Defaults to 90 days ago. |
 | `end` | string | | Range end (ISO 8601). Defaults to 90 days ahead. |
 | `detail_level` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |

@@ -85,25 +85,37 @@ function copyDefined<T, K extends keyof T>(target: T, source: Pick<T, K>, key: K
   if (value !== undefined) target[key] = value;
 }
 
+/** The two ways a read tool names its calendars: one, or several. */
+interface CalendarSelection {
+  calendar?: string;
+  calendars?: string[];
+}
+
+/**
+ * Resolves a read tool's calendar selection to the IDs to query. `calendar`
+ * and `calendars` are unioned rather than one overriding the other, so a
+ * caller that sets both gets exactly the calendars it named. Empty means all.
+ */
+function selectedCalendars(args: CalendarSelection): string[] {
+  const ids = [...(args.calendars ?? []), ...(args.calendar ? [args.calendar] : [])];
+  return [...new Set(ids)];
+}
+
 async function fetchEvents(
   service: CalDavService,
-  calendar: string | undefined,
+  selection: CalendarSelection,
   start: string,
   end: string,
   detailLevel: string,
 ): Promise<EventSummary[] | EventFull[]> {
   const full = detailLevel === "full";
-  if (calendar) {
-    return full
-      ? await service.listEventsFull(calendar, start, end)
-      : await service.listEvents(calendar, start, end);
+  let calendarIds = selectedCalendars(selection);
+  if (calendarIds.length === 0) {
+    calendarIds = (await service.listCalendars()).map((cal) => cal.calendar_id);
   }
-  const calendars = await service.listCalendars();
   const results = await Promise.all(
-    calendars.map((cal) =>
-      full
-        ? service.listEventsFull(cal.calendar_id, start, end)
-        : service.listEvents(cal.calendar_id, start, end),
+    calendarIds.map((id) =>
+      full ? service.listEventsFull(id, start, end) : service.listEvents(id, start, end),
     ),
   );
   return results.flat();
@@ -184,6 +196,14 @@ const CALENDAR_PROP = {
   description: "Provider-prefixed calendar ID",
 } as const;
 
+/** Multi-calendar selector shared by the read tools (#49). */
+const CALENDARS_PROP = (verb: "query" | "search") =>
+  ({
+    type: "array",
+    items: { type: "string", description: "Provider-prefixed calendar ID" },
+    description: `Provider-prefixed calendar IDs to ${verb} (e.g., ["mailbox/Work", "mailbox/Team"]). Combined with 'calendar' if both are given. If neither is given, ${verb === "query" ? "queries" : "searches"} all calendars.`,
+  }) as const;
+
 const DETAIL_LEVEL_PROP = {
   type: "string",
   enum: ["summary", "full"],
@@ -263,6 +283,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           description:
             "Provider-prefixed calendar ID (e.g., mailbox/Work). If omitted, queries all calendars.",
         },
+        calendars: CALENDARS_PROP("query"),
         start: { type: "string", description: "Start of date range (ISO 8601)" },
         end: { type: "string", description: "End of date range (ISO 8601)" },
         detail_level: DETAIL_LEVEL_PROP,
@@ -271,14 +292,14 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     },
     outputSchema: eventListSchema,
     handler: (
-      args: { calendar?: string; start: string; end: string; detail_level?: DetailLevel },
+      args: CalendarSelection & { start: string; end: string; detail_level?: DetailLevel },
       service,
     ) =>
       run(async () =>
         ok({
           events: await fetchEvents(
             service,
-            args.calendar,
+            args,
             args.start,
             args.end,
             args.detail_level ?? "summary",
@@ -298,11 +319,12 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           type: "string",
           description: "Provider-prefixed calendar ID. If omitted, queries all calendars.",
         },
+        calendars: CALENDARS_PROP("query"),
         detail_level: DETAIL_LEVEL_PROP,
       },
     },
     outputSchema: eventListSchema,
-    handler: (args: { calendar?: string; detail_level?: DetailLevel }, service) =>
+    handler: (args: CalendarSelection & { detail_level?: DetailLevel }, service) =>
       run(async () => {
         const tz = getTimezone();
         const { year, month, day } = getLocalDateParts(new Date(), tz);
@@ -311,7 +333,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
         return ok({
           events: await fetchEvents(
             service,
-            args.calendar,
+            args,
             todayStart,
             todayEnd,
             args.detail_level ?? "summary",
@@ -332,6 +354,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           type: "string",
           description: "Provider-prefixed calendar ID. If omitted, searches all calendars.",
         },
+        calendars: CALENDARS_PROP("search"),
         start: {
           type: "string",
           description: "Range start (ISO 8601). Defaults to 90 days ago.",
@@ -346,9 +369,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     },
     outputSchema: eventListSchema,
     handler: (
-      args: {
+      args: CalendarSelection & {
         query: string;
-        calendar?: string;
         start?: string;
         end?: string;
         detail_level?: DetailLevel;
@@ -362,7 +384,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
         const start = args.start ?? new Date(now.getTime() - 90 * 86400000).toISOString();
         const end = args.end ?? new Date(now.getTime() + 90 * 86400000).toISOString();
 
-        const events = await fetchEvents(service, args.calendar, start, end, detailLevel);
+        const events = await fetchEvents(service, args, start, end, detailLevel);
         const matched = events.filter((e) => {
           const title = e.title?.toLowerCase() ?? "";
           const location = e.location?.toLowerCase() ?? "";
