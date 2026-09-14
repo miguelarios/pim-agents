@@ -1045,6 +1045,101 @@ describe("calendarTools", () => {
     });
   });
 
+  describe("update_event and cancelled occurrences (#40)", () => {
+    const SERIES = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//test//EN",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260302T150000Z",
+      "DTEND:20260302T153000Z",
+      "SUMMARY:Standup",
+      "RRULE:FREQ=DAILY;COUNT=10",
+      "EXDATE:20260304T150000Z,20260305T150000Z",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "RECURRENCE-ID:20260306T150000Z",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260306T160000Z",
+      "DTEND:20260306T163000Z",
+      "SUMMARY:Standup moved",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const EXISTING = {
+      uid: "standup",
+      calendar_id: "prov/Cal",
+      title: "Standup",
+      start: "2026-03-02T15:00:00.000Z",
+      end: "2026-03-02T15:30:00.000Z",
+      all_day: false,
+      is_recurring: true,
+      location: null,
+      description: null,
+      attendees: [],
+      alarms: [],
+      categories: [],
+      organizer: null,
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: EXISTING,
+        meta: { url: "/cal/standup.ics", etag: '"s1"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: SERIES,
+        url: "/cal/standup.ics",
+        etag: '"s1"',
+      });
+      mockService.updateEvent.mockResolvedValue({});
+    });
+
+    it("span=this on a cancelled occurrence brings it back, dropping only its EXDATE", async () => {
+      const result = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "this",
+          occurrence_date: "2026-03-05T15:00:00.000Z",
+          title: "Standup is back",
+        },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+      const sent = mockService.updateEvent.mock.calls[0][2] as string;
+      expect(sent).toContain("EXDATE:20260304T150000Z\r\n");
+      expect(sent).not.toMatch(/EXDATE[^\r\n]*20260305T150000Z/);
+      expect(sent).toContain("RECURRENCE-ID:20260305T150000Z");
+      expect(sent).toContain("SUMMARY:Standup is back");
+    });
+
+    it("span=all moving the series keeps cancellations and overrides attached", async () => {
+      const result = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "all",
+          start: "2026-03-02T16:00:00.000Z",
+          end: "2026-03-02T16:30:00.000Z",
+        },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+      const sent = mockService.updateEvent.mock.calls[0][2] as string;
+      expect(sent).toMatch(/EXDATE[^\r\n]*20260304T1[16]0000/);
+      expect(sent).toMatch(/EXDATE[^\r\n]*20260305T1[16]0000/);
+      expect(sent).toMatch(/RECURRENCE-ID[^\r\n]*20260306T1[16]0000/);
+      expect(sent).not.toContain("20260304T150000Z");
+    });
+  });
+
   describe("update_event span=future (#38)", () => {
     const SERIES = [
       "BEGIN:VCALENDAR",
