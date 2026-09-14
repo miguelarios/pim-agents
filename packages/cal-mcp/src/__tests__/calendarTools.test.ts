@@ -1182,6 +1182,58 @@ describe("calendarTools", () => {
       expect(ics).toContain("RECURRENCE-ID:20260309T150000Z");
     });
 
+    it("asks first when overrides on or after the cut would be discarded", async () => {
+      const result = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-03-09T15:00:00.000Z",
+          title: "Standup v2",
+        },
+        mockService as any,
+      );
+      expect(result.resultType).toBe("input_required");
+      expect(JSON.stringify(result.inputRequests.confirm_update_event)).toContain(
+        "discards 1 per-occurrence change",
+      );
+      expect(mockService.createEvent).not.toHaveBeenCalled();
+      expect(mockService.updateEvent).not.toHaveBeenCalled();
+
+      const confirmedResult = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-03-09T15:00:00.000Z",
+          title: "Standup v2",
+        },
+        mockService as any,
+        confirmed("confirm_update_event"),
+      );
+      expect(confirmedResult.isError).toBeFalsy();
+      expect(mockService.createEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a cut that is not an occurrence of the series", async () => {
+      const result = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-04-07T15:00:00.000Z",
+          title: "x",
+        },
+        mockService as any,
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toBe("validation_error");
+      expect(mockService.createEvent).not.toHaveBeenCalled();
+    });
+
     it("rejects span=future without occurrence_date, and past the end of the series", async () => {
       const missing = await handleCalendarTool(
         "update_event",

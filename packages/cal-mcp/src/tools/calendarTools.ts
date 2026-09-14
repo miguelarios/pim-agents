@@ -503,7 +503,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     name: "update_event",
     title: "Update Event",
     description:
-      "Update an existing event. Only provided fields are changed. On a recurring event, span picks the scope: 'this' changes one occurrence, 'future' changes that occurrence and every later one (the series is split there; the returned event carries the new series' UID), 'all' changes the whole series.",
+      "Update an existing event. Only provided fields are changed. On a recurring event, span picks the scope: 'this' changes one occurrence, 'future' changes that occurrence and every later one (the series is split there; the returned event carries the new series' UID, and the user is asked to confirm if per-occurrence changes after that date would be discarded), 'all' changes the whole series.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -553,6 +553,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
         span?: Span;
       },
       service,
+      ctx,
     ) =>
       run(async () => {
         const span = args.span ?? "this";
@@ -660,12 +661,24 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           try {
             split = splitRecurrenceIcs(rawObj.data, occurrenceDate, existing.all_day, newUid);
           } catch (err) {
-            if (err instanceof Error && err.message.startsWith("No occurrence at or after")) {
+            if (err instanceof Error && err.message.startsWith("No occurrence at")) {
               return calFail("validation_error", err.message);
             }
             throw err;
           }
           if (split !== null) {
+            // Per-occurrence edits at or after the cut do not survive the
+            // split. That is the one thing this update can lose, so it is the
+            // one case that asks first; a series without them is rewritten
+            // without a prompt, like any other update.
+            if (split.droppedOverrides > 0) {
+              const gate = confirmDestructive(
+                ctx,
+                "confirm_update_event",
+                `Changing this and all future occurrences of event ${args.uid} from ${occurrenceDate} discards ${split.droppedOverrides} per-occurrence ${split.droppedOverrides === 1 ? "change" : "changes"} made on or after that date. Continue?`,
+              );
+              if (gate.status === "interrupt") return gate.result;
+            }
             // A moved start without a new end keeps the series' duration,
             // rather than pinning the end to the old slot.
             if (updates.start !== undefined && updates.end === undefined) {

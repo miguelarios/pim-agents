@@ -399,6 +399,16 @@ export function truncateRecurrenceIcs(
   return root.toString();
 }
 
+/** Whether a DATE or DATE-TIME value names the given occurrence instant. */
+function isSameOccurrence(time: ICAL.Time, occurrenceMs: number, allDay: boolean): boolean {
+  if (allDay && time.isDate) {
+    const ymd = `${time.year}-${String(time.month).padStart(2, "0")}-${String(time.day).padStart(2, "0")}`;
+    return ymd === new Date(occurrenceMs).toISOString().slice(0, 10);
+  }
+  if (allDay !== time.isDate) return false;
+  return time.toJSDate().getTime() === occurrenceMs;
+}
+
 /**
  * Splits a recurring series at `occurrenceDate` into two calendar objects:
  * `before`, the original series ended just before the cut (via
@@ -413,22 +423,32 @@ export function truncateRecurrenceIcs(
  * or after the cut are not carried over: the caller is redefining the future,
  * and once DTSTART moves their RECURRENCE-IDs no longer line up with the rule.
  *
+ * `droppedOverrides` counts the override VEVENTs at or after the cut that
+ * neither half keeps, so a caller can warn before discarding them.
+ *
  * Returns `null` when the cut is at or before the first occurrence, where a
- * split degenerates into editing the whole series, and throws when no
- * occurrence remains at or after the cut, since there would be nothing to edit.
+ * split degenerates into editing the whole series. Throws when
+ * `occurrenceDate` is not an occurrence the series generates (a rule instance
+ * or an RDATE): a date that merely lands near one would silently become the
+ * tail's DTSTART and shift every later occurrence.
  */
 export function splitRecurrenceIcs(
   icsContent: string,
   occurrenceDate: string,
   allDay: boolean,
   newUid: string,
-): { before: string; after: string } | null {
+): { before: string; after: string; droppedOverrides: number } | null {
   const before = truncateRecurrenceIcs(icsContent, occurrenceDate, allDay);
   if (before === null) return null;
 
   const root = parseRoot(icsContent);
+  const cutMs = new Date(occurrenceDate).getTime();
+  let droppedOverrides = 0;
   for (const comp of root.getAllSubcomponents("vevent")) {
-    if (comp.getFirstProperty("recurrence-id")) root.removeSubcomponent(comp);
+    const recurId = comp.getFirstPropertyValue("recurrence-id");
+    if (!(recurId instanceof ICAL.Time)) continue;
+    if (!timeIsBefore(recurId, cutMs, allDay)) droppedOverrides++;
+    root.removeSubcomponent(comp);
   }
   const master = root.getFirstSubcomponent("vevent");
   if (!master) throw new IcsParseError("No master VEVENT found in ICS", null);
@@ -438,24 +458,31 @@ export function splitRecurrenceIcs(
   if (!(rruleValue instanceof ICAL.Recur) || !(dtstart instanceof ICAL.Time)) {
     throw new IcsParseError("Master VEVENT has no RRULE to split", null);
   }
-  const cutMs = new Date(occurrenceDate).getTime();
 
   // Occurrences the rule generates before the cut are spent; a COUNT on the
-  // new series has to exclude them or the tail would run long.
+  // new series has to exclude them or the tail would run long. The first
+  // instance at or after the cut must be the cut itself, unless an RDATE
+  // names it: anything else is not an occurrence of this series.
   const recur = ICAL.Recur.fromString(rruleValue.toString());
   const iterator = recur.iterator(dtstart);
   let consumed = 0;
-  let remaining = false;
+  let isOccurrence = master
+    .getAllProperties("rdate")
+    .flatMap((p) => p.getValues())
+    .some((v) => v instanceof ICAL.Time && isSameOccurrence(v, cutMs, allDay));
   for (let next = iterator.next(); next; next = iterator.next()) {
     if (timeIsBefore(next, cutMs, allDay)) {
       consumed++;
       continue;
     }
-    remaining = true;
+    if (isSameOccurrence(next, cutMs, allDay)) isOccurrence = true;
     break;
   }
-  if (!remaining) {
-    throw new IcsParseError(`No occurrence at or after ${occurrenceDate} to update`, null);
+  if (!isOccurrence) {
+    throw new IcsParseError(
+      `No occurrence at ${occurrenceDate} — occurrence_date must be a value list_events returned for this event`,
+      null,
+    );
   }
   if (recur.count !== null && recur.count !== undefined) recur.count -= consumed;
   master.updatePropertyWithValue("rrule", recur);
@@ -496,7 +523,7 @@ export function splitRecurrenceIcs(
   master.updatePropertyWithValue("dtstamp", ICAL.Time.fromJSDate(new Date(), true));
   master.updatePropertyWithValue("created", ICAL.Time.fromJSDate(new Date(), true));
   master.removeAllProperties("last-modified");
-  return { before, after: root.toString() };
+  return { before, after: root.toString(), droppedOverrides };
 }
 
 // Removes any VEVENT/VTODO whose RECURRENCE-ID resolves to the same instant as
