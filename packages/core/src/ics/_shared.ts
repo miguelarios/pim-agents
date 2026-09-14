@@ -12,6 +12,50 @@ function stripMailto(value: string): string {
   return value.replace(/^mailto:/i, "");
 }
 
+/**
+ * Writes CATEGORIES as one property with one value per category. Joining the
+ * names with "," and writing a single value gets the comma escaped as "\\,",
+ * so `parseCategories` reads a single "Work,Sync" back — the multi-value form
+ * (RFC 5545 §3.8.1.2) is what every other client writes and reads.
+ */
+export function setCategories(component: ICAL.Component, categories: string[]): void {
+  component.removeAllProperties("categories");
+  if (categories.length === 0) return;
+  const prop = new ICAL.Property("categories");
+  prop.setValues(categories);
+  component.addProperty(prop);
+}
+
+export interface AlarmInput {
+  type: "relative" | "absolute";
+  trigger: number | string;
+}
+
+/** Replaces every VALARM on the component with DISPLAY alarms for `alarms`. */
+export function setAlarms(component: ICAL.Component, alarms: AlarmInput[]): void {
+  for (const valarm of component.getAllSubcomponents("valarm")) {
+    component.removeSubcomponent(valarm);
+  }
+  const summary = component.getFirstPropertyValue("summary");
+  for (const alarm of alarms) {
+    const valarm = new ICAL.Component("valarm");
+    valarm.updatePropertyWithValue("action", "DISPLAY");
+    valarm.updatePropertyWithValue(
+      "description",
+      typeof summary === "string" ? summary : "Reminder",
+    );
+    if (alarm.type === "relative" && typeof alarm.trigger === "number") {
+      valarm.updatePropertyWithValue("trigger", ICAL.Duration.fromSeconds(alarm.trigger));
+    } else if (alarm.type === "absolute" && typeof alarm.trigger === "string") {
+      valarm.updatePropertyWithValue(
+        "trigger",
+        ICAL.Time.fromJSDate(new Date(alarm.trigger), true),
+      );
+    }
+    component.addSubcomponent(valarm);
+  }
+}
+
 export function parseAttendees(component: ICAL.Component): ParsedAttendee[] {
   const properties = component.getAllProperties("attendee");
   return properties.map((prop) => {

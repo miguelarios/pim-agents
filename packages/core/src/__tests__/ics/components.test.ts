@@ -10,6 +10,7 @@ import {
 import { updateMasterEventIcs } from "../../ics/components.js";
 import { IcsParseError } from "../../ics/errors.js";
 import { generateEventIcs } from "../../ics/generate.js";
+import { parseIcsEvents } from "../../ics/parse-events.js";
 
 const masterIcs = generateEventIcs({
   title: "Weekly standup",
@@ -38,6 +39,77 @@ describe("createExceptionComponent", () => {
     expect(ex).toContain("END:VEVENT");
     expect(ex).toMatch(/RECURRENCE-ID/);
     expect(ex).toContain("Standup (moved)");
+  });
+});
+
+describe("createExceptionComponent — categories and alarms", () => {
+  const masterWithExtras = generateEventIcs({
+    title: "Weekly standup",
+    start: "2026-05-04T13:00:00.000Z",
+    end: "2026-05-04T13:30:00.000Z",
+    uid: "components-extras@pim-core",
+    recurrence_rule: "FREQ=WEEKLY;BYDAY=MO",
+    categories: ["Work", "Sync"],
+    alarms: [{ type: "relative", trigger: -600 }],
+  });
+  const WEEK = { start: "2026-05-11T00:00:00.000Z", end: "2026-05-12T00:00:00.000Z" };
+
+  it("inherits the master's VALARMs when no alarms override is given", () => {
+    const ex = createExceptionComponent(
+      masterWithExtras,
+      "vevent",
+      "2026-05-11T13:00:00.000Z",
+      { title: "Moved" },
+      false,
+    );
+    expect(ex).toContain("BEGIN:VALARM");
+    expect(ex).toContain("TRIGGER:-PT10M");
+    const occurrence = parseIcsEvents(combineIcsComponents(masterWithExtras, ex), WEEK)[0];
+    expect(occurrence.title).toBe("Moved");
+    expect(occurrence.alarms.map((a) => a.trigger)).toEqual([-600]);
+  });
+
+  it("replaces the alarms when an override is given", () => {
+    const ex = createExceptionComponent(
+      masterWithExtras,
+      "vevent",
+      "2026-05-11T13:00:00.000Z",
+      { alarms: [{ type: "relative", trigger: -300 }] },
+      false,
+    );
+    const occurrence = parseIcsEvents(combineIcsComponents(masterWithExtras, ex), WEEK)[0];
+    expect(occurrence.alarms.map((a) => a.trigger)).toEqual([-300]);
+  });
+
+  it("clears the alarms when an empty override is given", () => {
+    const ex = createExceptionComponent(
+      masterWithExtras,
+      "vevent",
+      "2026-05-11T13:00:00.000Z",
+      { alarms: [] },
+      false,
+    );
+    expect(ex).not.toContain("BEGIN:VALARM");
+  });
+
+  it("writes categories as separate values on the override", () => {
+    const inherited = createExceptionComponent(
+      masterWithExtras,
+      "vevent",
+      "2026-05-11T13:00:00.000Z",
+      {},
+      false,
+    );
+    expect(inherited).toContain("CATEGORIES:Work,Sync");
+    const replaced = createExceptionComponent(
+      masterWithExtras,
+      "vevent",
+      "2026-05-11T13:00:00.000Z",
+      { categories: ["Ops", "Standup"] },
+      false,
+    );
+    const occurrence = parseIcsEvents(combineIcsComponents(masterWithExtras, replaced), WEEK)[0];
+    expect(occurrence.categories).toEqual(["Ops", "Standup"]);
   });
 });
 
@@ -154,6 +226,14 @@ describe("updateMasterEventIcs", () => {
     expect(out).toContain("STATUS:TENTATIVE"); // status not rewritten
     expect(out).toContain("URL:https://example.com/meeting"); // unknown props survive
     expect(out).toContain("SEQUENCE:3"); // bumped from 2
+  });
+
+  it("writes categories as separate values, and an empty list removes them", () => {
+    const tagged = updateMasterEventIcs(RECURRING_MASTER, { categories: ["Work", "Sync"] });
+    expect(tagged).toContain("CATEGORIES:Work,Sync");
+    expect(parseIcsEvents(tagged)[0].categories).toEqual(["Work", "Sync"]);
+    const cleared = updateMasterEventIcs(tagged, { categories: [] });
+    expect(cleared).not.toContain("CATEGORIES");
   });
 
   it("replaces the attendee list only when attendees are provided", () => {

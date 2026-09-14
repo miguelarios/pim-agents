@@ -82,3 +82,46 @@ describe("generateEventIcs — basic round-trip", () => {
     ).toThrow(IcsGenerateError);
   });
 });
+
+describe("generateEventIcs — categories and alarms round-trip", () => {
+  it("writes one CATEGORIES value per category, not one escaped value", () => {
+    const ics = generateEventIcs({
+      title: "Tagged",
+      start: "2026-05-01T13:00:00.000Z",
+      end: "2026-05-01T13:30:00.000Z",
+      uid: "categories@pim-core",
+      categories: ["Work", "Sync"],
+    });
+    expect(ics).toContain("CATEGORIES:Work,Sync");
+    expect(ics).not.toContain("\\,");
+    expect(parseIcsEvents(ics)[0].categories).toEqual(["Work", "Sync"]);
+  });
+
+  it("escapes a comma inside a single category name", () => {
+    const ics = generateEventIcs({
+      title: "Tagged",
+      start: "2026-05-01T13:00:00.000Z",
+      end: "2026-05-01T13:30:00.000Z",
+      uid: "categories-comma@pim-core",
+      categories: ["Smith, Jane"],
+    });
+    expect(parseIcsEvents(ics)[0].categories).toEqual(["Smith, Jane"]);
+  });
+
+  it("writes DISPLAY alarms described by the event title", () => {
+    const ics = generateEventIcs({
+      title: "Reminded",
+      start: "2026-05-01T13:00:00.000Z",
+      end: "2026-05-01T13:30:00.000Z",
+      uid: "alarms@pim-core",
+      alarms: [
+        { type: "relative", trigger: -600 },
+        { type: "absolute", trigger: "2026-05-01T12:00:00.000Z" },
+      ],
+    });
+    expect(ics).toContain("TRIGGER:-PT10M");
+    expect(ics).toContain("TRIGGER;VALUE=DATE-TIME:20260501T120000Z");
+    expect(ics).toContain("DESCRIPTION:Reminded");
+    expect(parseIcsEvents(ics)[0].alarms).toHaveLength(2);
+  });
+});
