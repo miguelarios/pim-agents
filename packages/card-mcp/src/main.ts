@@ -11,7 +11,11 @@ const { version } = require("../package.json") as { version: string };
 
 export async function createServer(): Promise<McpServer> {
   const config = loadCardDavConfig();
-  const service = new CardDavService(config);
+  // CARDDAV_SERVER_SEARCH=off is the escape hatch for a server whose
+  // addressbook-query filtering answers wrongly rather than not at all.
+  const service = new CardDavService(config, {
+    serverSearch: process.env.CARDDAV_SERVER_SEARCH?.toLowerCase() !== "off",
+  });
 
   const server = new McpServer(
     { name: "@miguelarios/card-mcp", title: "CardDAV Contacts", version },

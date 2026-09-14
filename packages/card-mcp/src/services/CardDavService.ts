@@ -191,12 +191,129 @@ function mergeContactUpdates(current: Contact, updates: ContactUpdates): Contact
   return merged;
 }
 
+/** A vCard as the server holds it: where it is, its etag, and the raw card. */
+interface RawVCard {
+  url: string;
+  etag?: string;
+  data: string;
+}
+
+/**
+ * The body of a CardDAV `addressbook-query` `<filter>`, in xml-js compact
+ * form. tsdav prefixes unprefixed element names with `card:`, so the keys
+ * here are the bare RFC 6352 names.
+ */
+type AddressBookFilter = Record<string, unknown>;
+
+/**
+ * The vCard properties a text search covers, on the server and on the
+ * client: `matchesQuery` reads the parsed fields these properties become,
+ * so a card the server matches is one the client filter can match too.
+ */
+const SEARCHED_PROPERTIES = [
+  "FN",
+  "N",
+  "NICKNAME",
+  "EMAIL",
+  "TEL",
+  "ORG",
+  "TITLE",
+  "ROLE",
+  "CATEGORIES",
+  "URL",
+  "ADR",
+] as const;
+
+/**
+ * A card matches when any searched property contains the token,
+ * case-insensitively. `i;unicode-casemap` is one of the two collations RFC
+ * 6352 requires every server to support, and the one whose case folding
+ * comes closest to the client filter's `toLowerCase()`.
+ */
+function anyPropertyContains(token: string): AddressBookFilter {
+  return {
+    _attributes: { test: "anyof" },
+    "prop-filter": SEARCHED_PROPERTIES.map((name) => ({
+      _attributes: { name },
+      "text-match": {
+        _attributes: { collation: "i;unicode-casemap", "match-type": "contains" },
+        _text: token,
+      },
+    })),
+  };
+}
+
+function uidEquals(uid: string): AddressBookFilter {
+  return {
+    "prop-filter": {
+      _attributes: { name: "UID" },
+      "text-match": {
+        _attributes: { collation: "i;unicode-casemap", "match-type": "equals" },
+        _text: uid,
+      },
+    },
+  };
+}
+
+/** Splits a query into the tokens a card must contain, all of them, in any field. */
+function queryTokens(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * The client-side search rule, and the authority on what a search returns:
+ * every token appears somewhere in the contact's searchable text. A
+ * server-side query only narrows what this runs over.
+ */
+function matchesQuery(c: Contact, tokens: string[]): boolean {
+  const searchable = [
+    c.fullName,
+    c.firstName,
+    c.lastName,
+    c.organization,
+    c.title,
+    c.role,
+    c.nickname,
+    ...(c.categories ?? []),
+    ...c.emails.map((e) => e.value),
+    ...c.phones.map((e) => e.value),
+    ...c.urls.map((u) => u.value),
+    ...c.addresses.map((a) =>
+      [a.street, a.city, a.state, a.postalCode, a.country].filter(Boolean).join(" "),
+    ),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return tokens.every((token) => searchable.includes(token));
+}
+
+export interface CardDavServiceOptions {
+  /**
+   * Whether to search and look up contacts with a filtered
+   * `addressbook-query` REPORT, so the server returns only the matching
+   * cards, rather than fetching the whole book and filtering here. On by
+   * default; a server that rejects the REPORT is fallen back from
+   * automatically, and this turns it off outright for a server whose
+   * filter matching is known to be wrong rather than absent.
+   */
+  serverSearch?: boolean;
+}
+
 export class CardDavService {
   private client: DAVClient | null = null;
   private config: CardDavConfig;
+  /**
+   * Whether the server honours a filtered `addressbook-query`. Starts
+   * optimistic — RFC 6352 requires the REPORT — and is cleared for the rest
+   * of the session the first time the server rejects one, so a server
+   * without it costs one failed request, not one per search.
+   */
+  private serverSearch: boolean;
 
-  constructor(config: CardDavConfig) {
+  constructor(config: CardDavConfig, opts: CardDavServiceOptions = {}) {
     this.config = config;
+    this.serverSearch = opts.serverSearch ?? true;
   }
 
   async connect(): Promise<void> {
@@ -563,20 +680,71 @@ export class CardDavService {
     opts: { detailLevel?: DetailLevel } = {},
   ): Promise<BookEntry[]> {
     const detailLevel = opts.detailLevel ?? "summary";
+    return (await this.fetchRawVCards(addressBookUrl)).map((v) => ({
+      contact: applyDetailLevel(parseVCard(v.data), detailLevel),
+      located: { bookUrl: addressBookUrl, ...v },
+    }));
+  }
+
+  /** Every card in a book, bodies included: tsdav's etag REPORT followed by a multiget. */
+  private async fetchRawVCards(addressBookUrl: string): Promise<RawVCard[]> {
     const client = await this.ensureConnected();
     try {
       const vcards = await client.fetchVCards({
         addressBook: { url: addressBookUrl } as any,
       });
-      return vcards
-        .filter((v) => v.data)
-        .map((v) => ({
-          contact: applyDetailLevel(parseVCard(v.data!), detailLevel),
-          located: { bookUrl: addressBookUrl, url: v.url, etag: v.etag, data: v.data! },
-        }));
+      return vcards.flatMap((v) => (v.data ? [{ url: v.url, etag: v.etag, data: v.data }] : []));
     } catch (error) {
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
+  }
+
+  /**
+   * The cards in a book matching a filter, in one `addressbook-query`
+   * REPORT that carries the bodies back with it. `undefined` means the
+   * server could not be asked — the caller fetches the whole book instead.
+   *
+   * A rejected REPORT (tsdav reports any non-2xx as "Collection query
+   * failed") marks the server as not supporting the query for the rest of
+   * the session. A 207 whose entries carry no `address-data` is treated the
+   * same way for this call: a server that answered without bodies has not
+   * answered the question, and returning nothing would read as "no match".
+   */
+  private async queryVCards(
+    addressBookUrl: string,
+    filter: AddressBookFilter,
+  ): Promise<RawVCard[] | undefined> {
+    if (!this.serverSearch) return undefined;
+    const client = await this.ensureConnected();
+    let responses: Array<{ href?: string; props?: Record<string, any> }>;
+    try {
+      responses = await client.addressBookQuery({
+        url: addressBookUrl,
+        props: { "d:getetag": {}, "card:address-data": {} },
+        filters: filter,
+        depth: "1",
+      });
+    } catch (error) {
+      if (error instanceof Error && /^Collection query failed/.test(error.message)) {
+        this.serverSearch = false;
+        return undefined;
+      }
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+    const base = new URL(addressBookUrl, this.config.url);
+    const entries = responses
+      .filter((res) => res.href && collectionPath(res.href) !== collectionPath(addressBookUrl))
+      .map((res) => {
+        const addressData = res.props?.addressData;
+        const data: unknown = addressData?._cdata ?? addressData;
+        return {
+          url: new URL(res.href as string, base).href,
+          etag: res.props?.getetag as string | undefined,
+          data: typeof data === "string" ? data : undefined,
+        };
+      });
+    if (entries.some((e) => e.data === undefined)) return undefined;
+    return entries as RawVCard[];
   }
 
   async createContact(addressBookUrl: string, contact: Contact): Promise<void> {
@@ -668,38 +836,31 @@ export class CardDavService {
     }
   }
 
+  /**
+   * Text search over one book. The server is asked for the cards containing
+   * the query's longest token in any searched property — the most selective
+   * single filter RFC 6352 can express, since a `<filter>` has one level of
+   * `prop-filter`s and cannot say "every token, each in any property". The
+   * client rule then runs over what comes back, so the result is exactly
+   * what a whole-book fetch would have produced, from a fraction of the
+   * transfer. Without a usable server query, the whole book is fetched.
+   */
   async searchContacts(
     addressBookUrl: string,
     query: string,
     opts: { detailLevel?: DetailLevel } = {},
   ): Promise<Contact[]> {
-    const contacts = await this.fetchContacts(addressBookUrl, opts);
-    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return contacts;
-
-    return contacts.filter((c) => {
-      const searchable = [
-        c.fullName,
-        c.firstName,
-        c.lastName,
-        c.organization,
-        c.title,
-        c.role,
-        c.nickname,
-        ...(c.categories ?? []),
-        ...c.emails.map((e) => e.value),
-        ...c.phones.map((e) => e.value),
-        ...c.urls.map((u) => u.value),
-        ...c.addresses.map((a) =>
-          [a.street, a.city, a.state, a.postalCode, a.country].filter(Boolean).join(" "),
-        ),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return tokens.every((token) => searchable.includes(token));
-    });
+    const tokens = queryTokens(query);
+    if (tokens.length === 0) return this.fetchContacts(addressBookUrl, opts);
+    const detailLevel = opts.detailLevel ?? "summary";
+    const longest = tokens.reduce((a, b) => (b.length > a.length ? b : a));
+    const raw =
+      (await this.queryVCards(addressBookUrl, anyPropertyContains(longest))) ??
+      (await this.fetchRawVCards(addressBookUrl));
+    return raw
+      .map((v) => parseVCard(v.data))
+      .filter((c) => matchesQuery(c, tokens))
+      .map((c) => applyDetailLevel(c, detailLevel));
   }
 
   /**
@@ -1023,18 +1184,13 @@ export class CardDavService {
     this.client = null;
   }
 
-  private async findVCard(
-    addressBookUrl: string,
-    uid: string,
-  ): Promise<{ url: string; etag?: string; data: string } | undefined> {
-    const client = await this.ensureConnected();
-    const vcards = await client.fetchVCards({
-      addressBook: { url: addressBookUrl } as any,
-    });
-    for (const v of vcards) {
-      if (!v.data) continue;
-      if (parseVCard(v.data).uid === uid) return { url: v.url, etag: v.etag, data: v.data };
-    }
-    return undefined;
+  private async findVCard(addressBookUrl: string, uid: string): Promise<RawVCard | undefined> {
+    // The server is asked for that UID alone; the whole book is the fallback.
+    // The UID is re-checked on what comes back either way: the query's
+    // collation is case-insensitive, and UIDs are not.
+    const raw =
+      (await this.queryVCards(addressBookUrl, uidEquals(uid))) ??
+      (await this.fetchRawVCards(addressBookUrl));
+    return raw.find((v) => parseVCard(v.data).uid === uid);
   }
 }

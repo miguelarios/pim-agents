@@ -18,6 +18,12 @@ vi.mock("tsdav", () => {
       },
     ]),
     fetchVCards: vi.fn().mockResolvedValue([]),
+    // Rejected by default, so the rest of this file exercises the whole-book
+    // fallback that every search and lookup has to keep working. The
+    // "server-side search" block overrides it per test.
+    addressBookQuery: vi
+      .fn()
+      .mockRejectedValue(new Error("Collection query failed: 403 Forbidden. ")),
     createVCard: vi.fn().mockResolvedValue({ ok: true }),
     updateVCard: vi.fn().mockResolvedValue({ ok: true }),
     deleteVCard: vi.fn().mockResolvedValue({ ok: true }),
@@ -31,6 +37,9 @@ vi.mock("tsdav", () => {
     __mockClient: mockClient,
   };
 });
+
+/** For tests that inject a client with only fetchVCards: whole-book reads, no server query. */
+const WHOLE_BOOK = { serverSearch: false };
 
 describe("CardDavService", () => {
   let service: CardDavService;
@@ -798,6 +807,194 @@ describe("CardDavService", () => {
     });
   });
 
+  describe("server-side search", () => {
+    const BOOK = "https://cloud.example.com/remote.php/dav/addressbooks/users/miguel/contacts/";
+    const card = (uid: string, fn: string, extra = "") =>
+      `BEGIN:VCARD\nVERSION:3.0\nUID:${uid}\nFN:${fn}\n${extra}END:VCARD`;
+    const hit = (href: string, data?: string) => ({
+      href,
+      props: { getetag: '"e"', ...(data !== undefined ? { addressData: { _cdata: data } } : {}) },
+    });
+
+    async function mockClient() {
+      const { __mockClient } = (await import("tsdav")) as any;
+      for (const fn of ["addressBookQuery", "fetchVCards", "updateVCard", "deleteVCard"]) {
+        __mockClient[fn].mockClear();
+      }
+      return __mockClient;
+    }
+
+    it("asks the server for the longest token in every searched property, then applies the full rule", async () => {
+      const client = await mockClient();
+      // The server matched "lovelace" in three cards; only one also has "ada".
+      client.addressBookQuery.mockResolvedValueOnce([
+        hit("/dav/contacts/1.vcf", card("1", "Ada Lovelace")),
+        hit("/dav/contacts/2.vcf", card("2", "Byron Lovelace")),
+        hit(
+          "/dav/contacts/3.vcf",
+          card("3", "Anne", "ORG:Lovelace Ltd\nEMAIL:ada@lovelace.example\n"),
+        ),
+      ]);
+      const results = await service.searchContacts(BOOK, "ada Lovelace");
+      expect(results.map((c) => c.uid)).toEqual(["1", "3"]);
+      expect(client.fetchVCards).not.toHaveBeenCalled();
+
+      expect(client.addressBookQuery).toHaveBeenCalledTimes(1);
+      const request = client.addressBookQuery.mock.calls[0][0];
+      expect(request.url).toBe(BOOK);
+      expect(request.depth).toBe("1");
+      expect(request.props).toEqual({ "d:getetag": {}, "card:address-data": {} });
+      expect(request.filters._attributes).toEqual({ test: "anyof" });
+      const propFilters = request.filters["prop-filter"];
+      expect(propFilters.map((f: any) => f._attributes.name)).toEqual([
+        "FN",
+        "N",
+        "NICKNAME",
+        "EMAIL",
+        "TEL",
+        "ORG",
+        "TITLE",
+        "ROLE",
+        "CATEGORIES",
+        "URL",
+        "ADR",
+      ]);
+      for (const f of propFilters) {
+        expect(f["text-match"]).toEqual({
+          _attributes: { collation: "i;unicode-casemap", "match-type": "contains" },
+          _text: "lovelace",
+        });
+      }
+    });
+
+    it("applies the detail level to server results", async () => {
+      const client = await mockClient();
+      client.addressBookQuery.mockResolvedValueOnce([
+        hit("/dav/contacts/1.vcf", card("1", "Ada Lovelace", "X-CUSTOM:kept\n")),
+      ]);
+      const [full] = await service.searchContacts(BOOK, "ada", { detailLevel: "full" });
+      expect(full.otherProperties).toEqual(["X-CUSTOM:kept"]);
+      client.addressBookQuery.mockResolvedValueOnce([
+        hit("/dav/contacts/1.vcf", card("1", "Ada Lovelace", "X-CUSTOM:kept\n")),
+      ]);
+      const [summary] = await service.searchContacts(BOOK, "ada");
+      expect(summary.otherProperties).toEqual([]);
+    });
+
+    it("fetches the whole book for an empty query without asking the server", async () => {
+      const client = await mockClient();
+      client.fetchVCards.mockResolvedValueOnce([
+        { url: `${BOOK}1.vcf`, etag: '"e"', data: card("1", "Ada") },
+      ]);
+      const results = await service.searchContacts(BOOK, "   ");
+      expect(results.map((c) => c.uid)).toEqual(["1"]);
+      expect(client.addressBookQuery).not.toHaveBeenCalled();
+    });
+
+    it("resolves relative hrefs against the server, and skips the collection's own entry", async () => {
+      const client = await mockClient();
+      client.addressBookQuery.mockResolvedValueOnce([
+        hit("/remote.php/dav/addressbooks/users/miguel/contacts/"),
+        hit("/remote.php/dav/addressbooks/users/miguel/contacts/1.vcf", card("1", "Ada")),
+      ]);
+      client.updateVCard.mockResolvedValueOnce({ ok: true });
+      await service.updateContact(BOOK, "1", { nickname: "A" });
+      expect(client.updateVCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vCard: expect.objectContaining({
+            url: "https://cloud.example.com/remote.php/dav/addressbooks/users/miguel/contacts/1.vcf",
+            etag: '"e"',
+          }),
+        }),
+      );
+      expect(client.fetchVCards).not.toHaveBeenCalled();
+    });
+
+    it("looks a UID up with an equals filter and rejects a case-only server match", async () => {
+      const client = await mockClient();
+      client.addressBookQuery.mockResolvedValueOnce([
+        hit("/dav/contacts/x.vcf", card("ABC-1", "Someone Else")),
+      ]);
+      await expect(service.deleteContact(BOOK, "abc-1")).rejects.toMatchObject({
+        code: "CONTACT_NOT_FOUND",
+      });
+      expect(client.addressBookQuery.mock.calls[0][0].filters).toEqual({
+        "prop-filter": {
+          _attributes: { name: "UID" },
+          "text-match": {
+            _attributes: { collation: "i;unicode-casemap", "match-type": "equals" },
+            _text: "abc-1",
+          },
+        },
+      });
+      expect(client.deleteVCard).not.toHaveBeenCalled();
+      expect(client.fetchVCards).not.toHaveBeenCalled();
+    });
+
+    it("locates a UID across books with one small query per book", async () => {
+      const client = await mockClient();
+      client.addressBookQuery
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([hit("/dav/work/1.vcf", card("1", "Ada"))]);
+      const located = await service.locateContact("1", ["/dav/personal/", "/dav/work/"]);
+      expect(located.bookUrl).toBe("/dav/work/");
+      expect(located.url).toBe("https://cloud.example.com/dav/work/1.vcf");
+      expect(client.addressBookQuery).toHaveBeenCalledTimes(2);
+      expect(client.fetchVCards).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the whole book when the server rejects the REPORT, and does not ask again", async () => {
+      const client = await mockClient();
+      client.addressBookQuery.mockRejectedValueOnce(
+        new Error("Collection query failed: 501 Not Implemented. "),
+      );
+      client.fetchVCards.mockResolvedValue([
+        { url: `${BOOK}1.vcf`, etag: '"e"', data: card("1", "Ada Lovelace") },
+        { url: `${BOOK}2.vcf`, etag: '"e"', data: card("2", "Grace Hopper") },
+      ]);
+      expect((await service.searchContacts(BOOK, "grace")).map((c) => c.uid)).toEqual(["2"]);
+      expect((await service.searchContacts(BOOK, "ada")).map((c) => c.uid)).toEqual(["1"]);
+      expect(client.addressBookQuery).toHaveBeenCalledTimes(1);
+      expect(client.fetchVCards).toHaveBeenCalledTimes(2);
+      client.fetchVCards.mockResolvedValue([]);
+    });
+
+    it("falls back for a 207 that carries no card bodies, and asks again next time", async () => {
+      const client = await mockClient();
+      client.addressBookQuery
+        .mockResolvedValueOnce([hit("/dav/contacts/1.vcf")])
+        .mockResolvedValueOnce([hit("/dav/contacts/1.vcf", card("1", "Ada"))]);
+      client.fetchVCards.mockResolvedValueOnce([
+        { url: `${BOOK}1.vcf`, etag: '"e"', data: card("1", "Ada") },
+      ]);
+      expect((await service.searchContacts(BOOK, "ada")).map((c) => c.uid)).toEqual(["1"]);
+      expect(client.fetchVCards).toHaveBeenCalledTimes(1);
+      expect((await service.searchContacts(BOOK, "ada")).map((c) => c.uid)).toEqual(["1"]);
+      expect(client.addressBookQuery).toHaveBeenCalledTimes(2);
+      expect(client.fetchVCards).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces a failure that is not the server declining the query", async () => {
+      const client = await mockClient();
+      client.addressBookQuery.mockRejectedValueOnce(new Error("socket hang up"));
+      await expect(service.searchContacts(BOOK, "ada")).rejects.toBeInstanceOf(Error);
+      expect(client.fetchVCards).not.toHaveBeenCalled();
+    });
+
+    it("never asks the server when serverSearch is off", async () => {
+      const client = await mockClient();
+      const offline = new CardDavService(
+        { url: "https://cloud.example.com/", username: "m", password: "p" },
+        { serverSearch: false },
+      );
+      client.fetchVCards.mockResolvedValueOnce([
+        { url: `${BOOK}1.vcf`, etag: '"e"', data: card("1", "Ada") },
+      ]);
+      expect((await offline.searchContacts(BOOK, "ada")).map((c) => c.uid)).toEqual(["1"]);
+      expect(client.addressBookQuery).not.toHaveBeenCalled();
+    });
+  });
+
   describe("resolveContact", () => {
     it("returns resolved shape for a single name match", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
@@ -1374,7 +1571,7 @@ describe("CardDavService.resolveContact", () => {
       .join("\r\n");
 
   it("returns resolved shape on single match", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: vi
         .fn()
@@ -1391,7 +1588,7 @@ describe("CardDavService.resolveContact", () => {
   });
 
   it("returns ambiguous shape with candidates sorted by fullName on multi-match", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: vi.fn().mockResolvedValue([
         { url: "1", data: mkVCard("u1", "Alice Smith", "r@x.com"), etag: "" },
@@ -1414,7 +1611,7 @@ describe("CardDavService.resolveContact", () => {
   });
 
   it("returns not_found shape when no match", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: vi.fn().mockResolvedValue([]),
     };
@@ -1424,7 +1621,7 @@ describe("CardDavService.resolveContact", () => {
   });
 
   it("ambiguous candidates skip contacts without email", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: vi.fn().mockResolvedValue([
         { url: "1", data: mkVCard("u1", "Alice One", "one@x.com"), etag: "" },
@@ -1550,7 +1747,7 @@ describe("CardDavService across address books", () => {
     );
 
   it("resolveContact merges matches from several books", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: perBook({
         b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
@@ -1566,7 +1763,7 @@ describe("CardDavService across address books", () => {
     const GROUP =
       "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:Team\r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD";
     const mk = () => {
-      const service = new CardDavService({ url: "x", username: "u", password: "p" });
+      const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
       const updateVCard = vi.fn().mockResolvedValue({ ok: true });
       (service as any).client = {
         fetchVCards: vi.fn().mockResolvedValue([{ url: "b/g1.vcf", etag: '"e"', data: GROUP }]),
@@ -1593,7 +1790,7 @@ describe("CardDavService across address books", () => {
   });
 
   it("resolveContact never resolves to a group, even one carrying an EMAIL", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: vi.fn().mockResolvedValue([
         {
@@ -1607,7 +1804,7 @@ describe("CardDavService across address books", () => {
   });
 
   it("resolveContact tags ambiguous candidates with the label of their book", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: perBook({
         b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
@@ -1626,7 +1823,7 @@ describe("CardDavService across address books", () => {
   });
 
   it("resolveContact treats one UID in two books as one person", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: perBook({
         b1: [mkVCard("u1", "Alice Smith", "a@x.com")],
@@ -1641,7 +1838,7 @@ describe("CardDavService across address books", () => {
   });
 
   it("locateContact returns the URL of the book holding the UID", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u2", "B")] }),
     };
@@ -1654,7 +1851,7 @@ describe("CardDavService across address books", () => {
 
   it("locateContact fails as CONTACT_NOT_FOUND when no book holds the UID", async () => {
     const { ErrorCode } = await import("@miguelarios/pim-core");
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = { fetchVCards: perBook({ b1: [mkVCard("u1", "A")] }) };
     await expect(service.locateContact("nope", ["b1", "b2"])).rejects.toMatchObject({
       code: ErrorCode.CONTACT_NOT_FOUND,
@@ -1662,7 +1859,7 @@ describe("CardDavService across address books", () => {
   });
 
   it("locateContact names books by the label it was given", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
     };
@@ -1675,7 +1872,7 @@ describe("CardDavService across address books", () => {
   });
 
   it("locateContact refuses to guess when two books hold the same UID", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     (service as any).client = {
       fetchVCards: perBook({ b1: [mkVCard("u1", "A")], b2: [mkVCard("u1", "A")] }),
     };
@@ -1687,7 +1884,7 @@ describe("CardDavService across address books", () => {
   });
 
   it("updateContact and deleteContact reuse a located vCard instead of re-reading the book", async () => {
-    const service = new CardDavService({ url: "x", username: "u", password: "p" });
+    const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
     const fetchVCards = vi.fn();
     const updateVCard = vi.fn().mockResolvedValue({ ok: true });
     const deleteVCard = vi.fn().mockResolvedValue({ ok: true });
