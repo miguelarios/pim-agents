@@ -36,6 +36,7 @@ export function generateVTimezoneIcs(tzid: string): string | null {
   const calendar = new ICAL.Component(["vcalendar", [], []]);
   calendar.updatePropertyWithValue("prodid", "-//pim-core//cal-mcp//EN");
   calendar.updatePropertyWithValue("version", "2.0");
+  // A copy: the service's component is shared, and addSubcomponent re-parents.
   calendar.addSubcomponent(ICAL.Component.fromString(zone.component.toString()));
   return calendar.toString();
 }
@@ -52,7 +53,11 @@ export function generateEventIcs(props: EventCreateProps): string {
   if (props.timezone) {
     const zone = ICAL.TimezoneService.get(props.timezone);
     if (zone?.component) {
-      calendar.addSubcomponent(zone.component);
+      // A copy, as in generateVTimezoneIcs: TimezoneService hands out one
+      // shared component per zone, and addSubcomponent re-parents whatever
+      // it is given, so adding it directly would pull it out of the previous
+      // calendar that used it.
+      calendar.addSubcomponent(ICAL.Component.fromString(zone.component.toString()));
     }
   }
 

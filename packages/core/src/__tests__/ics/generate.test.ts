@@ -1,4 +1,5 @@
 // packages/core/src/__tests__/ics/generate.test.ts
+import ICAL from "ical.js";
 import { describe, expect, it } from "vitest";
 import "../../ics/_tz-init.js";
 import { IcsGenerateError } from "../../ics/errors.js";
@@ -137,5 +138,26 @@ describe("generateVTimezoneIcs", () => {
 
   it("returns null for a zone it does not know", () => {
     expect(generateVTimezoneIcs("Mars/Olympus_Mons")).toBeNull();
+  });
+});
+
+describe("generateEventIcs — shared VTIMEZONE", () => {
+  it("keeps the VTIMEZONE in a calendar built earlier when another is built for the same zone", () => {
+    const zone = ICAL.TimezoneService.get("America/Chicago")!;
+    const first = new ICAL.Component(["vcalendar", [], []]);
+    first.addSubcomponent(ICAL.Component.fromString(zone.component!.toString()));
+    // Simulate the old behaviour's hazard: hold a component that shares the
+    // service's zone object, then generate an event for the same zone.
+    const shared = new ICAL.Component(["vcalendar", [], []]);
+    shared.addSubcomponent(zone.component!);
+    generateEventIcs({
+      title: "Zoned",
+      start: "2026-05-01T13:00:00.000Z",
+      end: "2026-05-01T13:30:00.000Z",
+      uid: "shared-zone@pim-core",
+      timezone: "America/Chicago",
+    });
+    expect(shared.toString()).toContain("BEGIN:VTIMEZONE");
+    expect(first.toString()).toContain("BEGIN:VTIMEZONE");
   });
 });
