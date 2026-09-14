@@ -317,6 +317,88 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
   return root.toString();
 }
 
+/** Compares an ICAL.Time against an instant, by calendar day for DATE values. */
+function timeIsBefore(time: ICAL.Time, instantMs: number, allDay: boolean): boolean {
+  if (allDay && time.isDate) {
+    const ymd = `${time.year}-${String(time.month).padStart(2, "0")}-${String(time.day).padStart(2, "0")}`;
+    return ymd < new Date(instantMs).toISOString().slice(0, 10);
+  }
+  return time.toJSDate().getTime() < instantMs;
+}
+
+/**
+ * Ends a recurring series just before `occurrenceDate`, so that occurrence and
+ * every later one stop being generated while earlier ones — and their
+ * overrides — are kept.
+ *
+ * The master RRULE gets `UNTIL` set to the instant before the occurrence (one
+ * second before for a date-time series, the previous day for an all-day one),
+ * replacing any `COUNT` since RFC 5545 §3.3.10 forbids both. `RDATE`,
+ * `EXDATE` and override VEVENTs at or after the cut are removed rather than
+ * left dangling past the end of the rule. `SEQUENCE` is bumped so attendees'
+ * clients notice the change.
+ *
+ * Returns `null` when nothing would remain — the cut is at or before the first
+ * occurrence — so the caller can delete the object instead of leaving an empty
+ * series behind.
+ */
+export function truncateRecurrenceIcs(
+  icsContent: string,
+  occurrenceDate: string,
+  allDay: boolean,
+): string | null {
+  const root = parseRoot(icsContent);
+  const master = root
+    .getAllSubcomponents("vevent")
+    .find((c) => !c.getFirstProperty("recurrence-id"));
+  if (!master) throw new IcsParseError("No master VEVENT found in ICS", null);
+  const rruleValue = master.getFirstPropertyValue("rrule");
+  if (!(rruleValue instanceof ICAL.Recur)) {
+    throw new IcsParseError("Master VEVENT has no RRULE to truncate", null);
+  }
+
+  const cutMs = new Date(occurrenceDate).getTime();
+  if (Number.isNaN(cutMs))
+    throw new IcsParseError(`Invalid occurrence date: ${occurrenceDate}`, null);
+
+  const dtstart = master.getFirstPropertyValue("dtstart");
+  if (dtstart instanceof ICAL.Time && !timeIsBefore(dtstart, cutMs, allDay)) return null;
+
+  const until = allDay
+    ? ICAL.Time.fromJSDate(new Date(cutMs - 86_400_000), true)
+    : ICAL.Time.fromJSDate(new Date(cutMs - 1000), true);
+  if (allDay) until.isDate = true;
+  const recur = ICAL.Recur.fromString(rruleValue.toString());
+  recur.count = null;
+  recur.until = until;
+  master.updatePropertyWithValue("rrule", recur);
+
+  // Dates the rule no longer reaches: extra occurrences past the cut would
+  // survive UNTIL, and exclusions past it would be noise.
+  for (const name of ["rdate", "exdate"] as const) {
+    for (const prop of master.getAllProperties(name)) {
+      const kept = prop
+        .getValues()
+        .filter((v) => !(v instanceof ICAL.Time) || timeIsBefore(v, cutMs, allDay));
+      if (kept.length === prop.getValues().length) continue;
+      if (kept.length === 0) master.removeProperty(prop);
+      else prop.setValues(kept);
+    }
+  }
+
+  for (const comp of root.getAllSubcomponents("vevent")) {
+    const recurId = comp.getFirstPropertyValue("recurrence-id");
+    if (recurId instanceof ICAL.Time && !timeIsBefore(recurId, cutMs, allDay)) {
+      root.removeSubcomponent(comp);
+    }
+  }
+
+  const seq = master.getFirstPropertyValue("sequence");
+  master.updatePropertyWithValue("sequence", (typeof seq === "number" ? seq : 0) + 1);
+  master.updatePropertyWithValue("dtstamp", ICAL.Time.fromJSDate(new Date(), true));
+  return root.toString();
+}
+
 // Removes any VEVENT/VTODO whose RECURRENCE-ID resolves to the same instant as
 // occurrenceDate. ical.js resolves RECURRENCE-ID;TZID=... to the correct
 // instant when the VTIMEZONE is present, so this epoch comparison (matching

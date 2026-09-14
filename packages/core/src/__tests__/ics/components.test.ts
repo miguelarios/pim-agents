@@ -6,6 +6,7 @@ import {
   createExceptionComponent,
   removeExceptionFromIcs,
   splitIcsByUid,
+  truncateRecurrenceIcs,
 } from "../../ics/components.js";
 import { updateMasterEventIcs } from "../../ics/components.js";
 import { IcsParseError } from "../../ics/errors.js";
@@ -377,5 +378,101 @@ describe("removeExceptionFromIcs", () => {
     const out = removeExceptionFromIcs(ICS, "2026-03-09T15:00:00.000Z", false);
     expect(out).not.toContain("Standup (moved)");
     expect(out).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO"); // master untouched
+  });
+});
+
+describe("truncateRecurrenceIcs", () => {
+  const SERIES = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//test//EN",
+    "BEGIN:VEVENT",
+    "UID:trunc-1",
+    "DTSTAMP:20260301T000000Z",
+    "DTSTART:20260302T150000Z",
+    "DTEND:20260302T153000Z",
+    "SUMMARY:Weekly sync",
+    "SEQUENCE:3",
+    "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=20",
+    "RDATE:20260305T150000Z,20260402T150000Z",
+    "EXDATE:20260309T150000Z",
+    "EXDATE:20260406T150000Z",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:trunc-1",
+    "RECURRENCE-ID:20260316T150000Z",
+    "DTSTAMP:20260301T000000Z",
+    "DTSTART:20260316T160000Z",
+    "DTEND:20260316T163000Z",
+    "SUMMARY:Weekly sync moved and kept",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:trunc-1",
+    "RECURRENCE-ID:20260413T150000Z",
+    "DTSTAMP:20260301T000000Z",
+    "DTSTART:20260413T160000Z",
+    "DTEND:20260413T163000Z",
+    "SUMMARY:Weekly sync moved and dropped",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("ends the rule one second before the cut and drops COUNT", () => {
+    const out = truncateRecurrenceIcs(SERIES, "2026-03-30T15:00:00.000Z", false)!;
+    expect(out).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260330T145959Z");
+    expect(out).not.toContain("COUNT");
+    expect(out).toContain("SEQUENCE:4");
+    const occurrences = parseIcsEvents(out, {
+      start: "2026-03-01T00:00:00Z",
+      end: "2026-06-01T00:00:00Z",
+    });
+    const starts = occurrences.map((e) => e.occurrence_date);
+    expect(starts).toContain("2026-03-23T15:00:00.000Z");
+    expect(starts).not.toContain("2026-03-30T15:00:00.000Z");
+    expect(starts.every((d) => d! < "2026-03-30")).toBe(true);
+  });
+
+  it("keeps overrides, RDATEs and EXDATEs before the cut and removes those after", () => {
+    const out = truncateRecurrenceIcs(SERIES, "2026-03-30T15:00:00.000Z", false)!;
+    expect(out).toContain("SUMMARY:Weekly sync moved and kept");
+    expect(out).not.toContain("SUMMARY:Weekly sync moved and dropped");
+    expect(out).toContain("RDATE:20260305T150000Z");
+    expect(out).not.toContain("20260402T150000Z");
+    expect(out).toContain("EXDATE:20260309T150000Z");
+    expect(out).not.toContain("EXDATE:20260406T150000Z");
+  });
+
+  it("returns null when the cut is at or before the first occurrence", () => {
+    expect(truncateRecurrenceIcs(SERIES, "2026-03-02T15:00:00.000Z", false)).toBeNull();
+    expect(truncateRecurrenceIcs(SERIES, "2026-01-01T00:00:00.000Z", false)).toBeNull();
+  });
+
+  it("writes a DATE-valued UNTIL on the previous day for an all-day series", () => {
+    const allDay = generateEventIcs({
+      title: "Daily",
+      start: "2026-03-01T00:00:00.000Z",
+      end: "2026-03-02T00:00:00.000Z",
+      uid: "trunc-all-day@pim-core",
+      all_day: true,
+      recurrence_rule: "FREQ=DAILY;COUNT=30",
+    });
+    const out = truncateRecurrenceIcs(allDay, "2026-03-10T00:00:00.000Z", true)!;
+    expect(out).toContain("UNTIL=20260309");
+    expect(out).not.toMatch(/UNTIL=20260309T/);
+    const occurrences = parseIcsEvents(out, {
+      start: "2026-03-01T00:00:00Z",
+      end: "2026-04-01T00:00:00Z",
+    });
+    expect(occurrences).toHaveLength(9);
+  });
+
+  it("throws when the master has no RRULE", () => {
+    expect(() =>
+      truncateRecurrenceIcs(
+        SERIES.replace("RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=20\r\n", ""),
+        "2026-03-30T15:00:00.000Z",
+        false,
+      ),
+    ).toThrow(IcsParseError);
   });
 });

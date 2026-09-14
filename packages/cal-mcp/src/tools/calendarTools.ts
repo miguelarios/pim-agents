@@ -9,6 +9,7 @@ import {
   generateEventIcs,
   removeExceptionFromIcs,
   splitIcsByUid,
+  truncateRecurrenceIcs,
   updateMasterEventIcs,
 } from "@miguelarios/pim-core/ics";
 import {
@@ -40,6 +41,8 @@ type Attendee = { email: string };
 type Alarm = { type: "relative" | "absolute"; trigger: number | string };
 type DetailLevel = "summary" | "full";
 type Span = "this" | "all";
+/** `delete_event` also cuts a series short; `update_event` gains this in #38. */
+type DeleteSpan = Span | "future";
 
 interface EventInput {
   title: string;
@@ -680,7 +683,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     name: "delete_event",
     title: "Delete Event",
     description:
-      "Delete a calendar event by UID. Asks the user to confirm first, unless it is excluding a single occurrence of a recurring event (span 'this'), which is recoverable.",
+      "Delete a calendar event by UID. Asks the user to confirm first, unless it is excluding a single occurrence of a recurring event (span 'this'), which is recoverable. span 'future' ends a recurring series just before the given occurrence, keeping earlier occurrences and their history.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,
@@ -695,24 +698,84 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
         occurrence_date: {
           type: "string",
           description:
-            "ISO 8601 date of the specific occurrence to delete. Required when span is 'this' on a recurring event. Get this value from list_events results.",
+            "ISO 8601 date of the specific occurrence to delete. Required when span is 'this' or 'future' on a recurring event. Get this value from list_events results.",
         },
         span: {
           type: "string",
-          enum: ["this", "all"],
+          enum: ["this", "all", "future"],
           description:
-            "'this' deletes only this occurrence, 'all' deletes the entire series. Default: all.",
+            "'this' deletes only this occurrence, 'future' deletes this occurrence and every later one (the series ends just before it), 'all' deletes the entire series. Default: all.",
         },
       },
       required: ["calendar", "uid"],
     },
     outputSchema: deleteResultSchema,
     handler: async (
-      args: { calendar: string; uid: string; occurrence_date?: string; span?: Span },
+      args: { calendar: string; uid: string; occurrence_date?: string; span?: DeleteSpan },
       service,
       ctx,
     ) => {
       const span = args.span ?? "all";
+
+      // Cutting a series short keeps what already happened, but the removed
+      // occurrences — and any overrides among them — are gone for good, so it
+      // is gated like a full delete. The series is resolved before the gate
+      // so the prompt can say what it is about to do (#41).
+      if (span === "future") {
+        return run(async () => {
+          const { event: existing, meta: eventMeta } = await service.getEventWithMeta(
+            args.calendar,
+            args.uid,
+          );
+          if (!existing.is_recurring) {
+            return calFail(
+              "validation_error",
+              `Event "${args.uid}" is not recurring — use span 'all' to delete it`,
+            );
+          }
+          if (!args.occurrence_date) {
+            return calFail(
+              "validation_error",
+              "occurrence_date is required when span is 'future' on a recurring event",
+            );
+          }
+          const occurrenceDate = args.occurrence_date;
+          if (Number.isNaN(new Date(occurrenceDate).getTime())) {
+            return calFail(
+              "validation_error",
+              `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
+            );
+          }
+          const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
+          const truncated = truncateRecurrenceIcs(rawObj.data, occurrenceDate, existing.all_day);
+
+          // Nothing would remain: the cut is at or before the first occurrence,
+          // so this is a whole-series delete and is treated as one.
+          if (truncated === null) {
+            const gate = confirmDestructive(
+              ctx,
+              "confirm_delete_event",
+              `Delete event ${args.uid} from ${args.calendar}? ${occurrenceDate} is its first occurrence, so ending the series there removes it entirely. This cannot be undone.`,
+            );
+            if (gate.status === "interrupt") return gate.result;
+            await service.deleteEvent(args.calendar, args.uid, eventMeta);
+            return ok({ deleted: true, uid: args.uid });
+          }
+
+          const gate = confirmDestructive(
+            ctx,
+            "confirm_delete_event",
+            `Delete the occurrence of event ${args.uid} at ${occurrenceDate} and every later one from ${args.calendar}? Earlier occurrences are kept. This cannot be undone.`,
+          );
+          if (gate.status === "interrupt") return gate.result;
+
+          await service.updateEvent(args.calendar, args.uid, truncated, {
+            url: rawObj.url,
+            etag: rawObj.etag,
+          });
+          return ok({ deleted: true, uid: args.uid });
+        });
+      }
 
       // Excluding one occurrence of a recurring event is recoverable — the
       // occurrence can be re-added. EVERY other path removes the calendar

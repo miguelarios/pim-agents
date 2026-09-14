@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0 (2026-09-14)
+
+- `truncateRecurrenceIcs(ics, occurrenceDate, allDay)` — ends a recurring series just before an occurrence: `UNTIL` replaces `COUNT` on the master `RRULE` (one second before for a timed series, the previous day as a `DATE` for an all-day one), and override VEVENTs, `RDATE`s and `EXDATE`s at or after the cut are removed while earlier ones are kept. Returns `null` when the cut is at or before the first occurrence, so a caller can delete the object instead of writing an empty series (cal-mcp #41, and the split half of #38).
+
 ## 0.10.1 (2026-09-14)
 
 - `CATEGORIES` is written as one property with one value per category on every ICS write

@@ -342,6 +342,37 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect(service.deleteEvent).not.toHaveBeenCalled();
   });
 
+  it("confirms before ending a series with span=future, then rewrites the object (#41)", async () => {
+    const service = fakeService();
+    service.getEventWithMeta.mockResolvedValue({
+      event: { ...EVENT, is_recurring: true },
+      meta: { url: "u", etag: "e" },
+    });
+    const { client, elicitations } = await connect(era, service, {
+      action: "accept",
+      content: { confirm: true },
+    });
+    const result = await client.callTool({
+      name: "delete_event",
+      arguments: {
+        calendar: "mailbox/Work",
+        uid: "evt-1",
+        span: "future",
+        occurrence_date: "2026-08-05T09:00:00.000Z",
+      },
+    });
+
+    expect(elicitations).toHaveLength(1);
+    expect(result.isError).toBeFalsy();
+    expect(service.updateEvent).toHaveBeenCalledWith(
+      "mailbox/Work",
+      "evt-1",
+      expect.stringContaining("UNTIL=20260805T085959Z"),
+      { url: "u", etag: "e" },
+    );
+    expect(service.deleteEvent).not.toHaveBeenCalled();
+  });
+
   it("still asks for span=this on a NON-recurring event", async () => {
     // No occurrence to exclude, so this is a full delete — the narrower span
     // must not bypass the gate.
