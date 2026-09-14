@@ -1377,7 +1377,7 @@ describe("CalDavService", () => {
       const [url, init] = fetchMock.mock.calls[0];
       expect(url).toBe("https://dav.mailbox.org/caldav/work/");
       expect(init.method).toBe("REPORT");
-      expect(init.headers.Depth).toBe("1");
+      expect(init.headers.Depth).toBe("0");
       expect(init.headers.Authorization).toMatch(/^Basic /);
       expect(init.body).toContain("<C:free-busy-query");
       expect(init.body).toContain('start="20260310T080000Z" end="20260310T170000Z"');

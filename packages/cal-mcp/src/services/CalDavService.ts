@@ -1374,9 +1374,10 @@ export class CalDavService {
         headers: {
           Authorization: `Basic ${Buffer.from(`${account.username}:${account.password}`).toString("base64")}`,
           "Content-Type": "application/xml; charset=utf-8",
-          // As in the RFC 4791 §7.10.1 example: the report is applied to the
-          // collection's members, with the time-range in the body as scope.
-          Depth: "1",
+          // RFC 4791 §7.10: the report is applied to the collection itself,
+          // with the time-range in the body as scope; Depth 0 is what the
+          // §7.10.1 example sends and what is assumed when the header is absent.
+          Depth: "0",
         },
         body,
       });
