@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.0 (2026-09-14)
+
+- **Search and UID lookup run on the server** (#52). `list_contacts` with a query,
+  `resolve_contact`, and the book lookup behind `update_contact`, `delete_contact` and the
+  group tools used to fetch every card in the book (two round trips per book) and filter
+  here. They now send one filtered `addressbook-query` REPORT that returns only the
+  matching cards, bodies included: a search asks for its longest token in any searched
+  property, a lookup asks for the UID. The client-side rule still runs over what comes
+  back, so results are exactly what the whole-book path returned. A server that rejects
+  the REPORT is fallen back from for the rest of the session; `CARDDAV_SERVER_SEARCH=off`
+  turns it off outright.
+
 ## 0.10.1 (2026-09-13)
 
 - **`rename_address_book` refuses a name another book already has** (#79). It applied

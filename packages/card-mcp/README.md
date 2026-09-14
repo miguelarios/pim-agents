@@ -22,6 +22,7 @@ npx @miguelarios/card-mcp
 | `CARDDAV_URL` | Yes | CardDAV server URL |
 | `CARDDAV_USER` | Yes | CardDAV username |
 | `CARDDAV_PASS` | Yes | CardDAV password |
+| `CARDDAV_SERVER_SEARCH` | No | Set to `off` to never search or look up contacts with a filtered `addressbook-query` REPORT and always fetch the whole book instead. A server that rejects the REPORT is fallen back from automatically; this is for one whose filter matching is wrong. |
 
 ## Tools
 
