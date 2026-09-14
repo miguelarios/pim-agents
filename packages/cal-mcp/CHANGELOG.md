@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.0 (2026-09-14)
+
+- `update_event` accepts `span: "future"`: changes the given occurrence of a recurring event and every later one (#38). The series is split at that occurrence — the existing object is ended just before it, keeping earlier occurrences and their overrides, and a new object with a new UID carries the remaining pattern with the changes applied. The result is the new series' event, so callers pick up the UID to use from now on. A `COUNT` is reduced by the occurrences already spent, `EXDATE`/`RDATE` values are divided between the halves, and a cut at the first occurrence edits the whole series in place. The new object is written before the old one is cut, so a mid-way failure can only leave a visible duplicate tail, never missing occurrences.
+- Bumped `@miguelarios/pim-core` dependency to `^0.12.0` for `splitRecurrenceIcs`.
+
 ## 0.16.0 (2026-09-14)
 
 - `delete_event` accepts `span: "future"`: deletes the given occurrence of a recurring event and every later one, keeping earlier occurrences and their overrides (#41). The master `RRULE` gets `UNTIL` set to just before the occurrence (replacing any `COUNT`), and overrides, `RDATE`s and `EXDATE`s past the cut are dropped. Cutting at the first occurrence deletes the object outright rather than leaving an empty series. Gated on confirmation like a full delete, since the removed occurrences cannot be recovered.

@@ -63,6 +63,7 @@ function fakeService() {
     }),
     deleteEvent: vi.fn().mockResolvedValue(undefined),
     updateEvent: vi.fn().mockResolvedValue(EVENT),
+    createEvent: vi.fn().mockResolvedValue(EVENT),
     fetchRawCalendarObject: vi.fn().mockResolvedValue({ data: RECURRING_ICS, url: "u", etag: "e" }),
     findFreeSlots: vi.fn().mockResolvedValue([]),
     getAccountEmail: vi.fn(() => "user@example.com"),
@@ -316,6 +317,47 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect(event.alarms).toEqual([
       { type: "relative", trigger: -600, trigger_human: "10 minutes before" },
     ]);
+  });
+
+  it("splits a series for span=future and returns the new series' event (#38)", async () => {
+    const service = fakeService();
+    service.getEventWithMeta.mockResolvedValue({
+      event: { ...EVENT, is_recurring: true },
+      meta: { url: "u", etag: "e" },
+    });
+    service.createEvent.mockImplementation(async (_cal: string, _ics: string, uid: string) => ({
+      ...EVENT,
+      uid,
+      start: "2026-08-05T10:00:00.000Z",
+      end: "2026-08-05T10:15:00.000Z",
+    }));
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_event",
+      arguments: {
+        calendar: "mailbox/Work",
+        uid: "evt-1",
+        span: "future",
+        occurrence_date: "2026-08-05T09:00:00.000Z",
+        start: "2026-08-05T10:00:00.000Z",
+        end: "2026-08-05T10:15:00.000Z",
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const event = (result.structuredContent as { event: { uid: string } }).event;
+    expect(event.uid).not.toBe("evt-1");
+    expect(service.createEvent).toHaveBeenCalledWith(
+      "mailbox/Work",
+      expect.stringContaining(`UID:${event.uid}`),
+      event.uid,
+    );
+    expect(service.updateEvent).toHaveBeenCalledWith(
+      "mailbox/Work",
+      "evt-1",
+      expect.stringContaining("UNTIL=20260805T085959Z"),
+      { url: "u", etag: "e" },
+    );
   });
 
   it("excludes a single occurrence of a recurring event without asking", async () => {

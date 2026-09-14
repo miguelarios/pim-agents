@@ -425,11 +425,11 @@ describe("calendarTools", () => {
       expect(parsed.message).toContain("Connection failed");
     });
 
-    it("update_event schema has occurrence_date and span enum without future", () => {
+    it("update_event schema has occurrence_date and a span enum including future (#38)", () => {
       const tool = CALENDAR_TOOLS.find((t) => t.name === "update_event")!;
       const props = (tool.inputSchema as any).properties;
       expect(props.occurrence_date).toBeDefined();
-      expect(props.span.enum).toEqual(["this", "all"]);
+      expect(props.span.enum).toEqual(["this", "all", "future"]);
     });
 
     it("delete_event schema has occurrence_date and a span enum including future (#41)", () => {
@@ -1042,6 +1042,190 @@ describe("calendarTools", () => {
       const icsArg = mockService.updateEvent.mock.calls[0][2];
       expect(icsArg).toContain("EXDATE");
       expect(icsArg).not.toContain("RECURRENCE-ID");
+    });
+  });
+
+  describe("update_event span=future (#38)", () => {
+    const SERIES = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//test//EN",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260302T150000Z",
+      "DTEND:20260302T153000Z",
+      "SUMMARY:Standup",
+      "LOCATION:Room A",
+      "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=20",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "RECURRENCE-ID:20260309T150000Z",
+      "DTSTAMP:20260301T000000Z",
+      "DTSTART:20260309T160000Z",
+      "DTEND:20260309T163000Z",
+      "SUMMARY:Standup moved",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const EXISTING = {
+      uid: "standup",
+      calendar_id: "prov/Cal",
+      title: "Standup",
+      start: "2026-03-02T15:00:00.000Z",
+      end: "2026-03-02T15:30:00.000Z",
+      all_day: false,
+      is_recurring: true,
+      location: "Room A",
+      attendees: [],
+      organizer: null,
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: EXISTING,
+        meta: { url: "/cal/standup.ics", etag: '"s1"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: SERIES,
+        url: "/cal/standup.ics",
+        etag: '"s1"',
+      });
+      mockService.createEvent.mockImplementation(
+        async (_cal: string, _ics: string, uid: string) => ({
+          ...EXISTING,
+          uid,
+        }),
+      );
+      mockService.updateEvent.mockResolvedValue({});
+    });
+
+    it("creates the new series with the changes, then ends the old one before the cut", async () => {
+      const result = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-04-06T15:00:00.000Z",
+          title: "Standup v2",
+          start: "2026-04-06T16:00:00.000Z",
+          end: "2026-04-06T16:30:00.000Z",
+        },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+
+      expect(mockService.createEvent).toHaveBeenCalledTimes(1);
+      const [createCal, tailIcs, newUid] = mockService.createEvent.mock.calls[0];
+      expect(createCal).toBe("prov/Cal");
+      expect(newUid).not.toBe("standup");
+      expect(tailIcs).toContain(`UID:${newUid}`);
+      expect(tailIcs).toContain("SUMMARY:Standup v2");
+      expect(tailIcs).toContain("LOCATION:Room A");
+      expect(tailIcs).toMatch(/DTSTART[^\r\n]*20260406T1[16]0000/);
+      expect(tailIcs).toContain("COUNT=15");
+      expect(tailIcs).not.toContain("RECURRENCE-ID");
+
+      expect(mockService.updateEvent).toHaveBeenCalledTimes(1);
+      const [, oldUid, headIcs, meta] = mockService.updateEvent.mock.calls[0];
+      expect(oldUid).toBe("standup");
+      expect(headIcs).toContain("UNTIL=20260406T145959Z");
+      expect(headIcs).toContain("SUMMARY:Standup\r\n");
+      expect(headIcs).toContain("Standup moved");
+      expect(meta).toEqual({ url: "/cal/standup.ics", etag: '"s1"' });
+
+      // The new series is written before the old one is cut.
+      expect(mockService.createEvent.mock.invocationCallOrder[0]).toBeLessThan(
+        mockService.updateEvent.mock.invocationCallOrder[0],
+      );
+      // The caller learns the UID the tail lives under.
+      expect(JSON.parse(result.content[0].text).event.uid).toBe(newUid);
+    });
+
+    it("keeps the series' duration when only start is given", async () => {
+      await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-04-06T15:00:00.000Z",
+          start: "2026-04-06T17:00:00.000Z",
+        },
+        mockService as any,
+      );
+      const tailIcs = mockService.createEvent.mock.calls[0][1] as string;
+      expect(tailIcs).toMatch(/DTSTART[^\r\n]*20260406T1[27]0000/);
+      expect(tailIcs).toMatch(/DTEND[^\r\n]*20260406T1[27]3000/);
+    });
+
+    it("edits the whole series in place when the cut is at the first occurrence", async () => {
+      await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2026-03-02T15:00:00.000Z",
+          title: "Standup v2",
+        },
+        mockService as any,
+      );
+      expect(mockService.createEvent).not.toHaveBeenCalled();
+      const [, uid, ics] = mockService.updateEvent.mock.calls[0];
+      expect(uid).toBe("standup");
+      expect(ics).toContain("SUMMARY:Standup v2");
+      expect(ics).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=20");
+      expect(ics).toContain("RECURRENCE-ID:20260309T150000Z");
+    });
+
+    it("rejects span=future without occurrence_date, and past the end of the series", async () => {
+      const missing = await handleCalendarTool(
+        "update_event",
+        { calendar: "prov/Cal", uid: "standup", span: "future", title: "x" },
+        mockService as any,
+      );
+      expect(missing.isError).toBe(true);
+      expect(missing.content[0].text).toContain("occurrence_date");
+
+      const past = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "standup",
+          span: "future",
+          occurrence_date: "2027-01-01T00:00:00.000Z",
+          title: "x",
+        },
+        mockService as any,
+      );
+      expect(past.isError).toBe(true);
+      expect(JSON.parse(past.content[0].text).error).toBe("validation_error");
+      expect(mockService.createEvent).not.toHaveBeenCalled();
+      expect(mockService.updateEvent).not.toHaveBeenCalled();
+    });
+
+    it("treats span=future on a non-recurring event as a plain update", async () => {
+      mockService.getEventWithMeta.mockResolvedValue({
+        event: { ...EXISTING, uid: "one-off", is_recurring: false },
+        meta: { url: "/cal/one-off.ics", etag: '"o1"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValue({
+        data: SERIES.replace("RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=20\r\n", ""),
+        url: "/cal/one-off.ics",
+        etag: '"o1"',
+      });
+      const result = await handleCalendarTool(
+        "update_event",
+        { calendar: "prov/Cal", uid: "one-off", span: "future", title: "Renamed" },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(mockService.createEvent).not.toHaveBeenCalled();
+      expect(mockService.updateEvent.mock.calls[0][2]).toContain("SUMMARY:Renamed");
     });
   });
 
