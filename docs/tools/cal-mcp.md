@@ -1,6 +1,6 @@
 # Calendar MCP Tools
 
-`@miguelarios/cal-mcp` — CalDAV calendar server with 15 tools.
+`@miguelarios/cal-mcp` — CalDAV calendar server with 16 tools.
 
 > Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts` (events) and `packages/cal-mcp/src/tools/calendarManagementTools.ts` (calendar collections). Output shapes from `packages/cal-mcp/src/services/CalDavService.ts`.
 
@@ -224,6 +224,38 @@ Import events from iCalendar (.ics) content into a calendar.
 ```
 
 Errors with `validation_error` if no events parse from the ICS content.
+
+## get_free_busy
+
+When is a calendar busy? Returns the busy periods in a date range — merged, typed as `busy`, `tentative` or `unavailable` — without event details, so availability questions cost one call and expose nothing else. Uses the server's own `free-busy-query` REPORT (RFC 4791 §7.10) where it answers one, otherwise computes from the expanded events the same way `find_free_slots` does. Use `find_free_slots` to get the free windows of a given length instead.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendars` | string[] | | Provider-prefixed calendar IDs to report on. If omitted, uses all calendars. |
+| `start` | string | yes | Start of range (ISO 8601). |
+| `end` | string | yes | End of range (ISO 8601). Must be after `start`. |
+| `include_all_day_as_busy` | boolean | | Treat all-day events as busy when computing from events (default: false). A server-side answer decides this itself. |
+| `ignore_tentative` | boolean | | If true, tentative periods are left out (default: false). |
+
+**Output**
+
+```ts
+{
+  start: string;             // ISO 8601, normalised
+  end: string;
+  busy: Array<{
+    start: string;           // ISO 8601 UTC, clipped to the range
+    end: string;
+    type: "busy" | "tentative" | "unavailable";
+  }>;
+  count: number;
+  sources: Record<string, "server" | "computed">;   // per calendar_id
+}
+```
+
+Overlapping periods of the same type are merged; a `busy` and a `tentative` period can still overlap. `sources` says which path each calendar took: the two can differ on all-day and transparent (`availability: free`) events, which are the server's call on its path and the options' on ours. SabreDAV-based servers (Nextcloud) only answer `free-busy-query` on the scheduling outbox, so they report `computed`.
 
 ## find_free_slots
 

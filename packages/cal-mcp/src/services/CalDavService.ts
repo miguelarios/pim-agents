@@ -13,10 +13,12 @@ import {
   zonedTimeToUtc,
 } from "@miguelarios/pim-core";
 import {
+  type FreeBusyPeriod,
   type ParsedAlarm,
   type ParsedEvent,
   type TimeRange,
   parseIcsEvents,
+  parseIcsFreeBusy,
 } from "@miguelarios/pim-core/ics";
 import { DAVClient } from "tsdav";
 import {
@@ -95,6 +97,49 @@ export interface FindFreeSlotsOptions {
 export interface CalendarObjectMeta {
   url: string;
   etag?: string;
+}
+
+export interface FreeBusyOptions {
+  ignoreTentative?: boolean;
+  includeAllDayAsBusy?: boolean;
+}
+
+/** Where a calendar's busy periods came from. */
+export type FreeBusySource = "server" | "computed";
+
+export interface FreeBusyResult {
+  busy: FreeBusyPeriod[];
+  sources: Record<string, FreeBusySource>;
+}
+
+/** The little an event contributes to a free/busy answer. */
+interface BusyCandidate {
+  start: string;
+  end: string;
+  status: string | null;
+  availability: string | null;
+  all_day: boolean;
+  calendar_id: string;
+}
+
+/** Merges overlapping or touching periods of the same type; output is sorted by start. */
+export function mergeFreeBusy(periods: FreeBusyPeriod[]): FreeBusyPeriod[] {
+  const sorted = [...periods].sort(
+    (a, b) => a.start.localeCompare(b.start) || a.type.localeCompare(b.type),
+  );
+  const out: FreeBusyPeriod[] = [];
+  for (const period of sorted) {
+    const last = out.find(
+      (p) => p.type === period.type && p.end >= period.start && p.start <= period.end,
+    );
+    if (last) {
+      if (period.end > last.end) last.end = period.end;
+      if (period.start < last.start) last.start = period.start;
+    } else {
+      out.push({ ...period });
+    }
+  }
+  return out.sort((a, b) => a.start.localeCompare(b.start));
 }
 
 /** Derives a URL slug from a display name; falls back to a random one when nothing survives. */
@@ -1242,6 +1287,158 @@ export class CalDavService {
     }
   }
 
+  /** Fetches the events of one calendar in a range, reduced to what free/busy needs. */
+  private async collectBusyCandidates(
+    calendarId: string,
+    start: string,
+    end: string,
+  ): Promise<BusyCandidate[]> {
+    const out: BusyCandidate[] = [];
+    try {
+      const { account, calendarName } = this.resolveAccount(calendarId);
+      const client = await this.getClient(account);
+      const calendar = await this.findCalendar(client, calendarName, account.id);
+      const objects = await client.fetchCalendarObjects({
+        calendar,
+        timeRange: { start, end },
+        expand: true,
+      });
+
+      for (const obj of objects) {
+        if (!obj.data) continue;
+        const parsed = parseIcsEvents(obj.data, { start, end });
+        for (const event of parsed) {
+          out.push({
+            start: event.start,
+            end: event.end,
+            status: event.status,
+            availability: event.availability,
+            all_day: event.all_day,
+            calendar_id: calendarId,
+          });
+        }
+      }
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+    return out;
+  }
+
+  /** Which candidates actually block time under the given options. */
+  private static blocksTime(e: BusyCandidate, options: FreeBusyOptions): boolean {
+    // Skip all-day events unless includeAllDayAsBusy
+    if (e.all_day && !options.includeAllDayAsBusy) return false;
+    // Skip free events
+    if (e.availability === "free") return false;
+    // Skip tentative when ignoreTentative
+    if (options.ignoreTentative && e.status === "tentative") return false;
+    // Everything else blocks
+    return true;
+  }
+
+  /**
+   * Asks the server for a calendar's busy periods with a `free-busy-query`
+   * REPORT (RFC 4791 §7.10). The reply is `text/calendar` rather than a
+   * multistatus document, so it goes through `fetch` directly instead of
+   * tsdav, whose request helpers parse every reply as XML. Returns `null`
+   * when the server declines — the report is optional for servers to
+   * support, and SabreDAV-based ones (Nextcloud) only answer it on the
+   * scheduling outbox — so the caller can fall back to computing.
+   */
+  private async fetchServerFreeBusy(
+    account: CalDavAccount,
+    calendarUrl: string,
+    start: string,
+    end: string,
+  ): Promise<FreeBusyPeriod[] | null> {
+    const stamp = (iso: string) =>
+      `${new Date(iso).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`;
+    const body = [
+      `<?xml version="1.0" encoding="utf-8" ?>`,
+      `<C:free-busy-query xmlns:C="urn:ietf:params:xml:ns:caldav">`,
+      `<C:time-range start="${stamp(start)}" end="${stamp(end)}"/>`,
+      `</C:free-busy-query>`,
+    ].join("\n");
+    try {
+      const response = await fetch(new URL(calendarUrl, account.url).toString(), {
+        method: "REPORT",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${account.username}:${account.password}`).toString("base64")}`,
+          "Content-Type": "application/xml; charset=utf-8",
+          Depth: "1",
+        },
+        body,
+      });
+      if (!response.ok) return null;
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.toLowerCase().includes("text/calendar")) return null;
+      return parseIcsFreeBusy(await response.text());
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Busy periods across `calendarIds` in [start, end): from the server's own
+   * `free-busy-query` where it answers one, otherwise computed from the
+   * expanded events the same way `findFreeSlots` does (#48). `sources` says
+   * which path each calendar took, since the two can differ on all-day and
+   * transparent events, which are the server's call on its path and the
+   * options' on ours.
+   */
+  async getFreeBusy(
+    calendarIds: string[],
+    start: string,
+    end: string,
+    options: FreeBusyOptions = {},
+  ): Promise<FreeBusyResult> {
+    const busy: FreeBusyPeriod[] = [];
+    const sources: Record<string, FreeBusySource> = {};
+
+    for (const calendarId of calendarIds) {
+      const { account, calendarName } = this.resolveAccount(calendarId);
+      const client = await this.getClient(account);
+      const calendar = await this.findCalendar(client, calendarName, account.id);
+
+      const fromServer = await this.fetchServerFreeBusy(
+        account,
+        (calendar as { url: string }).url,
+        start,
+        end,
+      );
+      if (fromServer !== null) {
+        sources[calendarId] = "server";
+        for (const period of fromServer) {
+          if (options.ignoreTentative && period.type === "tentative") continue;
+          busy.push(period);
+        }
+        continue;
+      }
+
+      sources[calendarId] = "computed";
+      for (const candidate of await this.collectBusyCandidates(calendarId, start, end)) {
+        if (!CalDavService.blocksTime(candidate, options)) continue;
+        busy.push({
+          start: new Date(candidate.start).toISOString(),
+          end: new Date(candidate.end).toISOString(),
+          type: candidate.status === "tentative" ? "tentative" : "busy",
+        });
+      }
+    }
+
+    const rangeStart = new Date(start).toISOString();
+    const rangeEnd = new Date(end).toISOString();
+    const clipped = busy
+      .map((p) => ({
+        ...p,
+        start: p.start < rangeStart ? rangeStart : p.start,
+        end: p.end > rangeEnd ? rangeEnd : p.end,
+      }))
+      .filter((p) => p.start < p.end);
+    return { busy: mergeFreeBusy(clipped), sources };
+  }
+
   async findFreeSlots(
     calendarIds: string[],
     start: string,
@@ -1250,60 +1447,15 @@ export class CalDavService {
     options: FindFreeSlotsOptions = {},
   ): Promise<FreeSlot[]> {
     // 1. Fetch all events across specified calendars
-    const allEvents: Array<{
-      start: string;
-      end: string;
-      status: string | null;
-      availability: string | null;
-      all_day: boolean;
-      calendar_id: string;
-    }> = [];
-
+    const allEvents: BusyCandidate[] = [];
     for (const calendarId of calendarIds) {
       // Skip excluded calendars
       if (options.excludeCalendars?.includes(calendarId)) continue;
-
-      try {
-        const { account, calendarName } = this.resolveAccount(calendarId);
-        const client = await this.getClient(account);
-        const calendar = await this.findCalendar(client, calendarName, account.id);
-        const objects = await client.fetchCalendarObjects({
-          calendar,
-          timeRange: { start, end },
-          expand: true,
-        });
-
-        for (const obj of objects) {
-          if (!obj.data) continue;
-          const parsed = parseIcsEvents(obj.data, { start, end });
-          for (const event of parsed) {
-            allEvents.push({
-              start: event.start,
-              end: event.end,
-              status: event.status,
-              availability: event.availability,
-              all_day: event.all_day,
-              calendar_id: calendarId,
-            });
-          }
-        }
-      } catch (error) {
-        if (error instanceof CalendarError) throw error;
-        throw toPimError(error instanceof Error ? error : new Error(String(error)));
-      }
+      allEvents.push(...(await this.collectBusyCandidates(calendarId, start, end)));
     }
 
     // 2. Filter events — skip free, all-day (unless opted in), and optionally tentative
-    const busyIntervals = allEvents.filter((e) => {
-      // Skip all-day events unless includeAllDayAsBusy
-      if (e.all_day && !options.includeAllDayAsBusy) return false;
-      // Skip free events
-      if (e.availability === "free") return false;
-      // Skip tentative when ignoreTentative
-      if (options.ignoreTentative && e.status === "tentative") return false;
-      // Everything else blocks
-      return true;
-    });
+    const busyIntervals = allEvents.filter((e) => CalDavService.blocksTime(e, options));
 
     // 3. Merge overlapping busy intervals
     const sorted = busyIntervals

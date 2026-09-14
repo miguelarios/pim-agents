@@ -95,6 +95,21 @@ export const freeSlotsSchema = v.object({
   count: v.number(),
 });
 
+/** `get_free_busy`: typed busy periods, and which path each calendar's answer took. */
+export const freeBusySchema = v.object({
+  start: v.string(),
+  end: v.string(),
+  busy: v.array(
+    v.object({
+      start: v.string(),
+      end: v.string(),
+      type: v.picklist(["busy", "tentative", "unavailable"]),
+    }),
+  ),
+  count: v.number(),
+  sources: v.record(v.string(), v.picklist(["server", "computed"])),
+});
+
 /**
  * Result of the three collection-management tools. `calendar_id` is always the
  * post-operation ID, so a rename hands back the ID that resolves from now on

@@ -28,6 +28,7 @@ const mockService = {
   deleteEvent: vi.fn(),
   moveEvent: vi.fn(),
   findFreeSlots: vi.fn(),
+  getFreeBusy: vi.fn(),
   fetchRawCalendarObject: vi.fn(),
   getAccountEmail: vi.fn(() => "user@example.com"),
 };
@@ -37,8 +38,8 @@ describe("calendarTools", () => {
     vi.clearAllMocks();
   });
 
-  it("exports 12 tool definitions", () => {
-    expect(CALENDAR_TOOLS).toHaveLength(12);
+  it("exports 13 tool definitions", () => {
+    expect(CALENDAR_TOOLS).toHaveLength(13);
     const names = CALENDAR_TOOLS.map((t) => t.name);
     expect(names).toContain("list_calendars");
     expect(names).toContain("list_events");
@@ -52,6 +53,7 @@ describe("calendarTools", () => {
     expect(names).toContain("create_events_batch");
     expect(names).toContain("import_ics");
     expect(names).toContain("find_free_slots");
+    expect(names).toContain("get_free_busy");
   });
 
   it("read-only tools carry readOnlyHint; destructive tools carry destructiveHint", () => {
@@ -63,6 +65,7 @@ describe("calendarTools", () => {
       "search_events",
       "get_event",
       "find_free_slots",
+      "get_free_busy",
     ]) {
       expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
     }
@@ -593,6 +596,64 @@ describe("calendarTools", () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.calendars[0].read_only).toBe(false);
       expect(parsed.calendars[1].read_only).toBe(true);
+    });
+
+    it("get_free_busy passes the calendars and options through and wraps the result (#48)", async () => {
+      mockService.getFreeBusy.mockResolvedValueOnce({
+        busy: [
+          { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
+        ],
+        sources: { "prov/A": "server" },
+      });
+      const result = await handleCalendarTool(
+        "get_free_busy",
+        {
+          calendars: ["prov/A"],
+          start: "2026-03-10T08:00:00Z",
+          end: "2026-03-10T17:00:00Z",
+          ignore_tentative: true,
+        },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(mockService.listCalendars).not.toHaveBeenCalled();
+      expect(mockService.getFreeBusy).toHaveBeenCalledWith(
+        ["prov/A"],
+        "2026-03-10T08:00:00Z",
+        "2026-03-10T17:00:00Z",
+        { includeAllDayAsBusy: false, ignoreTentative: true },
+      );
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        start: "2026-03-10T08:00:00.000Z",
+        end: "2026-03-10T17:00:00.000Z",
+        busy: [
+          { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
+        ],
+        count: 1,
+        sources: { "prov/A": "server" },
+      });
+    });
+
+    it("get_free_busy defaults to every calendar and rejects an inverted range (#48)", async () => {
+      mockService.listCalendars.mockResolvedValueOnce([
+        { calendar_id: "prov/A" },
+        { calendar_id: "prov/B" },
+      ]);
+      mockService.getFreeBusy.mockResolvedValueOnce({ busy: [], sources: {} });
+      await handleCalendarTool(
+        "get_free_busy",
+        { start: "2026-03-10T08:00:00Z", end: "2026-03-10T17:00:00Z" },
+        mockService as any,
+      );
+      expect(mockService.getFreeBusy.mock.calls[0][0]).toEqual(["prov/A", "prov/B"]);
+
+      const bad = await handleCalendarTool(
+        "get_free_busy",
+        { start: "2026-03-10T17:00:00Z", end: "2026-03-10T08:00:00Z" },
+        mockService as any,
+      );
+      expect(bad.isError).toBe(true);
+      expect(JSON.parse(bad.content[0].text).error).toBe("validation_error");
     });
 
     it("find_free_slots wraps in { slots, count } envelope", async () => {
