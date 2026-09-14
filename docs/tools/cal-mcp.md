@@ -88,7 +88,7 @@ Keyword search across event title, description, and location.
 
 ## get_event
 
-Get full details of a single event by calendar and UID.
+Get full details of a single event by calendar and UID. For a recurring event, pass `occurrence_date` to get one occurrence as it will actually happen — including any changes made to just that occurrence — instead of the master series.
 
 **Parameters**
 
@@ -96,6 +96,7 @@ Get full details of a single event by calendar and UID.
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
 | `uid` | string | yes | Event UID. |
+| `occurrence_date` | string | | ISO 8601 date-time of one occurrence of a recurring event, as returned in `list_events` results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master. `validation_error` on a non-recurring event; `not_found` if the series has no occurrence at that instant. |
 
 **Output**
 

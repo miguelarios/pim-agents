@@ -867,29 +867,18 @@ export class CalDavService {
     }
   }
 
-  async getEvent(calendarId: string, uid: string): Promise<EventFull> {
-    const { account, calendarName } = this.resolveAccount(calendarId);
-
-    try {
-      const client = await this.getClient(account);
-      const calendar = await this.findCalendar(client, calendarName, account.id);
-      const obj = await this.findCalendarObject(client, calendar, uid, calendarId);
-      const parsed = parseIcsEvents(obj.data!, undefined, this.timezone);
-      const event = parsed.find((e) => e.uid === uid);
-      if (!event) {
-        throw new CalendarError(`Event "${uid}" not found`, ErrorCode.EVENT_NOT_FOUND, uid);
-      }
-
-      return this.toEventFull(event, calendarId);
-    } catch (error) {
-      if (error instanceof CalendarError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
-    }
-  }
-
-  async getEventWithMeta(
+  /**
+   * Reads one event: the master by default, or — given `occurrenceDate` — the
+   * single occurrence of a recurring event whose RECURRENCE-ID is that instant,
+   * exactly as `list_events` would expand it. That covers a plain rule-generated
+   * occurrence and an override VEVENT alike: the override's fields (moved time,
+   * changed title) come back in place of the master's, which is what a caller
+   * holding an `occurrence_date` from `list_events` needs (#39).
+   */
+  private async readEvent(
     calendarId: string,
     uid: string,
+    occurrenceDate?: string,
   ): Promise<{ event: EventFull; meta: CalendarObjectMeta }> {
     const { account, calendarName } = this.resolveAccount(calendarId);
 
@@ -898,19 +887,80 @@ export class CalDavService {
       const calendar = await this.findCalendar(client, calendarName, account.id);
       const obj = await this.findCalendarObject(client, calendar, uid, calendarId);
       const parsed = parseIcsEvents(obj.data!, undefined, this.timezone);
-      const event = parsed.find((e) => e.uid === uid);
-      if (!event) {
+      const master = parsed.find((e) => e.uid === uid);
+      if (!master) {
         throw new CalendarError(`Event "${uid}" not found`, ErrorCode.EVENT_NOT_FOUND, uid);
       }
+
+      const event =
+        occurrenceDate === undefined
+          ? master
+          : this.pickOccurrence(obj.data!, uid, master, occurrenceDate);
 
       return {
         event: this.toEventFull(event, calendarId),
         meta: { url: obj.url, etag: obj.etag },
       };
     } catch (error) {
-      if (error instanceof CalendarError) throw error;
+      if (error instanceof CalendarError || error instanceof ValidationError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
+  }
+
+  /**
+   * Expands the series over a two-day window around `occurrenceDate` and keeps
+   * the instance whose `occurrence_date` is exactly that instant. A window,
+   * rather than a zero-width range, lets the expansion find an override whose
+   * DTSTART moved away from its RECURRENCE-ID; the exact match on
+   * `occurrence_date` then keeps the neighbours out.
+   */
+  private pickOccurrence(
+    data: string,
+    uid: string,
+    master: ParsedEvent,
+    occurrenceDate: string,
+  ): ParsedEvent {
+    const target = new Date(occurrenceDate).getTime();
+    if (Number.isNaN(target)) {
+      throw new ValidationError(
+        `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
+        "occurrence_date",
+      );
+    }
+    if (!master.is_recurring) {
+      throw new ValidationError(
+        `Event "${uid}" is not recurring — omit occurrence_date to read it`,
+        "occurrence_date",
+      );
+    }
+    const DAY = 86_400_000;
+    const window = {
+      start: new Date(target - DAY).toISOString(),
+      end: new Date(target + DAY).toISOString(),
+    };
+    const hit = parseIcsEvents(data, window, this.timezone).find(
+      (e) =>
+        e.uid === uid && e.occurrence_date !== null && Date.parse(e.occurrence_date) === target,
+    );
+    if (!hit) {
+      throw new CalendarError(
+        `Event "${uid}" has no occurrence at ${occurrenceDate} — occurrence_date must be a value list_events returned for it`,
+        ErrorCode.EVENT_NOT_FOUND,
+        uid,
+      );
+    }
+    return hit;
+  }
+
+  async getEvent(calendarId: string, uid: string, occurrenceDate?: string): Promise<EventFull> {
+    return (await this.readEvent(calendarId, uid, occurrenceDate)).event;
+  }
+
+  async getEventWithMeta(
+    calendarId: string,
+    uid: string,
+  ): Promise<{ event: EventFull; meta: CalendarObjectMeta }> {
+    return this.readEvent(calendarId, uid);
   }
 
   async createEvent(calendarId: string, icalString: string, uid: string): Promise<EventFull> {

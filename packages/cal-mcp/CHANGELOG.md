@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.0 (2026-09-14)
+
+- `get_event` takes an optional `occurrence_date` and returns that one occurrence of a recurring event instead of the master series (#39). A modified occurrence (an override `VEVENT` with a matching `RECURRENCE-ID`) comes back with its own time and fields, exactly as `list_events` expands it; an ordinary occurrence comes back at its own slot with the master's fields. Passing it on a non-recurring event is a `validation_error`, and a date the rule never generates is `not_found`, so a stale `occurrence_date` cannot silently hand back the master.
+
 ## 0.14.0 (2026-09-14)
 
 - `list_events`, `get_today_events` and `search_events` take a `calendars` array, so a query can be limited to a chosen set of calendars instead of one or all of them (#49). The existing single `calendar` still works; when both are given the sets are unioned, so a caller gets exactly the calendars it named. The named calendars are queried in parallel without a `list_calendars` round trip, and an unknown ID is reported as `not_found` rather than silently skipped.
