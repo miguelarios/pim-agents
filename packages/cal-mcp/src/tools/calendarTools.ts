@@ -1,5 +1,6 @@
 import { getLocalDateParts, getTimezone, zonedTimeToUtc } from "@miguelarios/pim-core";
 import {
+  type ExceptionOverrides,
   type MasterEventUpdates,
   addExdateToIcs,
   combineIcsComponents,
@@ -52,6 +53,36 @@ interface EventInput {
   categories?: string[];
   recurrence_rule?: string;
   availability?: "busy" | "free";
+}
+
+/**
+ * The `update_event` fields that are forwarded verbatim to the ICS layer on
+ * both branches. Typed against `ExceptionOverrides` and `MasterEventUpdates`
+ * below, so a field renamed in pim-core fails this build instead of silently
+ * dropping out of the copy.
+ */
+const UPDATABLE_FIELDS = [
+  "title",
+  "start",
+  "end",
+  "all_day",
+  "location",
+  "description",
+  "attendees",
+  "alarms",
+  "categories",
+  "availability",
+] as const;
+type UpdatableField = (typeof UPDATABLE_FIELDS)[number];
+
+/** The `update_event` arguments as the ICS layer sees them. */
+type UpdateFields = Pick<ExceptionOverrides, UpdatableField> &
+  Pick<MasterEventUpdates, UpdatableField>;
+
+/** Copies one key from `source` to `target` when it was actually given. */
+function copyDefined<T, K extends keyof T>(target: T, source: Pick<T, K>, key: K): void {
+  const value = source[key];
+  if (value !== undefined) target[key] = value;
 }
 
 async function fetchEvents(
@@ -478,7 +509,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
     },
     outputSchema: singleEventSchema,
     handler: (
-      args: Partial<EventInput> & {
+      args: UpdateFields & {
         calendar: string;
         uid: string;
         occurrence_date?: string;
@@ -501,26 +532,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
           const occurrenceDate = args.occurrence_date;
           const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
 
-          const overrides: Partial<EventInput> & {
-            organizer?: { email: string; name?: string | null };
-          } = {};
-          for (const field of [
-            "title",
-            "start",
-            "end",
-            "all_day",
-            "location",
-            "description",
-            "attendees",
-            "alarms",
-            "categories",
-            "availability",
-          ] as const) {
-            if (args[field] !== undefined) {
-              // field-by-field copy across a union of value types
-              (overrides as any)[field] = args[field];
-            }
-          }
+          const overrides: ExceptionOverrides = {};
+          for (const field of UPDATABLE_FIELDS) copyDefined(overrides, args, field);
 
           // If the effective event will have attendees but no organizer yet,
           // inject one so the CalDAV PUT satisfies server scheduling preconditions.
@@ -580,23 +593,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
         const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
 
         const updates: MasterEventUpdates = { timezone: getTimezone() };
-        for (const field of [
-          "title",
-          "start",
-          "end",
-          "all_day",
-          "location",
-          "description",
-          "attendees",
-          "alarms",
-          "categories",
-          "availability",
-        ] as const) {
-          if (args[field] !== undefined) {
-            // field-by-field copy across a union of value types
-            (updates as any)[field] = args[field];
-          }
-        }
+        for (const field of UPDATABLE_FIELDS) copyDefined(updates, args, field);
 
         // Inject ORGANIZER only when the event will have attendees but has none
         // (CalDAV scheduling servers reject ATTENDEE-without-ORGANIZER, RFC 6638).
