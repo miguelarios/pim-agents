@@ -109,3 +109,36 @@ convention changes do not ride along with a feature.
 - Publishing is idempotent: a version already on npm is skipped, so a failed run can be re-run
 - The version in the tag must match `package.json`, or the publish fails rather than shipping a mismatch
 - `.npmignore` excludes test files from published packages
+
+## Filing issues
+
+Issue templates are inherited from `miguelarios/.github` and are **not** in this
+checkout — GitHub does not include default community health files in clones.
+Resolve them through the API; never freehand the body.
+
+Routing table: https://github.com/miguelarios/.github/blob/main/CONTRIBUTING.md
+
+| Template | Use for | Label |
+| --- | --- | --- |
+| `-T Bug` | Wrong behavior. Needs expected vs actual, repro steps, logs, version, OS. | `bug` |
+| `-T Feature` | New capability. Needs a problem statement naming who is blocked, plus alternatives. | `enhancement` |
+| `-T Chore` | Chore, refactor, bump, deploy. Needs acceptance criteria and rollback. | `chore` |
+| `-T Docs` | Docs wrong or missing. Needs exact path, expected vs actual. | `documentation` |
+
+```bash
+gh issue create -T Bug --title "fix: <symptom> when <trigger>" --label bug
+```
+
+Do **not** file an issue for a question or an undecided observation. Raise it in
+the working thread instead.
+
+**PR bodies are not inherited here.** This repo has its own
+`.github/pull_request_template.md` on disk, which overrides the account default.
+Read it directly — see `## Pull Requests` above for the per-type emphasis.
+
+Issue conventions that match what `## Pull Requests` already requires:
+
+- Titles use Conventional Commit prefixes: `feat`, `fix`, `refactor`, `chore`,
+  `docs`, `build`. Describe the user-visible effect, not the implementation.
+- Close issues with a visible `Closes #<issue>` line in the PR's Related section.
+- Redact tokens, API keys, and internal hostnames before pasting logs.
