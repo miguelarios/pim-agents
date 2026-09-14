@@ -280,6 +280,33 @@ describe("calendarTools", () => {
       expect(parsed.event.calendar_id).toBe("mailbox/Personal");
     });
 
+    it("get_event forwards occurrence_date to the service (#39)", async () => {
+      mockService.getEvent.mockResolvedValueOnce({ uid: "standup" });
+      await handleCalendarTool(
+        "get_event",
+        { calendar: "prov/Cal", uid: "standup", occurrence_date: "2026-03-09T15:00:00Z" },
+        mockService as any,
+      );
+      expect(mockService.getEvent).toHaveBeenCalledWith(
+        "prov/Cal",
+        "standup",
+        "2026-03-09T15:00:00Z",
+      );
+    });
+
+    it("get_event maps a validation failure to validation_error (#39)", async () => {
+      mockService.getEvent.mockRejectedValueOnce(
+        Object.assign(new Error("not recurring"), { code: "VALIDATION_FAILED" }),
+      );
+      const result = await handleCalendarTool(
+        "get_event",
+        { calendar: "prov/Cal", uid: "one-off", occurrence_date: "2026-03-09T15:00:00Z" },
+        mockService as any,
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toBe("validation_error");
+    });
+
     it("get_event wraps in { event } envelope", async () => {
       mockService.getEvent.mockResolvedValue({ uid: "evt-1", title: "Meeting" });
 

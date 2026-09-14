@@ -332,6 +332,97 @@ describe("CalDavService", () => {
       expect(event.url).toBeNull();
     });
 
+    describe("with occurrence_date (#39)", () => {
+      const SERIES = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//test//EN",
+        "BEGIN:VEVENT",
+        "UID:standup",
+        "DTSTAMP:20260301T000000Z",
+        "DTSTART:20260302T150000Z",
+        "DTEND:20260302T153000Z",
+        "SUMMARY:Standup",
+        "LOCATION:Room A",
+        "RRULE:FREQ=WEEKLY;BYDAY=MO",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:standup",
+        "RECURRENCE-ID:20260309T150000Z",
+        "DTSTAMP:20260301T000000Z",
+        "DTSTART:20260309T160000Z",
+        "DTEND:20260309T163000Z",
+        "SUMMARY:Standup (moved to 10am)",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n");
+
+      beforeEach(async () => {
+        // The real parser: these tests are about which VEVENT is picked.
+        const actual = await vi.importActual<typeof import("@miguelarios/pim-core/ics")>(
+          "@miguelarios/pim-core/ics",
+        );
+        const { parseIcsEvents } = await import("@miguelarios/pim-core/ics");
+        (parseIcsEvents as any).mockImplementation(actual.parseIcsEvents);
+        const { __mockClient } = (await import("tsdav")) as any;
+        __mockClient.fetchCalendarObjects.mockResolvedValue([
+          { data: SERIES, url: "/caldav/work/standup.ics", etag: '"s1"' },
+        ]);
+      });
+
+      it("returns the override VEVENT for an occurrence that was modified", async () => {
+        const event = await service.getEvent("mailbox/Work", "standup", "2026-03-09T15:00:00Z");
+        expect(event.title).toBe("Standup (moved to 10am)");
+        expect(event.start).toBe("2026-03-09T16:00:00.000Z");
+        expect(event.end).toBe("2026-03-09T16:30:00.000Z");
+        expect(event.occurrence_date).toBe("2026-03-09T15:00:00.000Z");
+        expect(event.calendar_id).toBe("mailbox/Work");
+      });
+
+      it("returns a rule-generated occurrence at its own time, with the master's fields", async () => {
+        const event = await service.getEvent("mailbox/Work", "standup", "2026-03-16T15:00:00Z");
+        expect(event.title).toBe("Standup");
+        expect(event.location).toBe("Room A");
+        expect(event.start).toBe("2026-03-16T15:00:00.000Z");
+        expect(event.end).toBe("2026-03-16T15:30:00.000Z");
+        expect(event.occurrence_date).toBe("2026-03-16T15:00:00.000Z");
+      });
+
+      it("still returns the master when occurrence_date is omitted", async () => {
+        const event = await service.getEvent("mailbox/Work", "standup");
+        expect(event.title).toBe("Standup");
+        expect(event.start).toBe("2026-03-02T15:00:00.000Z");
+        expect(event.is_recurring).toBe(true);
+        expect(event.occurrence_date).toBeNull();
+      });
+
+      it("reports not-found for a date the rule never generates", async () => {
+        await expect(
+          service.getEvent("mailbox/Work", "standup", "2026-03-11T15:00:00Z"),
+        ).rejects.toMatchObject({ code: "EVENT_NOT_FOUND" });
+      });
+
+      it("rejects occurrence_date on a non-recurring event", async () => {
+        const { __mockClient } = (await import("tsdav")) as any;
+        __mockClient.fetchCalendarObjects.mockResolvedValue([
+          {
+            data: SERIES.replace("RRULE:FREQ=WEEKLY;BYDAY=MO\r\n", ""),
+            url: "/caldav/work/standup.ics",
+            etag: '"s2"',
+          },
+        ]);
+        await expect(
+          service.getEvent("mailbox/Work", "standup", "2026-03-09T15:00:00Z"),
+        ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+      });
+
+      it("rejects an unparseable occurrence_date", async () => {
+        await expect(
+          service.getEvent("mailbox/Work", "standup", "next monday"),
+        ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+      });
+    });
+
     it("throws CalendarError when event not found", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
       const { parseIcsEvents } = await import("@miguelarios/pim-core/ics");

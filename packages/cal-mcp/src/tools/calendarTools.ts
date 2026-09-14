@@ -151,6 +151,9 @@ function mapError(err: unknown): CallToolResult {
     if (code === "CALENDAR_NOT_FOUND" || code === "EVENT_NOT_FOUND") {
       return { ...toolError(err, () => "not_found"), ...debugMeta() };
     }
+    if (code === "VALIDATION_FAILED") {
+      return { ...toolError(err, () => "validation_error"), ...debugMeta() };
+    }
   }
   return { ...toolError(err, () => "backend_error"), ...debugMeta() };
 }
@@ -398,19 +401,27 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
   {
     name: "get_event",
     title: "Get Event",
-    description: "Get full details of a single event by calendar and UID.",
+    description:
+      "Get full details of a single event by calendar and UID. For a recurring event, pass occurrence_date to get one occurrence as it will actually happen — including any changes made to just that occurrence — instead of the master series.",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
       properties: {
         calendar: CALENDAR_PROP,
         uid: { type: "string", description: "Event UID" },
+        occurrence_date: {
+          type: "string",
+          description:
+            "ISO 8601 date-time of one occurrence of a recurring event, as returned in list_events results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master.",
+        },
       },
       required: ["calendar", "uid"],
     },
     outputSchema: singleEventSchema,
-    handler: (args: { calendar: string; uid: string }, service) =>
-      run(async () => ok({ event: await service.getEvent(args.calendar, args.uid) })),
+    handler: (args: { calendar: string; uid: string; occurrence_date?: string }, service) =>
+      run(async () =>
+        ok({ event: await service.getEvent(args.calendar, args.uid, args.occurrence_date) }),
+      ),
   },
   {
     name: "create_event",
