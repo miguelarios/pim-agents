@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0 (2026-09-14)
+
+- `generateVTimezoneIcs(tzid)` — the bundled `VTIMEZONE` for an IANA zone wrapped in a `VCALENDAR`, the shape CalDAV's `calendar-timezone` property carries; `null` for an unknown zone (cal-mcp #46).
+
 ## 0.13.0 (2026-09-14)
 
 - `parseIcsFreeBusy(ics)` and the `FreeBusyPeriod` / `FreeBusyType` types — reads the `FREEBUSY` periods out of a `VFREEBUSY` reply (a CalDAV `free-busy-query` REPORT or an iTIP reply), resolving `start/duration` forms to ends, mapping `FBTYPE` to `busy` / `tentative` / `unavailable` (unknown and x-name types count as busy, per RFC 5545) and dropping `FREE` periods (cal-mcp #48).

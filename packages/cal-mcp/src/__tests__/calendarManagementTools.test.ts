@@ -171,7 +171,7 @@ describe("update_calendar", () => {
     const service = fakeService();
     service.updateCalendarMeta.mockRejectedValue(
       new FakeValidationError(
-        "Nothing to change — provide a display_name, color and/or description",
+        "Nothing to change — provide a display_name, color, description, timezone and/or order",
       ),
     );
     const res = await callTool("update_calendar", { calendar: "mailbox/Work" }, service);

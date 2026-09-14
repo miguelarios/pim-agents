@@ -189,6 +189,65 @@ describe("CalDavService", () => {
       expect(calendars.every((c) => c.read_only)).toBe(true);
     });
 
+    it("asks tsdav for the timezone-id and order properties too (#46)", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      await service.listCalendars();
+      const [params] = __mockClient.fetchCalendars.mock.calls[0];
+      expect(params.props).toMatchObject({
+        "c:calendar-timezone": {},
+        "c:calendar-timezone-id": {},
+        "ca:calendar-order": {},
+        "d:displayname": {},
+      });
+      expect(params.projectedProps).toEqual({ calendarTimezoneId: true, calendarOrder: true });
+    });
+
+    it("reports description, timezone and order where the provider sends them (#46)", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchCalendars.mockResolvedValueOnce([
+        {
+          displayName: "Work",
+          url: "/caldav/work/",
+          description: "Team calendar",
+          // RFC 4791 form: a VTIMEZONE blob; no RFC 7809 id.
+          timezone:
+            "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:America/Chicago\r\nEND:VTIMEZONE\r\nEND:VCALENDAR",
+          projectedProps: { calendarOrder: "2" },
+          components: ["VEVENT"],
+        },
+        {
+          displayName: "Personal",
+          url: "/caldav/personal/",
+          description: "",
+          timezone: "",
+          // RFC 7809 form wins when both are sent.
+          projectedProps: { calendarTimezoneId: "Europe/Berlin", calendarOrder: 0 },
+          components: ["VEVENT"],
+        },
+        {
+          displayName: "Bare",
+          url: "/caldav/bare/",
+          components: ["VEVENT"],
+        },
+      ]);
+
+      const calendars = await service.listCalendars();
+      const byName = Object.fromEntries(
+        calendars.filter((c) => c.source === "mailbox").map((c) => [c.display_name, c]),
+      );
+      expect(byName.Work).toMatchObject({
+        description: "Team calendar",
+        timezone: "America/Chicago",
+        order: 2,
+      });
+      expect(byName.Personal).toMatchObject({
+        description: null,
+        timezone: "Europe/Berlin",
+        order: 0,
+      });
+      expect(byName.Bare).toMatchObject({ description: null, timezone: null, order: null });
+    });
+
     it("defaults read_only: false when propfind returns no privilege info", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.propfind.mockResolvedValue([]);
@@ -2144,6 +2203,20 @@ describe("CalDavService", () => {
         expect(root["d:set"]["d:prop"]["d:displayname"]).toBe("Team");
       });
 
+      it("carries timezone and order in the MKCALENDAR request (#46)", async () => {
+        const { __mockClient } = (await import("tsdav")) as any;
+        await service.createCalendar({
+          provider: "mailbox",
+          displayName: "Zoned",
+          timezone: "Europe/Berlin",
+          order: 1,
+        });
+        const [req] = __mockClient.davRequest.mock.calls[0];
+        const prop = req.init.body["cal:mkcalendar"]["d:set"]["d:prop"];
+        expect(prop["cal:calendar-timezone"]).toContain("TZID:Europe/Berlin");
+        expect(prop["ical:calendar-order"]).toBe("1");
+      });
+
       it("carries description and colour in the same atomic request", async () => {
         const client = await mockClient();
         await service.createCalendar({
@@ -2328,6 +2401,35 @@ describe("CalDavService", () => {
     });
 
     describe("updateCalendarMeta", () => {
+      it("writes the timezone as a VTIMEZONE and the order as calendar-order (#46)", async () => {
+        const { __mockClient } = (await import("tsdav")) as any;
+        await service.updateCalendarMeta("mailbox/Work", {
+          timezone: "America/Chicago",
+          order: 4,
+        });
+        const [req] = __mockClient.davRequest.mock.calls[0];
+        const prop = req.init.body["d:propertyupdate"]["d:set"]["d:prop"];
+        expect(prop["cal:calendar-timezone"]).toContain("BEGIN:VTIMEZONE");
+        expect(prop["cal:calendar-timezone"]).toContain("TZID:America/Chicago");
+        expect(prop["ical:calendar-order"]).toBe("4");
+        expect(prop["cal:calendar-timezone-id"]).toBeUndefined();
+        expect(prop["d:displayname"]).toBeUndefined();
+      });
+
+      it("rejects an unknown timezone and a negative order before any request (#46)", async () => {
+        const { __mockClient } = (await import("tsdav")) as any;
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { timezone: "Mars/Olympus_Mons" }),
+        ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { order: -1 }),
+        ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+        await expect(
+          service.updateCalendarMeta("mailbox/Work", { order: 1.5 }),
+        ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+        expect(__mockClient.davRequest).not.toHaveBeenCalled();
+      });
+
       it("issues PROPPATCH with only the properties given", async () => {
         const client = await mockClient();
         client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);

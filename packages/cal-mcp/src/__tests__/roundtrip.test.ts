@@ -49,6 +49,9 @@ function fakeService() {
         calendar_id: "mailbox/Work",
         display_name: "Work",
         color: null,
+        description: null,
+        timezone: "America/Chicago",
+        order: 0,
         source: "mailbox",
         read_only: false,
         url: "https://example.test/work",
@@ -200,7 +203,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
 
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({
-      calendars: [{ calendar_id: "mailbox/Work" }],
+      calendars: [{ calendar_id: "mailbox/Work", timezone: "America/Chicago", order: 0 }],
     });
   });
 
@@ -546,6 +549,34 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
 
     expect(result.isError).toBe(true);
     expect(service.createCalendar).not.toHaveBeenCalled();
+  });
+
+  it("passes timezone and order through update_calendar (#46)", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_calendar",
+      arguments: { calendar: "mailbox/Work", timezone: "Europe/Berlin", order: 3 },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(service.updateCalendarMeta).toHaveBeenCalledWith("mailbox/Work", {
+      displayName: undefined,
+      description: undefined,
+      color: undefined,
+      timezone: "Europe/Berlin",
+      order: 3,
+    });
+  });
+
+  it("rejects a negative order before the handler runs (#46)", async () => {
+    const service = fakeService();
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "update_calendar",
+      arguments: { calendar: "mailbox/Work", order: -1 },
+    });
+    expect(result.isError).toBe(true);
+    expect(service.updateCalendarMeta).not.toHaveBeenCalled();
   });
 
   it("hands back the post-rename calendar_id from update_calendar", async () => {
