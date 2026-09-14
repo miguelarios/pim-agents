@@ -53,11 +53,26 @@ const COLOR_PROP = {
   description: "Calendar colour as #RRGGBB or #RRGGBBAA (e.g. #3B82F6).",
 } as const;
 
+const TIMEZONE_PROP = {
+  type: "string",
+  description:
+    "Default timezone for the calendar as an IANA zone name (e.g. America/Chicago). Written as the CalDAV calendar-timezone property; not every provider keeps it.",
+} as const;
+
+const ORDER_PROP = {
+  type: "integer",
+  minimum: 0,
+  description:
+    "Sort position among the account's calendars (0 first). Apple's calendar-order property, honoured by Apple, SabreDAV and Radicale-based servers; others may ignore it.",
+} as const;
+
 type CreateArgs = {
   provider?: string;
   display_name: string;
   description?: string;
   color?: string;
+  timezone?: string;
+  order?: number;
   slug?: string;
 };
 type UpdateArgs = {
@@ -65,6 +80,8 @@ type UpdateArgs = {
   display_name?: string;
   description?: string;
   color?: string;
+  timezone?: string;
+  order?: number;
 };
 type DeleteArgs = { calendar: string };
 
@@ -91,6 +108,8 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = 
         display_name: { type: "string", description: "Display name for the new calendar" },
         description: { type: "string", description: "Optional calendar description" },
         color: COLOR_PROP,
+        timezone: TIMEZONE_PROP,
+        order: ORDER_PROP,
         slug: {
           type: "string",
           description:
@@ -107,6 +126,8 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = 
           displayName: args.display_name,
           description: args.description,
           color: args.color,
+          timezone: args.timezone,
+          order: args.order,
           slug: args.slug,
         });
         return structured({
@@ -121,7 +142,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = 
     name: "update_calendar",
     title: "Update Calendar",
     description:
-      "Update a calendar's display name, colour, and/or description. At least one must be given. Renaming changes the calendar's ID — the new ID is returned, and the old one stops resolving.",
+      "Update a calendar's display name, colour, description, default timezone and/or display order. At least one must be given. Renaming changes the calendar's ID — the new ID is returned, and the old one stops resolving.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -138,6 +159,8 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = 
         },
         color: COLOR_PROP,
         description: { type: "string", description: "New calendar description" },
+        timezone: TIMEZONE_PROP,
+        order: ORDER_PROP,
       },
       required: ["calendar"],
     },
@@ -148,6 +171,8 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = 
           displayName: args.display_name,
           description: args.description,
           color: args.color,
+          timezone: args.timezone,
+          order: args.order,
         });
         return structured({
           status: "updated" as const,

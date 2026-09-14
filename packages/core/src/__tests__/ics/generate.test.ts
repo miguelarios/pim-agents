@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import "../../ics/_tz-init.js";
 import { IcsGenerateError } from "../../ics/errors.js";
-import { generateEventIcs } from "../../ics/generate.js";
+import { generateEventIcs, generateVTimezoneIcs } from "../../ics/generate.js";
 import { parseIcsEvents } from "../../ics/parse-events.js";
 
 describe("generateEventIcs — basic round-trip", () => {
@@ -123,5 +123,19 @@ describe("generateEventIcs — categories and alarms round-trip", () => {
     expect(ics).toContain("TRIGGER;VALUE=DATE-TIME:20260501T120000Z");
     expect(ics).toContain("DESCRIPTION:Reminded");
     expect(parseIcsEvents(ics)[0].alarms).toHaveLength(2);
+  });
+});
+
+describe("generateVTimezoneIcs", () => {
+  it("wraps the zone's VTIMEZONE in a VCALENDAR", () => {
+    const ics = generateVTimezoneIcs("America/Chicago")!;
+    expect(ics).toContain("BEGIN:VCALENDAR");
+    expect(ics).toContain("BEGIN:VTIMEZONE");
+    expect(ics).toContain("TZID:America/Chicago");
+    expect(ics).toContain("END:VCALENDAR");
+  });
+
+  it("returns null for a zone it does not know", () => {
+    expect(generateVTimezoneIcs("Mars/Olympus_Mons")).toBeNull();
   });
 });

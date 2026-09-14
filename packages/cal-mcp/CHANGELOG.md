@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.0 (2026-09-14)
+
+- `list_calendars` reports `description`, `timezone` (the calendar's default IANA zone, from RFC 7809 `calendar-timezone-id` when the server sends it, else the `TZID` inside RFC 4791 `calendar-timezone`) and `order` (Apple `calendar-order`), each `null` where the provider does not say (#46). `read_only` was already there.
+- `create_calendar` and `update_calendar` take `timezone` and `order`. The zone is validated as an IANA name and written as a `VTIMEZONE` in `calendar-timezone`; the id form is deliberately not written, since SabreDAV-based servers reject unknown properties and a `PROPPATCH` is all-or-nothing. `order` must be a non-negative integer.
+- Bumped `@miguelarios/pim-core` dependency to `^0.14.0` for `generateVTimezoneIcs`.
+
 ## 0.18.0 (2026-09-14)
 
 - `get_free_busy` — busy periods across one or more calendars in a range, merged and typed as `busy`, `tentative` or `unavailable`, with no event details (#48). The server's own `free-busy-query` REPORT (RFC 4791 §7.10) is used where it answers one; otherwise the answer is computed from the expanded events, with the same all-day and transparency rules as `find_free_slots`. `sources` reports which path each calendar took.

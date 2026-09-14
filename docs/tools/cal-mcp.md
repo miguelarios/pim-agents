@@ -20,6 +20,9 @@ List all calendars across all configured CalDAV providers. Returns provider-pref
     calendar_id: string;     // provider-prefixed, e.g. "mailbox/Work"
     display_name: string;
     color: string | null;
+    description: string | null;
+    timezone: string | null; // IANA zone from calendar-timezone(-id), where the provider reports one
+    order: number | null;    // Apple calendar-order sort position, where reported
     source: string;          // provider name
     read_only: boolean;
     url: string;             // CalDAV URL
@@ -322,6 +325,8 @@ Issues `MKCALENDAR` (RFC 4791 §5.3.1). The request is atomic — name, descript
 | `provider` | string | | Account to create on — the prefix half of a calendar ID (`mailbox` in `mailbox/Work`). Optional when a single account is configured; required otherwise. |
 | `color` | string | | Colour as `#RRGGBB` or `#RRGGBBAA` (e.g. `#3B82F6`). |
 | `description` | string | | Calendar description. |
+| `timezone` | string | | Default timezone as an IANA zone name (e.g. `America/Chicago`). Written as RFC 4791 `calendar-timezone` (a `VTIMEZONE`); not every provider keeps it. |
+| `order` | integer | | Sort position among the account's calendars, `0` first. Apple `calendar-order`; honoured by Apple, SabreDAV and Radicale-based servers, ignored by others. |
 | `slug` | string | | URL path segment (lowercase letters, digits, hyphens). Derived from `display_name` when omitted. |
 
 **Output**
@@ -330,7 +335,7 @@ See [Collection results](#collection-results) — `status: "created"`.
 
 ## update_calendar
 
-Update a calendar's display name, colour, and/or description via `PROPPATCH`. At least one must be given.
+Update a calendar's display name, colour, description, default timezone and/or display order via `PROPPATCH`. At least one must be given.
 
 **Renaming changes the calendar's ID.** `calendar_id` is `provider/DisplayName`, so after a rename the old ID stops resolving and the new one is returned in the result. The collection URL does not move. As with `create_calendar`, renaming onto a name already used on that provider is refused.
 
@@ -342,6 +347,8 @@ Update a calendar's display name, colour, and/or description via `PROPPATCH`. At
 | `display_name` | string | | New display name. Changes the calendar's ID. |
 | `color` | string | | New colour as `#RRGGBB` or `#RRGGBBAA`. |
 | `description` | string | | New description. |
+| `timezone` | string | | New default timezone as an IANA zone name. Written as RFC 4791 `calendar-timezone` only: RFC 7809's `calendar-timezone-id` is not implemented by SabreDAV-based servers, and a `PROPPATCH` is all-or-nothing, so including it would fail the whole update there. Both forms are read by `list_calendars`. |
+| `order` | integer | | New sort position, `0` first (Apple `calendar-order`). |
 
 **Output**
 

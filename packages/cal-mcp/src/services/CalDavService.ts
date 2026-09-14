@@ -17,6 +17,7 @@ import {
   type ParsedAlarm,
   type ParsedEvent,
   type TimeRange,
+  generateVTimezoneIcs,
   parseIcsEvents,
   parseIcsFreeBusy,
 } from "@miguelarios/pim-core/ics";
@@ -33,6 +34,11 @@ export interface CalendarInfo {
   calendar_id: string;
   display_name: string;
   color: string | null;
+  description: string | null;
+  /** IANA zone the calendar defaults to (`calendar-timezone`), when the provider reports one. */
+  timezone: string | null;
+  /** Sort position among the account's calendars (Apple `calendar-order`), when reported. */
+  order: number | null;
   source: string;
   read_only: boolean;
   url: string;
@@ -179,6 +185,97 @@ const CALENDAR_DAV_NAMESPACES = {
   "xmlns:cal": "urn:ietf:params:xml:ns:caldav",
   "xmlns:ical": "http://apple.com/ns/ical/",
 } as const;
+
+/**
+ * The collection properties asked for in the calendar listing: tsdav's own
+ * set, plus RFC 7809's `calendar-timezone-id` and Apple's `calendar-order`,
+ * which tsdav does not request by default and only hands back through
+ * `projectedProps`. Prefixes are tsdav's namespace shorthands.
+ */
+const CALENDAR_LIST_PROPS = {
+  "c:calendar-description": {},
+  "c:calendar-timezone": {},
+  "c:calendar-timezone-id": {},
+  "d:displayname": {},
+  "ca:calendar-color": {},
+  "ca:calendar-order": {},
+  "cs:getctag": {},
+  "d:resourcetype": {},
+  "c:supported-calendar-component-set": {},
+  "d:sync-token": {},
+} as const;
+const CALENDAR_LIST_PROJECTION = { calendarTimezoneId: true, calendarOrder: true } as const;
+
+/**
+ * The calendar's default zone as an IANA name: RFC 7809's id property when
+ * the server sends it, else the TZID of the VTIMEZONE in `calendar-timezone`.
+ */
+function timezoneOf(calendar: unknown): string | null {
+  const c = calendar as {
+    timezone?: unknown;
+    projectedProps?: { calendarTimezoneId?: unknown };
+  };
+  const id = c.projectedProps?.calendarTimezoneId;
+  if (typeof id === "string" && id.trim()) return id.trim();
+  if (typeof c.timezone === "string") {
+    const match = c.timezone.match(/^TZID:(.+?)\r?$/m);
+    if (match) return match[1].trim();
+  }
+  return null;
+}
+
+function orderOf(calendar: unknown): number | null {
+  const raw = (calendar as { projectedProps?: { calendarOrder?: unknown } }).projectedProps
+    ?.calendarOrder;
+  if (typeof raw === "number" && Number.isInteger(raw)) return raw;
+  if (typeof raw === "string" && /^\d+$/.test(raw.trim())) return Number(raw.trim());
+  return null;
+}
+
+function descriptionOf(calendar: unknown): string | null {
+  const d = (calendar as { description?: unknown }).description;
+  return typeof d === "string" && d.length > 0 ? d : null;
+}
+
+/** An IANA zone name the runtime knows, returned trimmed. */
+function normalizeCalendarTimezone(timezone: string): string {
+  const trimmed = timezone.trim();
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: trimmed });
+  } catch {
+    throw new ValidationError(
+      `Invalid timezone "${timezone}" — use an IANA zone name (e.g. America/Chicago)`,
+      "timezone",
+    );
+  }
+  if (generateVTimezoneIcs(trimmed) === null) {
+    throw new ValidationError(
+      `Timezone "${timezone}" has no VTIMEZONE definition available to write`,
+      "timezone",
+    );
+  }
+  return trimmed;
+}
+
+function normalizeCalendarOrder(order: number): number {
+  if (!Number.isInteger(order) || order < 0) {
+    throw new ValidationError(`Invalid order ${order} — use a non-negative integer`, "order");
+  }
+  return order;
+}
+
+/**
+ * The property that carries a calendar's default zone. Only RFC 4791's
+ * `calendar-timezone` (a VTIMEZONE) is written: RFC 7809's
+ * `calendar-timezone-id` is not implemented by SabreDAV-based servers, and a
+ * PROPPATCH is all-or-nothing, so including it would fail the whole update
+ * there. The id form is still read when a server sends it.
+ */
+function calendarTimezoneProps(timezone: string | undefined): Record<string, string> {
+  if (timezone === undefined) return {};
+  const vtimezone = generateVTimezoneIcs(timezone);
+  return vtimezone === null ? {} : { "cal:calendar-timezone": vtimezone };
+}
 
 /** tsdav types `displayName` loosely; calendars without one read as "". */
 function displayNameOf(calendar: unknown): string {
@@ -489,7 +586,10 @@ export class CalDavService {
     for (const [providerId, account] of this.accounts) {
       try {
         const client = await this.getClient(account);
-        const calendars = await client.fetchCalendars();
+        const calendars = await client.fetchCalendars({
+          props: CALENDAR_LIST_PROPS,
+          projectedProps: CALENDAR_LIST_PROJECTION,
+        });
         this.calendarsCache.set(providerId, calendars);
         for (const cal of calendars) {
           const displayName = displayNameOf(cal);
@@ -498,6 +598,9 @@ export class CalDavService {
             calendar_id: `${providerId}/${displayName}`,
             display_name: displayName,
             color: (cal as any).calendarColor ?? null,
+            description: descriptionOf(cal),
+            timezone: timezoneOf(cal),
+            order: orderOf(cal),
             source: providerId,
             read_only: !canWrite,
             url: cal.url,
@@ -617,6 +720,8 @@ export class CalDavService {
     displayName: string;
     description?: string;
     color?: string;
+    timezone?: string;
+    order?: number;
     slug?: string;
   }): Promise<CalendarCollection> {
     const account = this.resolveProvider(opts.provider);
@@ -634,6 +739,9 @@ export class CalDavService {
       );
     }
     const color = opts.color !== undefined ? normalizeCalendarColor(opts.color) : undefined;
+    const timezone =
+      opts.timezone !== undefined ? normalizeCalendarTimezone(opts.timezone) : undefined;
+    const order = opts.order !== undefined ? normalizeCalendarOrder(opts.order) : undefined;
 
     const client = await this.getClient(account);
     const existing = await this.fetchCalendarsFor(client, account.id);
@@ -695,6 +803,8 @@ export class CalDavService {
                     ? { "cal:calendar-description": opts.description }
                     : {}),
                   ...(color !== undefined ? { "ical:calendar-color": color } : {}),
+                  ...calendarTimezoneProps(timezone),
+                  ...(order !== undefined ? { "ical:calendar-order": String(order) } : {}),
                 },
               },
             },
@@ -728,21 +838,32 @@ export class CalDavService {
    */
   async updateCalendarMeta(
     calendarId: string,
-    opts: { displayName?: string; description?: string; color?: string },
+    opts: {
+      displayName?: string;
+      description?: string;
+      color?: string;
+      timezone?: string;
+      order?: number;
+    },
   ): Promise<CalendarCollection> {
     if (
       opts.displayName === undefined &&
       opts.description === undefined &&
-      opts.color === undefined
+      opts.color === undefined &&
+      opts.timezone === undefined &&
+      opts.order === undefined
     ) {
       throw new ValidationError(
-        "Nothing to change — provide a display_name, color and/or description",
+        "Nothing to change — provide a display_name, color, description, timezone and/or order",
       );
     }
     if (opts.displayName !== undefined && opts.displayName.trim() === "") {
       throw new ValidationError("display_name cannot be empty", "display_name");
     }
     const color = opts.color !== undefined ? normalizeCalendarColor(opts.color) : undefined;
+    const timezone =
+      opts.timezone !== undefined ? normalizeCalendarTimezone(opts.timezone) : undefined;
+    const order = opts.order !== undefined ? normalizeCalendarOrder(opts.order) : undefined;
 
     const { account, calendarName } = this.resolveAccount(calendarId);
     const client = await this.getClient(account);
@@ -783,6 +904,8 @@ export class CalDavService {
                     ? { "cal:calendar-description": opts.description }
                     : {}),
                   ...(color !== undefined ? { "ical:calendar-color": color } : {}),
+                  ...calendarTimezoneProps(timezone),
+                  ...(order !== undefined ? { "ical:calendar-order": String(order) } : {}),
                 },
               },
             },
@@ -841,7 +964,10 @@ export class CalDavService {
   private async fetchCalendarsFor(client: DAVClient, providerId: string): Promise<any[]> {
     const cached = this.calendarsCache.get(providerId);
     if (cached) return cached;
-    const calendars = await client.fetchCalendars();
+    const calendars = await client.fetchCalendars({
+      props: CALENDAR_LIST_PROPS,
+      projectedProps: CALENDAR_LIST_PROJECTION,
+    });
     this.calendarsCache.set(providerId, calendars);
     return calendars;
   }

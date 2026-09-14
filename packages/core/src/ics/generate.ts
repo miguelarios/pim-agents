@@ -25,6 +25,21 @@ export function toIcalTime(iso: string, allDay: boolean, tzid?: string): ICAL.Ti
   return ICAL.Time.fromJSDate(date, true);
 }
 
+/**
+ * The VTIMEZONE definition for an IANA zone as a standalone VCALENDAR, which
+ * is what CalDAV's `calendar-timezone` property (RFC 4791 §5.2.2) carries.
+ * `null` for a zone the bundled set does not know.
+ */
+export function generateVTimezoneIcs(tzid: string): string | null {
+  const zone = ICAL.TimezoneService.get(tzid);
+  if (!zone?.component) return null;
+  const calendar = new ICAL.Component(["vcalendar", [], []]);
+  calendar.updatePropertyWithValue("prodid", "-//pim-core//cal-mcp//EN");
+  calendar.updatePropertyWithValue("version", "2.0");
+  calendar.addSubcomponent(ICAL.Component.fromString(zone.component.toString()));
+  return calendar.toString();
+}
+
 export function generateEventIcs(props: EventCreateProps): string {
   if (props.attendees && props.attendees.length > 0 && !props.organizer) {
     throw new IcsGenerateError("ORGANIZER is required when ATTENDEE is present (RFC 6638)", null);
