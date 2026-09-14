@@ -44,35 +44,46 @@ jobs:
             Post only what you have verified against the code on this PR's
             current head. Do not repeat a point an earlier comment already made.
 
-            Structure the comment exactly like this, omitting any empty section:
+            Format the comment exactly as Markdown using this template. Keep every
+            bullet to one sentence and omit only empty findings sections. Do not
+            collapse the review into prose paragraphs.
 
-            **Blocking** — findings that should stop a merge. Each needs a
-            concrete failure scenario and the file and line. If there are none,
-            do not write the heading.
+            ## Code review
 
-            **Worth verifying before merge** — at most two. Only include a note
-            if it changes what the author should actually do. A claim in the PR
-            that is not backed by pasted evidence belongs here.
+            **Verdict:** Choose exactly one: `✅ Clear to merge`,
+            `⚠️ Verify before merge`, or `❌ Changes requested`.
 
-            **Minor** — at most one, and only if it is genuinely actionable.
-            Skip style, naming, wording, and "could be tightened" observations;
-            the repo's linter and conventions cover those.
+            ### Blocking
+            Include only findings that should stop a merge. Each bullet must name
+            a concrete failure scenario and link the file and line. Omit this
+            section when there are none.
 
-            Close with a single line on what is solid. One line, not a list, and
-            not a restatement of the diff.
+            ### Verify before merge
+            Include at most two bullets, and only when they change what the author
+            should actually do. A claim in the PR that is not backed by pasted
+            evidence belongs here. Omit this section when there are none.
 
-            If nothing blocks and nothing needs verifying, say so in one or two
-            lines and stop.
+            ### Test status
+            State in one bullet what you executed. If you could not run the tests,
+            say so plainly and name the CI check that must provide the evidence.
+
+            ### What's solid
+            Write exactly one short bullet about the strongest part of the change.
+
+            Never include a `Minor` section. Skip style, naming, wording, optional
+            refactors, and "could be tightened" observations; the repository's
+            linter and conventions cover those.
+
+            Even when the verdict is `✅ Clear to merge`, use the full template.
+            The complete comment must be no more than 12 non-blank lines.
 
             Use the repository's CLAUDE.md for conventions.
 
             Use `gh pr comment` with your Bash tool to leave your review as a
             comment on the PR.
 
-          # --model pins the review model so it does not drift with defaults.
-          # --max-turns is the real cost ceiling: it bounds a runaway review
-          # regardless of how much the prompt asks for.
+          # Review frequency is controlled by the GitHub triggers above, not by
+          # Claude's internal agent/tool loop.
           claude_args: >-
             --model claude-fable-5-1
-            --max-turns 15
             --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
