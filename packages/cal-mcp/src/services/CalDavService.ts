@@ -909,10 +909,12 @@ export class CalDavService {
 
   /**
    * Expands the series over a two-day window around `occurrenceDate` and keeps
-   * the instance whose `occurrence_date` is exactly that instant. A window,
-   * rather than a zero-width range, lets the expansion find an override whose
-   * DTSTART moved away from its RECURRENCE-ID; the exact match on
-   * `occurrence_date` then keeps the neighbours out.
+   * the instance whose `occurrence_date` is exactly that instant. The expansion
+   * filters on the rule-generated slot (the RECURRENCE-ID), not on an
+   * override's own DTSTART, so a moved override is found by its slot like any
+   * other occurrence. The window exists because the range is half-open
+   * `[start, end)`: a zero-width range would exclude the target itself. The
+   * exact match on `occurrence_date` then keeps the neighbours out.
    */
   private pickOccurrence(
     data: string,
