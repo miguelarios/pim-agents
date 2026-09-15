@@ -67,7 +67,72 @@ export interface EmailServices {
   smtp: SmtpService;
 }
 
-type Attachment = { filename: string; path?: string; content?: string };
+/**
+ * One attachment as the tool accepts it. `content` is a JSON string, so binary
+ * needs `encoding: "base64"` to survive the trip — see {@link resolveAttachment}.
+ */
+type Attachment = {
+  filename: string;
+  path?: string;
+  content?: string;
+  contentType?: string;
+  encoding?: "base64" | "utf8";
+};
+
+/** An attachment as the SMTP layer takes it, with `content` already decoded. */
+type ResolvedAttachment = {
+  filename: string;
+  path?: string;
+  content?: string | Buffer;
+  contentType?: string;
+};
+
+/**
+ * Decodes strict, canonical base64.
+ *
+ * `Buffer.from(s, "base64")` cannot be used as the check: it silently discards
+ * anything outside the alphabet, so a typo'd payload becomes a shorter, valid
+ * Buffer and the recipient gets a corrupt file with no error anywhere. The
+ * alphabet and length are checked first, then a re-encode catches non-canonical
+ * trailing bits that the regex alone would accept.
+ *
+ * Line wrapping is tolerated because base64 is routinely stored wrapped, and
+ * an attachment rejected for containing newlines would be a puzzle to debug.
+ */
+function decodeBase64(value: string, filename: string): Buffer {
+  const compact = value.replace(/\s+/g, "");
+  const wellFormed = /^[A-Za-z0-9+/]*={0,2}$/.test(compact) && compact.length % 4 === 0;
+  const decoded = wellFormed ? Buffer.from(compact, "base64") : undefined;
+  if (!decoded || decoded.toString("base64") !== compact) {
+    throw new Error(
+      `attachment "${filename}" declares encoding "base64" but content is not valid base64`,
+    );
+  }
+  return decoded;
+}
+
+/**
+ * Applies `encoding` and drops it, so the SMTP layer receives bytes rather
+ * than a second decoding instruction.
+ *
+ * `encoding` describes `content` only. Pairing it with `path` means the caller
+ * believes it does something, so it is rejected rather than ignored — a silent
+ * no-op here reads as "the file was attached the way I asked".
+ */
+function resolveAttachment(att: Attachment): ResolvedAttachment {
+  const { encoding, ...rest } = att;
+  if (encoding !== undefined && att.content === undefined) {
+    throw new Error(
+      att.path === undefined
+        ? `attachment "${att.filename}" sets encoding but has no content to apply it to`
+        : `attachment "${att.filename}" sets encoding, which describes content, but attaches a path — drop encoding, or pass the bytes as base64 content instead`,
+    );
+  }
+  if (encoding === "base64" && att.content !== undefined) {
+    return { ...rest, content: decodeBase64(att.content, att.filename) };
+  }
+  return rest;
+}
 
 function assertAttachmentPathAllowed(p: string): void {
   const allowedRoot = process.env.EMAIL_ATTACHMENT_DIR;
@@ -302,7 +367,18 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
                 description:
                   "File path to attach. Disabled unless the server has EMAIL_ATTACHMENT_DIR set to an allowed directory; the resolved path must be inside it. Use content instead if unavailable.",
               },
-              content: { type: "string", description: "String content to attach." },
+              content: { type: "string", description: "Content to attach, as a string." },
+              encoding: {
+                type: "string",
+                enum: ["base64", "utf8"],
+                description:
+                  "How to read content. Use base64 to attach binary — a PDF or image, or an attachment fetched with download_attachment. Omitted or utf8 attaches content as text, which corrupts binary. Cannot be combined with path.",
+              },
+              contentType: {
+                type: "string",
+                description:
+                  "MIME type, e.g. application/pdf. Defaults to a guess from filename, so set it when the filename has no extension or the guess would be wrong.",
+              },
             },
             required: ["filename"],
           },
@@ -365,6 +441,27 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         return invalid("subject is required when not replying to an existing email");
       }
 
+      // Attachments are resolved before the gate, not inside the handler body.
+      // Every failure here is the request being wrong, and a confirmation spent
+      // on a send that was never going to happen is worse than no confirmation:
+      // it teaches the user that confirming does not mean the mail went out.
+      //
+      // Shape is still checked before the path policy, so a request that
+      // contradicts itself is answered on its own terms rather than with
+      // whatever EMAIL_ATTACHMENT_DIR happens to be set to.
+      let attachments: ResolvedAttachment[];
+      try {
+        attachments = (args.attachments ?? []).map((att) => {
+          const resolved = resolveAttachment(att);
+          if (resolved.path) assertAttachmentPathAllowed(resolved.path);
+          return resolved;
+        });
+      } catch (err) {
+        // `invalid` rather than a throw: these reach `toPimError`, which has no
+        // pattern for them and would label plain caller error INTERNAL_ERROR.
+        return invalid(err instanceof Error ? err.message : String(err));
+      }
+
       // Saving a draft is reversible; actually putting mail on the wire is not.
       if (!saveToDrafts) {
         const recipients = [...to, ...(cc ?? []), ...(bcc ?? [])].join(", ");
@@ -377,9 +474,6 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       }
 
       return run(async () => {
-        for (const att of args.attachments ?? []) {
-          if (att.path) assertAttachmentPathAllowed(att.path);
-        }
         const replyToFolder = args.replyToFolder || "INBOX";
         let subject = args.subject;
 
@@ -410,7 +504,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           subject: subject as string,
           text: args.text,
           html: args.html,
-          attachments: args.attachments,
+          attachments: args.attachments === undefined ? undefined : attachments,
           inReplyTo,
           references,
         };
