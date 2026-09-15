@@ -663,7 +663,17 @@ function collectAttachmentParts(
   // Calendar invitations are often delivered inline with no filename or
   // disposition, so text/calendar collects unconditionally.
   const isCalendar = type === "text/calendar";
-  if (disposition === "attachment" || (filename && disposition !== "inline") || isCalendar) {
+  // Apple Mail writes forwarded file attachments as `inline`, so disposition
+  // alone cannot separate them from images the HTML body embeds. Content-ID is
+  // the discriminator: an embedded image is referenced by one, a forwarded file
+  // has none. imapflow exposes it as `node.id`, so this needs no extra fetch.
+  const isInlineFile = disposition === "inline" && Boolean(filename) && !node.id;
+  if (
+    disposition === "attachment" ||
+    (filename && disposition !== "inline") ||
+    isInlineFile ||
+    isCalendar
+  ) {
     out.push({
       part: String(node.part ?? "1"),
       filename,
