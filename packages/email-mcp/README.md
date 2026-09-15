@@ -118,6 +118,24 @@ Neither template is enumerable — there is no `resources/list` entry for them, 
 listing every attachment in an account would mean walking every message. Discover
 them through `resources/templates/list`, and find part IDs with `get_email`.
 
+## Sending attachments
+
+`send_email` takes attachments three ways:
+
+| Field | Use for |
+|-------|---------|
+| `content` alone | Text. Read as UTF-8, so it **corrupts binary**. |
+| `content` + `encoding: "base64"` | Binary — a PDF, an image, or bytes from `download_attachment`. |
+| `path` | A file on the server, only inside `EMAIL_ATTACHMENT_DIR`. |
+
+Set `contentType` when the filename has no extension to guess from.
+
+This is what makes the download-then-forward round trip work without a configured
+directory: `download_attachment` returns base64, and `encoding: "base64"` is where
+it goes. Invalid base64 is rejected rather than attached — a payload that silently
+decoded to fewer bytes would reach the recipient as a corrupt file with no error
+anywhere.
+
 ## License
 
 MIT
