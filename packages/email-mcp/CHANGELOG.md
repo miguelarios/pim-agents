@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.0 (2026-09-15)
+
+- Attachments and message sources are now addressable as MCP resources, so a client can fetch the bytes with `resources/read` instead of only ever receiving them inline in a tool result: `imap://{folder}/{uid}/{partId}` serves one attachment under its own media type, `imap://{folder}/{uid}.eml` serves the raw RFC 822 source. `download_attachment` and `get_email_raw` already stamped these URIs onto the blocks they returned, but nothing could resolve one (PR #102, `claude/laughing-euler-nko3sh`).
+- **BREAKING:** `download_attachment` and `get_email_raw` no longer embed a payload over 256 KiB. Above the limit they return a `resource_link` plus a note naming the size, the limit and the URI, and the bytes stay reachable via `resources/read`. A caller that unconditionally reads `content[0].resource.blob` must now check `structuredContent.embedded` first. Previously there was no ceiling at all: an 8 MB PDF became ~10.7 MB of base64 in one tool result, which most clients put straight into the model's context, so the call failed downstream after the bytes had already been pulled off the IMAP server (PR #103, `claude/laughing-euler-nko3sh-size-guard`).
+- `EMAIL_MAX_INLINE_BYTES` overrides that ceiling; `0` links everything, and an unparseable value falls back to the default rather than disabling the guard. The default matches the 256 KiB `MAX_INLINE_CALENDAR_BYTES` that has guarded calendar parts since 0.12.0 (PR #103, `claude/laughing-euler-nko3sh-size-guard`).
+- `download_attachment` and `get_email_raw` output gained `uri` and `embedded`, so a caller can tell which path it got without inspecting content blocks (PR #103, `claude/laughing-euler-nko3sh-size-guard`).
+- Oversized payloads are no longer fetched, only to be discarded: attachment size comes from BODYSTRUCTURE before the body is read, and message size from RFC822.SIZE in a single FETCH. A server that withholds either is still held to the ceiling, after the fetch rather than before it (PR #103, `claude/laughing-euler-nko3sh-size-guard`).
+- `send_email` attachments accept `encoding: "base64" | "utf8"` and `contentType`. `content` is a JSON string and was read as UTF-8, so binary could not be attached through it at all — the only working path for a real file was `attachments[].path`, which requires `EMAIL_ATTACHMENT_DIR`. Downloading an attachment and sending it back out now works without a directory on the server. Invalid base64 is rejected rather than attached, since `Buffer.from(s, "base64")` discards anything outside the alphabet and would otherwise deliver a silently corrupt file (PR #104, `claude/laughing-euler-nko3sh`).
+- Attachment errors on `send_email` now report `INVALID_INPUT` and are raised before the send confirmation, instead of `INTERNAL_ERROR` after the user had already confirmed an irreversible send. This also corrects the pre-existing `EMAIL_ATTACHMENT_DIR` path rejection, which had both problems (PR #104, `claude/laughing-euler-nko3sh`).
+- Bumped `@miguelarios/pim-core` dependency to `^0.10.0`.
+
 ## 0.12.0 (2026-08-10)
 
 - `get_email` now detects `text/calendar` MIME parts regardless of content disposition or filename, so inline calendar invitations are no longer omitted from responses (PR #19, `claude/feature-planning-xexlsc`).
