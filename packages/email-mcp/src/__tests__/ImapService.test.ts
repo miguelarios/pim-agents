@@ -1297,6 +1297,71 @@ describe("ImapService", () => {
         uid: true,
       });
     });
+
+    /**
+     * A stream that records whether anything read from it. The ceiling's whole
+     * value is that an oversized attachment is not pulled across the wire, so
+     * "did we iterate" is the assertion that matters, not just the return shape.
+     */
+    const countingStream = (content: Buffer) => {
+      const state = { drained: false, destroyed: false };
+      return {
+        state,
+        stream: {
+          destroy: () => {
+            state.destroyed = true;
+          },
+          [Symbol.asyncIterator]: async function* () {
+            state.drained = true;
+            yield content;
+          },
+        },
+      };
+    };
+
+    it("leaves an oversized attachment on the server instead of draining it", async () => {
+      const { state, stream } = countingStream(Buffer.from("x".repeat(4096)));
+      mockDownload.mockResolvedValueOnce({
+        meta: { contentType: "application/pdf", filename: "big.pdf", expectedSize: 4096 },
+        content: stream,
+      });
+
+      const result = await service.downloadAttachment("INBOX", 12345, "2", 1024);
+
+      expect(result).toMatchObject({ oversized: true, size: 4096, filename: "big.pdf" });
+      expect(result.content).toBeUndefined();
+      expect(state.drained).toBe(false);
+      expect(state.destroyed).toBe(true);
+    });
+
+    it("returns the bytes when the attachment fits under the ceiling", async () => {
+      const { state, stream } = countingStream(Buffer.from("small"));
+      mockDownload.mockResolvedValueOnce({
+        meta: { contentType: "text/plain", filename: "note.txt", expectedSize: 5 },
+        content: stream,
+      });
+
+      const result = await service.downloadAttachment("INBOX", 12345, "2", 1024);
+
+      expect(result).toMatchObject({ oversized: false });
+      expect(result.content?.toString()).toBe("small");
+      expect(state.drained).toBe(true);
+    });
+
+    it("still enforces the ceiling when the server withholds the expected size", async () => {
+      // Only the network saving is lost here — the context saving is not, so
+      // the oversized verdict has to survive a missing BODYSTRUCTURE size.
+      const { state, stream } = countingStream(Buffer.from("x".repeat(4096)));
+      mockDownload.mockResolvedValueOnce({
+        meta: { contentType: "application/pdf", filename: "big.pdf" },
+        content: stream,
+      });
+
+      const result = await service.downloadAttachment("INBOX", 12345, "2", 1024);
+
+      expect(result).toMatchObject({ oversized: true, size: 4096 });
+      expect(state.drained).toBe(true);
+    });
   });
 
   describe("fetchRawEmail", () => {
@@ -1308,6 +1373,40 @@ describe("ImapService", () => {
       const raw = await service.fetchRawEmail("INBOX", 12345);
       expect(raw).toContain("From: test@test.com");
       expect(raw).toContain("Subject: Test");
+    });
+
+    it("skips the body fetch for a message over the ceiling", async () => {
+      // RFC822.SIZE is one cheap FETCH item, so an oversized .eml is identified
+      // without the source ever crossing the wire.
+      mockFetchOne.mockResolvedValueOnce({ size: 5_000_000 });
+
+      const result = await service.fetchRawEmail("INBOX", 12345, 1024);
+
+      expect(result).toEqual({ size: 5_000_000, oversized: true });
+      expect(mockFetchOne).toHaveBeenCalledTimes(1);
+      expect(mockFetchOne).toHaveBeenCalledWith("12345", { size: true }, { uid: true });
+    });
+
+    it("fetches the source when the message fits", async () => {
+      mockFetchOne
+        .mockResolvedValueOnce({ size: 41 })
+        .mockResolvedValueOnce({ source: Buffer.from("From: test@test.com\r\n\r\nBody") });
+
+      const result = await service.fetchRawEmail("INBOX", 12345, 1024);
+
+      expect(result).toMatchObject({ oversized: false });
+      expect(result.source).toContain("From: test@test.com");
+      expect(mockFetchOne).toHaveBeenCalledTimes(2);
+    });
+
+    it("still enforces the ceiling when the server withholds RFC822.SIZE", async () => {
+      mockFetchOne
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ source: Buffer.from("x".repeat(4096)) });
+
+      const result = await service.fetchRawEmail("INBOX", 12345, 1024);
+
+      expect(result).toEqual({ size: 4096, oversized: true });
     });
   });
 

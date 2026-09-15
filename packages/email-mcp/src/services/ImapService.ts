@@ -58,12 +58,47 @@ export interface FolderInfo {
   delimiter: string;
 }
 
-export interface AttachmentData {
+/** What is known about an attachment without necessarily holding its bytes. */
+export interface AttachmentMeta {
   filename: string;
   contentType: string;
+  /** Size in bytes as the server reports it, falling back to the fetched length. */
   size: number;
+}
+
+/** An attachment whose bytes were fetched. */
+export interface AttachmentBytes extends AttachmentMeta {
+  oversized: false;
   content: Buffer;
 }
+
+/**
+ * An attachment deliberately left on the server because it exceeded the
+ * caller's `maxBytes`. Its bytes remain reachable through `resources/read` on
+ * the matching `imap://` URI.
+ */
+export interface AttachmentTooLarge extends AttachmentMeta {
+  oversized: true;
+  content?: undefined;
+}
+
+export type AttachmentDownload = AttachmentBytes | AttachmentTooLarge;
+
+/** A message source that was fetched. */
+export interface RawEmailSource {
+  size: number;
+  oversized: false;
+  source: string;
+}
+
+/** A message source left on the server for exceeding the caller's `maxBytes`. */
+export interface RawEmailTooLarge {
+  size: number;
+  oversized: true;
+  source?: undefined;
+}
+
+export type RawEmailResult = RawEmailSource | RawEmailTooLarge;
 
 export interface SearchOptions {
   limit?: number;
@@ -274,17 +309,41 @@ export class ImapService {
     }
   }
 
-  async fetchRawEmail(folder: string, uid: number): Promise<string> {
+  async fetchRawEmail(folder: string, uid: number): Promise<string>;
+  async fetchRawEmail(folder: string, uid: number, maxBytes: number): Promise<RawEmailResult>;
+  async fetchRawEmail(
+    folder: string,
+    uid: number,
+    maxBytes?: number,
+  ): Promise<string | RawEmailResult> {
     const client = this.createClient();
     try {
       await client.connect();
       const lock = await client.getMailboxLock(folder);
       try {
+        if (maxBytes !== undefined) {
+          // RFC822.SIZE is a single cheap FETCH item, so an oversized message
+          // is identified without pulling its body across the wire at all.
+          const stat = await client.fetchOne(String(uid), { size: true }, { uid: true });
+          if (!stat) {
+            throw new EmailError(`Email UID ${uid} not found`, ErrorCode.EMAIL_NOT_FOUND, uid);
+          }
+          if (typeof stat.size === "number" && stat.size > maxBytes) {
+            return { size: stat.size, oversized: true };
+          }
+        }
+
         const fetchResult = await client.fetchOne(String(uid), { source: true }, { uid: true });
         if (!fetchResult || !fetchResult.source) {
           throw new EmailError(`Email UID ${uid} not found`, ErrorCode.EMAIL_NOT_FOUND, uid);
         }
-        return fetchResult.source.toString();
+        const source = fetchResult.source.toString();
+        if (maxBytes === undefined) return source;
+        // A server that withheld RFC822.SIZE is still held to the ceiling, just
+        // after the fetch rather than before it.
+        return source.length > maxBytes
+          ? { size: source.length, oversized: true }
+          : { size: source.length, oversized: false, source };
       } finally {
         lock.release();
       }
@@ -379,7 +438,19 @@ export class ImapService {
     }
   }
 
-  async downloadAttachment(folder: string, uid: number, partId: string): Promise<AttachmentData> {
+  async downloadAttachment(folder: string, uid: number, partId: string): Promise<AttachmentBytes>;
+  async downloadAttachment(
+    folder: string,
+    uid: number,
+    partId: string,
+    maxBytes: number,
+  ): Promise<AttachmentDownload>;
+  async downloadAttachment(
+    folder: string,
+    uid: number,
+    partId: string,
+    maxBytes?: number,
+  ): Promise<AttachmentDownload> {
     const client = this.createClient();
     try {
       await client.connect();
@@ -394,17 +465,35 @@ export class ImapService {
           );
         }
 
+        const attachment = {
+          filename: meta.filename || `attachment-${partId}`,
+          contentType: meta.contentType || "application/octet-stream",
+        };
+
+        if (maxBytes !== undefined && meta.expectedSize && meta.expectedSize > maxBytes) {
+          // The size came from BODYSTRUCTURE, so it is known before the body is
+          // read. Draining a stream we are about to discard is precisely the
+          // cost this ceiling exists to avoid, so the stream is dropped instead.
+          // Abandoning it mid-literal would leave the connection out of step,
+          // but `createClient` opens a fresh one per call and the `finally`
+          // below logs this one out, so it is never reused.
+          content.destroy?.();
+          return { ...attachment, size: meta.expectedSize, oversized: true };
+        }
+
         const chunks: Buffer[] = [];
         for await (const chunk of content) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         }
+        const buffer = Buffer.concat(chunks);
+        const size = meta.expectedSize || buffer.length;
 
-        return {
-          filename: meta.filename || `attachment-${partId}`,
-          contentType: meta.contentType || "application/octet-stream",
-          size: meta.expectedSize || Buffer.concat(chunks).length,
-          content: Buffer.concat(chunks),
-        };
+        // A server that withheld the expected size is still held to the
+        // ceiling; only the network saving is lost, not the context saving.
+        if (maxBytes !== undefined && size > maxBytes) {
+          return { ...attachment, size, oversized: true };
+        }
+        return { ...attachment, size, oversized: false, content: buffer };
       } finally {
         lock.release();
       }

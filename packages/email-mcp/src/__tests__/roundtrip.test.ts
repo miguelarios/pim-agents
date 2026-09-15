@@ -53,13 +53,20 @@ function fakeServices() {
       deleteEmails: vi.fn().mockResolvedValue(undefined),
       getSpecialUseFolder: vi.fn().mockResolvedValue("Drafts"),
       appendMessage: vi.fn().mockResolvedValue({ uid: 100 }),
-      downloadAttachment: vi.fn().mockResolvedValue({
-        filename: "report.pdf",
-        contentType: "application/pdf",
-        size: 4,
-        content: Buffer.from("PDF!"),
+      downloadAttachment: vi.fn(
+        async (_folder: string, _uid: number, _partId: string, maxBytes?: number) => {
+          const meta = { filename: "report.pdf", contentType: "application/pdf", size: 4 };
+          return maxBytes !== undefined && meta.size > maxBytes
+            ? { ...meta, oversized: true }
+            : { ...meta, oversized: false, content: Buffer.from("PDF!") };
+        },
+      ),
+      // Overloaded on the real service: bare for resources/read, ceiling-aware
+      // for the tool. The stub answers both by carrying the source either way.
+      fetchRawEmail: vi.fn(async (_folder: string, _uid: number, maxBytes?: number) => {
+        const source = "From: ada@example.com\r\n\r\nbody";
+        return maxBytes === undefined ? source : { size: source.length, oversized: false, source };
       }),
-      fetchRawEmail: vi.fn().mockResolvedValue("From: ada@example.com\r\n\r\nbody"),
     },
     smtp: {
       config: { smtp: { user: "me@example.com" }, autoSent: true, fromName: undefined },
@@ -288,10 +295,14 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(block.resource.mimeType).toBe("application/pdf");
     expect(Buffer.from(block.resource.blob, "base64").toString()).toBe("PDF!");
     // Metadata only — repeating the base64 here would double the response.
+    // `uri` addresses the same bytes for a client that would rather fetch them
+    // itself; `embedded` says they did fit under the inline ceiling.
     expect(result.structuredContent).toEqual({
       filename: "report.pdf",
       contentType: "application/pdf",
       size: 4,
+      uri: "imap://INBOX/1/2",
+      embedded: true,
     });
   });
 
@@ -310,7 +321,50 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(block.type).toBe("resource");
     expect(block.resource.mimeType).toBe("message/rfc822");
     expect(block.resource.text).toContain("ada@example.com");
-    expect(result.structuredContent).toEqual({ uid: 1, folder: "INBOX", size: 29 });
+    expect(result.structuredContent).toEqual({
+      uid: 1,
+      folder: "INBOX",
+      size: 29,
+      uri: "imap://INBOX/1.eml",
+      embedded: true,
+    });
+  });
+
+  it("links an oversized attachment instead of embedding it, and the link resolves", async () => {
+    // The whole point of the ceiling: the bytes leave the tool result, but stay
+    // one resources/read away. Asserted as one flow rather than two tests,
+    // because a link that does not resolve is worse than no ceiling at all.
+    const previous = process.env.EMAIL_MAX_INLINE_BYTES;
+    process.env.EMAIL_MAX_INLINE_BYTES = "0";
+    try {
+      const { client } = await connect(era, fakeServices());
+      const result = await client.callTool({
+        name: "download_attachment",
+        arguments: { uid: 1, partId: "2" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      const blocks = result.content as Array<Record<string, unknown>>;
+      expect(blocks.some((b) => b.type === "resource")).toBe(false);
+
+      // `name` and `size` are asserted here rather than only in the unit test:
+      // they are optional in the SDK's schema, so this is what proves they
+      // survive serialization instead of being quietly stripped.
+      const link = blocks.find((b) => b.type === "resource_link") as { uri: string };
+      expect(link).toMatchObject({
+        uri: "imap://INBOX/1/2",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        size: 4,
+      });
+      expect(result.structuredContent).toMatchObject({ embedded: false });
+
+      const read = await client.readResource({ uri: link.uri });
+      expect(read.contents[0]).toMatchObject({ blob: Buffer.from("PDF!").toString("base64") });
+    } finally {
+      if (previous === undefined) delete process.env.EMAIL_MAX_INLINE_BYTES;
+      else process.env.EMAIL_MAX_INLINE_BYTES = previous;
+    }
   });
 
   it("confirms before sending, then sends", async () => {

@@ -120,6 +120,10 @@ export const attachmentSchema = v.object({
   filename: v.string(),
   contentType: v.string(),
   size: v.number(),
+  /** The `imap://` URI the bytes are addressable at, embedded or not. */
+  uri: v.string(),
+  /** False when the bytes exceeded the inline ceiling and only the link was returned. */
+  embedded: v.boolean(),
 });
 
 /**
@@ -130,4 +134,8 @@ export const rawEmailSchema = v.object({
   uid: v.number(),
   folder: v.string(),
   size: v.number(),
+  /** The `imap://` URI the source is addressable at, embedded or not. */
+  uri: v.string(),
+  /** False when the source exceeded the inline ceiling and only the link was returned. */
+  embedded: v.boolean(),
 });
