@@ -7,13 +7,23 @@ on:
     # finds something new to say, which turns a PR into a loop of fix,
     # re-review, fix — and burns quota for no added signal.
     # Ask for another pass with @claude (claude.yml).
-    types: [opened, ready_for_review]
+    #
+    # `edited` is here only to catch a retarget. A PR opened against another
+    # feature branch is filtered out by `branches` below, and retargeting it to
+    # main fires `edited` rather than `opened` — so without this a stacked PR
+    # was never reviewed at all, which is not what the note below intended.
+    types: [opened, ready_for_review, edited]
     # Stacked PRs are reviewed once retargeted to main, not while they sit on
     # another feature branch where every base push re-triggers.
     branches: [main]
 
 jobs:
   claude-review:
+    # `edited` also fires on every title and body edit, which would reinstate
+    # the re-review loop the note above rules out. `changes.base` is present
+    # only when the base branch itself changed, so it is what separates a
+    # retarget from someone fixing a typo in the description.
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
     permissions:
       contents: read
