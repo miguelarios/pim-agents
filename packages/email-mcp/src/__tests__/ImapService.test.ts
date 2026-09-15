@@ -754,6 +754,115 @@ describe("ImapService", () => {
     });
   });
 
+  describe("fetchEmail inline-disposition attachments", () => {
+    /**
+     * Apple Mail (iOS and macOS) writes forwarded file attachments as
+     * `Content-Disposition: inline`, nested in a multipart/mixed under a
+     * multipart/alternative. Content-ID is the discriminator: a file
+     * attachment has none, an image referenced by the HTML body does.
+     */
+    function forwarded(pdfPart: Record<string, unknown>) {
+      return {
+        source: Buffer.from("raw"),
+        bodyStructure: {
+          type: "multipart/alternative",
+          childNodes: [
+            { type: "text/plain", part: "1", size: 20 },
+            {
+              type: "multipart/mixed",
+              part: "2",
+              childNodes: [{ type: "text/html", part: "2.1", size: 40 }, pdfPart],
+            },
+          ],
+        },
+      };
+    }
+
+    it("collects an inline attachment with a filename and no Content-ID", async () => {
+      mockFetchOne.mockResolvedValueOnce(
+        forwarded({
+          type: "application/pdf",
+          part: "2.2",
+          size: 2048,
+          disposition: "inline",
+          dispositionParameters: { filename: "scan.pdf" },
+          parameters: { name: "scan.pdf" },
+        }),
+      );
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.hasAttachments).toBe(true);
+      expect(email.attachments).toEqual([
+        { filename: "scan.pdf", contentType: "application/pdf", size: 2048, partId: "2.2" },
+      ]);
+    });
+
+    it("skips an inline image that the HTML body references by Content-ID", async () => {
+      mockFetchOne.mockResolvedValueOnce(
+        forwarded({
+          type: "image/png",
+          part: "2.2",
+          size: 512,
+          id: "<logo@signature>",
+          disposition: "inline",
+          dispositionParameters: { filename: "logo.png" },
+          parameters: { name: "logo.png" },
+        }),
+      );
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.hasAttachments).toBe(false);
+      expect(email.attachments).toEqual([]);
+    });
+
+    it("still collects a part explicitly marked as an attachment", async () => {
+      mockFetchOne.mockResolvedValueOnce(
+        forwarded({
+          type: "application/pdf",
+          part: "2.2",
+          size: 2048,
+          disposition: "attachment",
+          dispositionParameters: { filename: "doc.pdf" },
+        }),
+      );
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.attachments).toHaveLength(1);
+      expect(email.attachments[0].partId).toBe("2.2");
+    });
+
+    it("still collects an inline text/calendar part carrying a Content-ID", async () => {
+      mockFetchOne.mockResolvedValueOnce(
+        forwarded({
+          type: "text/calendar",
+          part: "2.2",
+          size: 64,
+          id: "<invite@test.com>",
+          disposition: "inline",
+          parameters: { method: "REQUEST", charset: "utf-8" },
+        }),
+      );
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.attachments).toHaveLength(1);
+      expect(email.attachments[0].contentType).toBe("text/calendar");
+    });
+
+    it("skips an inline part with no filename and no Content-ID", async () => {
+      mockFetchOne.mockResolvedValueOnce(
+        forwarded({ type: "image/png", part: "2.2", size: 512, disposition: "inline" }),
+      );
+
+      const email = await service.fetchEmail("INBOX", 42);
+
+      expect(email.attachments).toEqual([]);
+    });
+  });
+
   describe("fetchEmail calendar parts", () => {
     const ICS = [
       "BEGIN:VCALENDAR",
