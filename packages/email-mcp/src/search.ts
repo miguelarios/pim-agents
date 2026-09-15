@@ -1,3 +1,5 @@
+import { ValidationError } from "@miguelarios/pim-core";
+
 export interface SearchParams {
   hasWords?: string;
   body?: string;
@@ -54,17 +56,19 @@ export function buildSearchCriteria(
   // Address fields → base criteria (no tokenization)
   const addressFields = ["from", "to", "cc", "bcc"] as const;
   for (const field of addressFields) {
-    const value = params[field];
+    const value = filled(params[field]);
     if (value === undefined) continue;
     baseCriteria[field] = value;
   }
 
   // Date filters → base criteria
-  if (params.since !== undefined) {
-    baseCriteria.since = new Date(params.since);
+  const since = filled(params.since);
+  if (since !== undefined) {
+    baseCriteria.since = parseDate(since, "since");
   }
-  if (params.before !== undefined) {
-    baseCriteria.before = new Date(params.before);
+  const before = filled(params.before);
+  if (before !== undefined) {
+    baseCriteria.before = parseDate(before, "before");
   }
 
   // Boolean flags → base criteria
@@ -81,11 +85,12 @@ export function buildSearchCriteria(
   }
 
   // Tags → base criteria for single tag, tokenized for multiple (key collision)
-  if (params.tags !== undefined) {
-    if (params.tags.length === 1) {
-      baseCriteria.keyword = params.tags[0];
+  const tags = params.tags?.map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+  if (tags !== undefined) {
+    if (tags.length === 1) {
+      baseCriteria.keyword = tags[0];
     } else {
-      for (const tag of params.tags) {
+      for (const tag of tags) {
         tokenizedCriteria.push({ keyword: tag });
       }
     }
@@ -98,7 +103,7 @@ export function buildSearchCriteria(
     { param: "hasWords", imapKey: "text" },
   ];
   for (const { param, imapKey } of tokenizedFields) {
-    const value = params[param] as string | undefined;
+    const value = filled(params[param] as string | undefined);
     if (value === undefined) continue;
     const tokens = parseTokens(value);
     for (const token of tokens) {
@@ -131,4 +136,36 @@ export function buildSearchCriteria(
 
   // Both base and tokenized → fold base into each tokenized criterion
   return tokenizedCriteria.map((tc) => ({ ...baseCriteria, ...tc }));
+}
+
+/**
+ * Narrows a string filter to a meaningful one, trimmed.
+ *
+ * A blank value is not a filter under any reading: nobody searches for the
+ * empty sender. Discarding it keeps the server correct for clients that
+ * materialize every optional property rather than omitting the ones the model
+ * left unset — see the #101 regression tests. Booleans are deliberately not
+ * normalized this way, because `false` is a legitimate query.
+ */
+function filled(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Parses a date filter, rejecting one that cannot be read.
+ *
+ * `new Date("nonsense")` yields an Invalid Date, which serializes to `null` and
+ * makes IMAP match nothing — a silent empty result rather than a usable error.
+ */
+function parseDate(value: string, field: "since" | "before"): Date {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ValidationError(
+      `${field} is not a valid date: ${JSON.stringify(value)}. Use YYYY-MM-DD.`,
+      field,
+    );
+  }
+  return parsed;
 }
