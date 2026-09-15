@@ -29,6 +29,38 @@ import {
   sendResultSchema,
 } from "./emailSchemas.js";
 
+/**
+ * Bytes above which a payload comes back as a resource link rather than inline
+ * base64.
+ *
+ * Matches `MAX_INLINE_CALENDAR_BYTES`, which has guarded calendar parts since
+ * they were added — attachments are the payloads most likely to be large, so
+ * there is no case for a looser limit here than the one text parts already
+ * live under. Base64 inflates by a third on top of this, so the ceiling is
+ * conservative by design.
+ */
+export const DEFAULT_MAX_INLINE_BYTES = 256 * 1024;
+
+/**
+ * The configured inline ceiling. `0` links everything; anything unparseable
+ * falls back to the default rather than disabling the guard, since a typo in
+ * an env var should not restore the unbounded behaviour.
+ */
+function maxInlineBytes(): number {
+  const raw = process.env.EMAIL_MAX_INLINE_BYTES;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_MAX_INLINE_BYTES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_MAX_INLINE_BYTES;
+  return parsed;
+}
+
+/** Human-readable bytes, for the note that explains a link. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Both backing services, passed to every handler as one unit. */
 export interface EmailServices {
   imap: ImapService;
@@ -617,26 +649,57 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     handler: (args: { folder?: string; uid: number; partId: string }, { imap }) =>
       run(async () => {
         const folder = args.folder || "INBOX";
-        const attachment = await imap.downloadAttachment(folder, args.uid, args.partId);
+        const limit = maxInlineBytes();
+        const attachment = await imap.downloadAttachment(folder, args.uid, args.partId, limit);
+        const uri = attachmentUri(folder, args.uid, args.partId);
+        const structuredContent = {
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          uri,
+          embedded: !attachment.oversized,
+        };
+
+        if (attachment.oversized) {
+          // A link, not the bytes: base64 for a payload this size would be a
+          // third larger again, and most clients put a tool result straight
+          // into the model's context. The bytes stay one resources/read away.
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `${attachment.filename} is ${formatBytes(attachment.size)}, over the ` +
+                  `${formatBytes(limit)} inline limit, so it was not embedded. Fetch the bytes ` +
+                  `with resources/read on ${uri}, or raise EMAIL_MAX_INLINE_BYTES.`,
+              },
+              {
+                type: "resource_link",
+                uri,
+                name: attachment.filename,
+                mimeType: attachment.contentType,
+                size: attachment.size,
+              },
+            ],
+            structuredContent,
+          };
+        }
+
         return {
           // The bytes ride in the resource block only — repeating the base64 in
-          // structuredContent would double the response for large attachments.
-          // Same reasoning as get_email_raw below.
+          // structuredContent would double the response. Same reasoning as
+          // get_email_raw below.
           content: [
             {
               type: "resource",
               resource: {
-                uri: attachmentUri(folder, args.uid, args.partId),
+                uri,
                 mimeType: attachment.contentType,
                 blob: attachment.content.toString("base64"),
               },
             },
           ],
-          structuredContent: {
-            filename: attachment.filename,
-            contentType: attachment.contentType,
-            size: attachment.size,
-          },
+          structuredContent,
         };
       }),
   },
@@ -658,21 +721,51 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     handler: (args: { folder?: string; uid: number }, { imap }) =>
       run(async () => {
         const folder = args.folder || "INBOX";
-        const raw = await imap.fetchRawEmail(folder, args.uid);
+        const limit = maxInlineBytes();
+        const raw = await imap.fetchRawEmail(folder, args.uid, limit);
+        const uri = rawEmailUri(folder, args.uid);
+        // `oversized` is the union's discriminant, so the branch below and the
+        // flag here cannot disagree about what the caller was handed.
+        const structuredContent = {
+          uid: args.uid,
+          folder,
+          size: raw.size,
+          uri,
+          embedded: !raw.oversized,
+        };
+
+        if (raw.oversized) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `The source of UID ${args.uid} is ${formatBytes(raw.size)}, over the ` +
+                  `${formatBytes(limit)} inline limit, so it was not embedded. Fetch it with ` +
+                  `resources/read on ${uri}, or raise EMAIL_MAX_INLINE_BYTES.`,
+              },
+              {
+                type: "resource_link",
+                uri,
+                name: `${args.uid}.eml`,
+                mimeType: "message/rfc822",
+                size: raw.size,
+              },
+            ],
+            structuredContent,
+          };
+        }
+
         return {
           // The source rides in the resource block rather than being repeated
           // in both `content` and `structuredContent` — .eml payloads are large.
           content: [
             {
               type: "resource",
-              resource: {
-                uri: rawEmailUri(folder, args.uid),
-                mimeType: "message/rfc822",
-                text: raw,
-              },
+              resource: { uri, mimeType: "message/rfc822", text: raw.source },
             },
           ],
-          structuredContent: { uid: args.uid, folder, size: raw.length },
+          structuredContent,
         };
       }),
   },

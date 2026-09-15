@@ -40,6 +40,12 @@ Add the server to your MCP client config (Claude Desktop, Claude Code, etc.). Cr
 
 Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`, `PIM_TIMEZONE`.
 
+- `EMAIL_MAX_INLINE_BYTES` — bytes above which `download_attachment` and `get_email_raw`
+  return a resource link instead of embedding the payload. Defaults to `262144` (256 KB),
+  matching the ceiling calendar parts already use. `0` links everything; an unparseable
+  value falls back to the default rather than disabling the guard. Base64 adds a third on
+  top, and most clients put a tool result straight into the model's context, so raise it
+  deliberately.
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. Path-based attachments (`attachments[].path`) are rejected unless this is set, and only files resolving inside it are allowed. Use `attachments[].content` for inline content without setting this.
 - `URL_RESOLVE_DISABLE` — set to `1`/`true` to skip network link-resolution when rendering email to markdown; links are left unresolved in the output.
 - `SMTP_AUTO_SENT` — set to `true` if your provider auto-files sent mail, so the server skips the extra IMAP append to Sent.
@@ -97,8 +103,12 @@ context when only the file itself is wanted.
 | `imap://{folder}/{uid}/{partId}` | One attachment's bytes, under its own media type. Part IDs come from `get_email`'s attachment metadata. |
 | `imap://{folder}/{uid}.eml` | The message's raw RFC 822 source. |
 
-`download_attachment` and `get_email_raw` stamp these URIs onto the resource blocks
-they return, so a URI from a tool result can be read back directly.
+`download_attachment` and `get_email_raw` stamp these URIs onto whatever they return,
+so a URI from a tool result can be read back directly. Under `EMAIL_MAX_INLINE_BYTES`
+the payload is embedded as before; over it, the tool returns a `resource_link` and the
+bytes stay one `resources/read` away instead of arriving as multi-megabyte base64.
+Either way `structuredContent` carries the `uri` and an `embedded` flag saying which
+happened.
 
 The folder occupies the URI's authority and is percent-encoded whole, so a hierarchy
 delimiter inside it survives: `Archive/2024` becomes `imap://Archive%2F2024/99/1.2`.
