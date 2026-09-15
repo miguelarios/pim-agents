@@ -11,6 +11,7 @@ import {
 } from "@miguelarios/pim-core/mcp";
 import { simpleParser } from "mailparser";
 import { htmlToMarkdown } from "../htmlToMarkdown.js";
+import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
 import type { ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
@@ -625,7 +626,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
             {
               type: "resource",
               resource: {
-                uri: `imap://${encodeURIComponent(folder)}/${args.uid}/${encodeURIComponent(args.partId)}`,
+                uri: attachmentUri(folder, args.uid, args.partId),
                 mimeType: attachment.contentType,
                 blob: attachment.content.toString("base64"),
               },
@@ -665,7 +666,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
             {
               type: "resource",
               resource: {
-                uri: `imap://${encodeURIComponent(folder)}/${args.uid}.eml`,
+                uri: rawEmailUri(folder, args.uid),
                 mimeType: "message/rfc822",
                 text: raw,
               },

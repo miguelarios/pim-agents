@@ -7,6 +7,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerImapResources } from "../resources/imapResources.js";
+import type { ImapService } from "../services/ImapService.js";
 import { EMAIL_TOOLS, type EmailServices } from "../tools/emailTools.js";
 
 const SUMMARY = {
@@ -95,11 +97,15 @@ const open = async (
       const server = new McpServer(
         { name: "@miguelarios/email-mcp", title: "IMAP/SMTP Email", version: "0.0.0-test" },
         {
-          capabilities: { tools: { listChanged: false } },
+          capabilities: {
+            tools: { listChanged: false },
+            resources: { listChanged: false },
+          },
           cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
         },
       );
       registerTools(server, EMAIL_TOOLS, services as unknown as EmailServices);
+      registerImapResources(server, services.imap as unknown as ImapService);
       return server;
     },
     { transport: serverTransport },
@@ -190,6 +196,67 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(structured.calendarParts).toHaveLength(1);
     expect(structured.calendarParts[0].method).toBe("REQUEST");
     expect(structured.calendarParts[0].content).toContain("BEGIN:VCALENDAR");
+  });
+
+  it("advertises both imap:// resource templates", async () => {
+    const { client } = await connect(era, fakeServices());
+    const { resourceTemplates } = await client.listResourceTemplates();
+
+    expect(resourceTemplates.map((t) => t.uriTemplate).sort()).toEqual([
+      "imap://{folder}/{uid}.eml",
+      "imap://{folder}/{uid}/{partId}",
+    ]);
+  });
+
+  it("serves an attachment's bytes through resources/read", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+
+    const result = await client.readResource({ uri: "imap://INBOX/4471/2" });
+
+    expect(services.imap.downloadAttachment).toHaveBeenCalledWith("INBOX", 4471, "2");
+    expect(result.contents[0]).toMatchObject({
+      uri: "imap://INBOX/4471/2",
+      mimeType: "application/pdf",
+      blob: Buffer.from("PDF!").toString("base64"),
+    });
+  });
+
+  it("serves a message's source through resources/read", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+
+    const result = await client.readResource({ uri: "imap://INBOX/4471.eml" });
+
+    expect(services.imap.fetchRawEmail).toHaveBeenCalledWith("INBOX", 4471);
+    expect(result.contents[0]).toMatchObject({ mimeType: "message/rfc822" });
+  });
+
+  it("resolves the very URI download_attachment hands back", async () => {
+    // The tool result's URI is only useful if it is addressable, so the two
+    // paths are asserted against each other rather than against a literal.
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+
+    const call = await client.callTool({
+      name: "download_attachment",
+      arguments: { folder: "Archive/2024", uid: 99, partId: "1.2" },
+    });
+    const block = (call.content as Array<{ type: string; resource: { uri: string } }>).find(
+      (c) => c.type === "resource",
+    );
+    const read = await client.readResource({ uri: block!.resource.uri });
+
+    expect(services.imap.downloadAttachment).toHaveBeenLastCalledWith("Archive/2024", 99, "1.2");
+    expect(read.contents[0]).toMatchObject({ blob: Buffer.from("PDF!").toString("base64") });
+  });
+
+  it("fails a resources/read for a malformed uid rather than guessing", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+
+    await expect(client.readResource({ uri: "imap://INBOX/not-a-uid/2" })).rejects.toThrow();
+    expect(services.imap.downloadAttachment).not.toHaveBeenCalled();
   });
 
   it("rejects malformed arguments without running the handler", async () => {
