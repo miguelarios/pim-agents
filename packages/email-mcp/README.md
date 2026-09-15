@@ -85,6 +85,29 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 | `get_email_raw` | Export email as raw .eml |
 | `get_folder_status` | Get total and unread message counts for a folder |
 
+## Resources
+
+Attachments and message sources are addressable as `imap://` resources, not just
+returned inline by a tool. A client that wants the bytes can fetch them with
+`resources/read` on its own terms — which keeps a large payload out of the model's
+context when only the file itself is wanted.
+
+| URI template | Contents |
+|--------------|----------|
+| `imap://{folder}/{uid}/{partId}` | One attachment's bytes, under its own media type. Part IDs come from `get_email`'s attachment metadata. |
+| `imap://{folder}/{uid}.eml` | The message's raw RFC 822 source. |
+
+`download_attachment` and `get_email_raw` stamp these URIs onto the resource blocks
+they return, so a URI from a tool result can be read back directly.
+
+The folder occupies the URI's authority and is percent-encoded whole, so a hierarchy
+delimiter inside it survives: `Archive/2024` becomes `imap://Archive%2F2024/99/1.2`.
+Folder case is preserved, because IMAP mailbox names are case-sensitive.
+
+Neither template is enumerable — there is no `resources/list` entry for them, since
+listing every attachment in an account would mean walking every message. Discover
+them through `resources/templates/list`, and find part IDs with `get_email`.
+
 ## License
 
 MIT

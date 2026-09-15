@@ -4,6 +4,7 @@ import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { disposeUrlCleaner } from "./htmlToMarkdown.js";
+import { registerImapResources } from "./resources/imapResources.js";
 import { ImapService } from "./services/ImapService.js";
 import { SmtpService } from "./services/SmtpService.js";
 import { EMAIL_TOOLS } from "./tools/emailTools.js";
@@ -21,14 +22,20 @@ export async function createServer(): Promise<McpServer> {
   const server = new McpServer(
     { name: "@miguelarios/email-mcp", title: "IMAP/SMTP Email", version },
     {
-      capabilities: { tools: { listChanged: false } },
+      capabilities: {
+        tools: { listChanged: false },
+        // Attachment and message URIs are addressable but not enumerable, so
+        // there is no list to change.
+        resources: { listChanged: false },
+      },
       instructions:
-        "Read, search and send email over IMAP/SMTP. Folder paths are IMAP paths and default to INBOX — call list_folders to discover them. send_email, send_draft and permanent deletes ask the user to confirm first.",
+        "Read, search and send email over IMAP/SMTP. Folder paths are IMAP paths and default to INBOX — call list_folders to discover them. send_email, send_draft and permanent deletes ask the user to confirm first. Attachments and message sources are also addressable as imap:// resources, so their bytes can be fetched with resources/read instead of through a tool result.",
       cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
     },
   );
 
   registerTools(server, EMAIL_TOOLS, services);
+  registerImapResources(server, services.imap);
 
   const handleShutdown = async () => {
     await disposeUrlCleaner();
