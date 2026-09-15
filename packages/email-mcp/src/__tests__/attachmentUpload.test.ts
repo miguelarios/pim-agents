@@ -32,6 +32,18 @@ const imapStub = () => ({
   appendMessage: vi.fn().mockResolvedValue({ uid: 1 }),
 });
 
+/** A first-round context: nothing confirmed yet. */
+const NOT_CONFIRMED = { mcpReq: { inputResponses: undefined } } as unknown as ServerContext;
+
+const sendWith = (attachments: unknown[], smtp: ReturnType<typeof smtpStub>, ctx: ServerContext) =>
+  dispatchTool(
+    EMAIL_TOOLS,
+    "send_email",
+    { to: ["someone@example.com"], subject: "Hi", text: "body", attachments },
+    { imap: imapStub(), smtp } as never,
+    ctx,
+  ) as Promise<any>;
+
 const send = (attachments: unknown[], smtp = smtpStub()) =>
   dispatchTool(
     EMAIL_TOOLS,
@@ -126,6 +138,10 @@ describe("send_email attachment encoding", () => {
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toMatch(/base64/i);
+    // The code, not just the message: `toPimError` has no pattern for these,
+    // so a thrown Error would surface as INTERNAL_ERROR and blame the server
+    // for what is plainly a malformed request.
+    expect(JSON.parse(result.content[0].text).error).toBe("INVALID_INPUT");
     expect(smtp.composeRawMessage).not.toHaveBeenCalled();
   });
 
@@ -140,6 +156,36 @@ describe("send_email attachment encoding", () => {
     // The message names the real conflict; "no content" would send the caller
     // looking for a missing field rather than an incompatible pair.
     expect(JSON.stringify(result.content)).toMatch(/attaches a path/);
+    expect(smtp.composeRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed attachment before asking the user to confirm the send", async () => {
+    // Validation sits above the confirmation gate. Confirming an irreversible
+    // send and only then being told the payload was never valid spends the
+    // confirmation on nothing, and teaches the user that confirming does not
+    // mean the mail went out.
+    const smtp = smtpStub();
+    const result = await sendWith(
+      [{ filename: "a.pdf", content: "not valid base64!", encoding: "base64" }],
+      smtp,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.resultType).toBeUndefined();
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toBe("INVALID_INPUT");
+  });
+
+  it("still asks for confirmation when the attachments are well formed", async () => {
+    // The guard above must not have swallowed the gate for valid requests.
+    const smtp = smtpStub();
+    const result = await sendWith(
+      [{ filename: "a.pdf", content: PDF_BYTES.toString("base64"), encoding: "base64" }],
+      smtp,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.resultType).toBe("input_required");
     expect(smtp.composeRawMessage).not.toHaveBeenCalled();
   });
 

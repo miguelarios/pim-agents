@@ -441,6 +441,27 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         return invalid("subject is required when not replying to an existing email");
       }
 
+      // Attachments are resolved before the gate, not inside the handler body.
+      // Every failure here is the request being wrong, and a confirmation spent
+      // on a send that was never going to happen is worse than no confirmation:
+      // it teaches the user that confirming does not mean the mail went out.
+      //
+      // Shape is still checked before the path policy, so a request that
+      // contradicts itself is answered on its own terms rather than with
+      // whatever EMAIL_ATTACHMENT_DIR happens to be set to.
+      let attachments: ResolvedAttachment[];
+      try {
+        attachments = (args.attachments ?? []).map((att) => {
+          const resolved = resolveAttachment(att);
+          if (resolved.path) assertAttachmentPathAllowed(resolved.path);
+          return resolved;
+        });
+      } catch (err) {
+        // `invalid` rather than a throw: these reach `toPimError`, which has no
+        // pattern for them and would label plain caller error INTERNAL_ERROR.
+        return invalid(err instanceof Error ? err.message : String(err));
+      }
+
       // Saving a draft is reversible; actually putting mail on the wire is not.
       if (!saveToDrafts) {
         const recipients = [...to, ...(cc ?? []), ...(bcc ?? [])].join(", ");
@@ -453,14 +474,6 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       }
 
       return run(async () => {
-        // Shape first, then policy: a request that contradicts itself is
-        // malformed whatever EMAIL_ATTACHMENT_DIR happens to be set to, and
-        // reporting the server's path policy for it would misdirect the caller.
-        const attachments = (args.attachments ?? []).map((att) => {
-          const resolved = resolveAttachment(att);
-          if (resolved.path) assertAttachmentPathAllowed(resolved.path);
-          return resolved;
-        });
         const replyToFolder = args.replyToFolder || "INBOX";
         let subject = args.subject;
 
