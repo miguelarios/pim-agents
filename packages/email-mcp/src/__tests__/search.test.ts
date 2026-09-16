@@ -229,3 +229,78 @@ describe("buildSearchCriteria", () => {
     });
   });
 });
+
+/**
+ * Regression cover for #101. The zero-results report came from OpenClaw, whose
+ * ChatGPT Responses route omits `strict: false` on function tools; that backend
+ * then promotes every optional property to required, so the client sends `""`,
+ * `[]` and `false` for filters the model never set. Claude Code and Hermes
+ * convert the schema natively and preserve omission, so they never hit this.
+ *
+ * A blank address, a blank date and an empty tag list are not filters under any
+ * reading, so the server discards them. Booleans deliberately stay as they are:
+ * `false` is a legitimate query (read mail, unflagged mail), and the server
+ * cannot tell a deliberate `false` from a materialized one.
+ */
+describe("buildSearchCriteria with materialized default arguments", () => {
+  it("ignores blank address filters", () => {
+    expect(buildSearchCriteria({ from: "", to: "", cc: "", bcc: "" })).toEqual({ all: true });
+  });
+
+  it("ignores whitespace-only address filters", () => {
+    expect(buildSearchCriteria({ from: "   ", to: "\t" })).toEqual({ all: true });
+  });
+
+  it("trims surrounding whitespace off a real address filter", () => {
+    expect(buildSearchCriteria({ from: "  boss@work.com  " })).toEqual({
+      from: "boss@work.com",
+    });
+  });
+
+  it("ignores blank date filters instead of building an Invalid Date", () => {
+    expect(buildSearchCriteria({ since: "", before: "   " })).toEqual({ all: true });
+  });
+
+  it("rejects an unparseable date rather than silently matching nothing", () => {
+    expect(() => buildSearchCriteria({ since: "not-a-date" })).toThrow(/since/);
+  });
+
+  it("ignores an empty tag list", () => {
+    expect(buildSearchCriteria({ tags: [] })).toEqual({ all: true });
+  });
+
+  it("ignores blank entries within a tag list", () => {
+    expect(buildSearchCriteria({ tags: ["work", "", "  "] })).toEqual({ keyword: "work" });
+  });
+
+  it("treats a fully materialized string/array request as an unfiltered search", () => {
+    expect(
+      buildSearchCriteria({
+        subject: "",
+        from: "",
+        to: "",
+        cc: "",
+        bcc: "",
+        body: "",
+        hasWords: "",
+        since: "",
+        before: "",
+        tags: [],
+      }),
+    ).toEqual({ all: true });
+  });
+
+  it("still honours an explicit unread: false as a read-mail filter", () => {
+    expect(buildSearchCriteria({ unread: false })).toEqual({ seen: true });
+  });
+
+  it("still honours an explicit flagged: false as an unflagged filter", () => {
+    expect(buildSearchCriteria({ flagged: false })).toEqual({ flagged: false });
+  });
+
+  it("keeps a real filter when it arrives beside materialized blanks", () => {
+    expect(buildSearchCriteria({ from: "", to: "", subject: "invoice", since: "" })).toEqual({
+      subject: "invoice",
+    });
+  });
+});

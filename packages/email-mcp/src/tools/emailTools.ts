@@ -214,9 +214,21 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         },
         since: { type: "string", description: "Emails on or after this date (YYYY-MM-DD)." },
         before: { type: "string", description: "Emails before this date (YYYY-MM-DD)." },
-        unread: { type: "boolean", description: "Filter by unread status." },
-        flagged: { type: "boolean", description: "Filter by flagged/starred status." },
-        hasAttachment: { type: "boolean", description: "Filter for emails with attachments." },
+        unread: {
+          type: "boolean",
+          description:
+            'Filter by unread status. true matches unread only, false matches read only. Omit to match both — do not send false to mean "any".',
+        },
+        flagged: {
+          type: "boolean",
+          description:
+            'Filter by flagged/starred status. true matches flagged only, false matches unflagged only. Omit to match both — do not send false to mean "any".',
+        },
+        hasAttachment: {
+          type: "boolean",
+          description:
+            "true matches emails with attachments. false is not a filter (IMAP cannot express it) and matches both. Omit to match both.",
+        },
         tags: {
           type: "array",
           items: { type: "string" },
