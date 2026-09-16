@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.0 (2026-09-16)
+
+- `get_email` and `search_emails` now report attachments that carry `Content-Disposition: inline` with a filename. Apple Mail (iOS and macOS) writes forwarded file attachments that way, so a forwarded message with a real PDF attached previously reported `hasAttachments: false` and an empty `attachments` array — the part was in the MIME source the whole time, and `download_attachment` retrieved it correctly when given the `partId` by hand. Content-ID distinguishes the two inline cases: an image the HTML body references carries one, a forwarded file does not, so embedded signature logos are still not listed as attachments (PR #107, `claude/exciting-wozniak-55ly2k`).
+- `search_emails` no longer turns a blank filter into a constraint that matches nothing. `from: ""` became a literal `SEARCH FROM ""`, and `since: ""` became `new Date("")` — an Invalid Date that serializes to `null` — so a search could return zero results for a folder that demonstrably had messages. Blank and whitespace-only values are now discarded for `from`, `to`, `cc`, `bcc`, `subject`, `body`, `hasWords`, `since` and `before`, real values are trimmed, and blank entries are dropped from `tags` (PR #108, `claude/exciting-wozniak-55ly2k-search-defaults`).
+- An unparseable `since` or `before` is now rejected with `VALIDATION_FAILED` naming the field, instead of silently producing an empty result set. The throw happens before the IMAP connection is opened (PR #108, `claude/exciting-wozniak-55ly2k-search-defaults`).
+- The `unread`, `flagged` and `hasAttachment` descriptions now state their semantics explicitly: `true` and `false` are both real filters, omission means "match both", and `hasAttachment: false` is not a filter at all since IMAP cannot express it. The booleans themselves are deliberately unchanged — `unread: false` ("read mail") and `flagged: false` ("unflagged mail") are legitimate queries, so a `false` is honoured rather than discarded (PR #108, `claude/exciting-wozniak-55ly2k-search-defaults`).
+
 ## 0.13.0 (2026-09-15)
 
 - Attachments and message sources are now addressable as MCP resources, so a client can fetch the bytes with `resources/read` instead of only ever receiving them inline in a tool result: `imap://{folder}/{uid}/{partId}` serves one attachment under its own media type, `imap://{folder}/{uid}.eml` serves the raw RFC 822 source. `download_attachment` and `get_email_raw` already stamped these URIs onto the blocks they returned, but nothing could resolve one (PR #102, `claude/laughing-euler-nko3sh`).
