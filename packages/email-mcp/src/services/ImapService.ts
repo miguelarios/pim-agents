@@ -52,6 +52,22 @@ export interface CalendarPart {
   truncated?: boolean;
 }
 
+/** One message in a thread, tagged with the folder it was found in. */
+export interface ThreadMessage extends EmailSummary {
+  folder: string;
+}
+
+export interface ThreadResult {
+  /**
+   * The Message-ID the conversation hangs off: the first entry of the anchor's
+   * References chain, or the anchor's own id when it starts the thread. Null
+   * when the anchor carries neither.
+   */
+  rootMessageId: string | null;
+  /** Oldest first — reading order for a conversation. */
+  messages: ThreadMessage[];
+}
+
 export interface FolderInfo {
   path: string;
   specialUse?: string;
@@ -221,27 +237,132 @@ export class ImapService {
       },
       { uid: true },
     )) {
-      const envelope = msg.envelope!;
-      summaries.push({
-        uid: msg.uid,
-        messageId: envelope.messageId || "",
-        subject: envelope.subject || "",
-        from: envelope.from?.[0]
-          ? {
-              name: envelope.from[0].name,
-              address: envelope.from[0].address || "",
-            }
-          : { address: "unknown" },
-        to: (envelope.to || []).map((a: any) => ({
-          name: a.name,
-          address: a.address || "",
-        })),
-        date: envelope.date ? formatInTimezone(envelope.date.toISOString(), this.timezone) : "",
-        flags: [...(msg.flags || [])],
-        hasAttachments: hasAttachmentParts(msg.bodyStructure),
-      });
+      summaries.push(this.toSummary(msg));
     }
     return summaries;
+  }
+
+  /** Builds an {@link EmailSummary} from one FETCH response. */
+  private toSummary(msg: any): EmailSummary {
+    const envelope = msg.envelope ?? {};
+    return {
+      uid: msg.uid,
+      messageId: envelope.messageId || "",
+      subject: envelope.subject || "",
+      from: envelope.from?.[0]
+        ? {
+            name: envelope.from[0].name,
+            address: envelope.from[0].address || "",
+          }
+        : { address: "unknown" },
+      to: (envelope.to || []).map((a: any) => ({
+        name: a.name,
+        address: a.address || "",
+      })),
+      date: envelope.date ? formatInTimezone(envelope.date.toISOString(), this.timezone) : "",
+      flags: [...(msg.flags || [])],
+      hasAttachments: hasAttachmentParts(msg.bodyStructure),
+    };
+  }
+
+  /**
+   * Assembles the conversation an anchor message belongs to.
+   *
+   * Two mechanisms, in order of preference. A server advertising OBJECTID or
+   * X-GM-EXT-1 assigns every message a thread id and will answer a SEARCH on
+   * it with the whole conversation — that is authoritative, and it catches
+   * replies whose References chain was mangled in transit. Otherwise the
+   * chain is walked: RFC 5322 §3.6.4 has every reply carry the root's
+   * Message-ID in its References, so one SEARCH for messages that either *are*
+   * the root or *cite* it returns the thread.
+   *
+   * RFC 5256's THREAD command would be the third option, but imapflow exposes
+   * no way to issue it.
+   */
+  async fetchThread(anchorFolder: string, uid: number, folders: string[]): Promise<ThreadResult> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+
+      let rootMessageId: string | null;
+      let threadId: string | undefined;
+      const lock = await client.getMailboxLock(anchorFolder);
+      try {
+        const anchor = await client.fetchOne(
+          String(uid),
+          { envelope: true, threadId: true, headers: ["references"], uid: true },
+          { uid: true },
+        );
+        if (!anchor) {
+          throw new EmailError(`Email UID ${uid} not found`, ErrorCode.EMAIL_NOT_FOUND, uid);
+        }
+        threadId = anchor.threadId;
+        const references = parseReferencesHeader(anchor.headers);
+        rootMessageId = references[0] ?? anchor.envelope?.messageId ?? null;
+      } finally {
+        lock.release();
+      }
+
+      const criteria = threadId
+        ? { threadId }
+        : rootMessageId
+          ? {
+              or: [
+                { header: { "message-id": rootMessageId } },
+                { header: { references: rootMessageId } },
+              ],
+            }
+          : undefined;
+
+      const found: ThreadMessage[] = [];
+      if (criteria) {
+        for (const folder of folders) {
+          try {
+            const folderLock = await client.getMailboxLock(folder);
+            try {
+              const uids = (await client.search(criteria as any, { uid: true })) || [];
+              if (uids.length === 0) continue;
+              for await (const msg of client.fetch(
+                uids.join(","),
+                { envelope: true, flags: true, bodyStructure: true, uid: true },
+                { uid: true },
+              )) {
+                found.push({ ...this.toSummary(msg), folder });
+              }
+            } finally {
+              folderLock.release();
+            }
+          } catch {
+            // A folder that cannot be opened — renamed, or never existed — is
+            // skipped. A partial thread is more use than none, and the caller
+            // chose the folder list.
+          }
+        }
+      }
+
+      // The same message filed in two folders is one message in a conversation.
+      // Message-ID is the identity; a message without one keeps its own row,
+      // since there is nothing to match it against.
+      const seen = new Set<string>();
+      const messages = found.filter((msg) => {
+        if (!msg.messageId) return true;
+        if (seen.has(msg.messageId)) return false;
+        seen.add(msg.messageId);
+        return true;
+      });
+      messages.sort((a, b) => {
+        const at = new Date(a.date).getTime();
+        const bt = new Date(b.date).getTime();
+        return (Number.isNaN(at) ? 0 : at) - (Number.isNaN(bt) ? 0 : bt);
+      });
+
+      return { rootMessageId, messages };
+    } catch (error) {
+      if (error instanceof EmailError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
   }
 
   async fetchEmail(folder: string, uid: number): Promise<EmailFull> {
@@ -605,6 +726,22 @@ export class ImapService {
       await client.logout().catch(() => {});
     }
   }
+}
+
+/**
+ * Pulls the Message-IDs out of a raw References header block.
+ *
+ * imapflow hands back the header lines as bytes, so the value has to be
+ * unfolded first: RFC 5322 §2.2.3 lets a long References run across
+ * continuation lines, and a chain split mid-header would otherwise lose every
+ * id after the first line.
+ */
+function parseReferencesHeader(headers: Buffer | undefined): string[] {
+  if (!headers) return [];
+  const unfolded = headers.toString("utf-8").replace(/\r?\n[ \t]+/g, " ");
+  const line = unfolded.split(/\r?\n/).find((l) => /^references:/i.test(l));
+  if (!line) return [];
+  return line.match(/<[^<>]+>/g) ?? [];
 }
 
 function compareSummaries(

@@ -56,6 +56,15 @@ export const emailFullSchema = v.object({
   ),
 });
 
+/** One message of a conversation, tagged with the folder it was found in. */
+export const threadResultSchema = v.object({
+  /** The Message-ID the conversation hangs off; null when the anchor has none. */
+  rootMessageId: v.nullable(v.string()),
+  count: v.number(),
+  /** Oldest first — reading order for a conversation. */
+  messages: v.array(v.object({ ...emailSummarySchema.entries, folder: v.string() })),
+});
+
 export const searchResultSchema = v.object({
   emails: v.array(emailSummarySchema),
   count: v.number(),

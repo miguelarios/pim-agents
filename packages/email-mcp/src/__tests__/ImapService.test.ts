@@ -1375,6 +1375,198 @@ describe("ImapService", () => {
     });
   });
 
+  describe("fetchThread", () => {
+    const envelopeFor = (messageId: string, date: string, subject = "Budget") => ({
+      messageId,
+      subject,
+      date: new Date(date),
+      from: [{ address: "ada@example.com", name: "Ada" }],
+      to: [{ address: "user@test.com" }],
+    });
+
+    /** One FETCH response per uid, streamed the way imapflow streams them. */
+    const streamMessages = (messages: any[]) => {
+      mockFetch.mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {
+          for (const msg of messages) yield msg;
+        },
+      }));
+    };
+
+    beforeEach(() => {
+      mockFetchOne.mockReset();
+      mockFetch.mockReset();
+      mockSearch.mockReset();
+    });
+
+    it("walks References: searches for the root id and everything citing it", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(["\\Seen"]),
+        headers: Buffer.from("References: <root@test.com> <mid@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([3, 7]);
+      streamMessages([
+        {
+          uid: 3,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+        {
+          uid: 7,
+          envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+
+      expect(result.rootMessageId).toBe("<root@test.com>");
+      expect(mockSearch).toHaveBeenCalledWith(
+        {
+          or: [
+            { header: { "message-id": "<root@test.com>" } },
+            { header: { references: "<root@test.com>" } },
+          ],
+        },
+        { uid: true },
+      );
+      expect(result.messages.map((m) => m.messageId)).toEqual([
+        "<root@test.com>",
+        "<reply@test.com>",
+      ]);
+      expect(result.messages.every((m) => m.folder === "INBOX")).toBe(true);
+    });
+
+    it("treats the anchor as the root when it cites nothing", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 3,
+        envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("\r\n"),
+      });
+      mockSearch.mockResolvedValue([3]);
+      streamMessages([
+        {
+          uid: 3,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 3, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("unfolds a References header split across continuation lines", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n\t<mid@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("prefers a server-side thread id over the References walk", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        threadId: "thread-42",
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([3, 7]);
+      streamMessages([
+        {
+          uid: 3,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+        {
+          uid: 7,
+          envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(mockSearch).toHaveBeenCalledWith({ threadId: "thread-42" }, { uid: true });
+    });
+
+    it("merges folders, de-duplicates by Message-ID and orders oldest first", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([1]);
+      // INBOX holds the root; Sent holds our reply plus a second copy of the
+      // root that a client filed there.
+      streamMessages([
+        {
+          uid: 1,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+      streamMessages([
+        {
+          uid: 9,
+          envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+          flags: new Set(),
+        },
+        {
+          uid: 10,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX", "Sent"]);
+
+      expect(result.messages.map((m) => [m.folder, m.messageId])).toEqual([
+        ["INBOX", "<root@test.com>"],
+        ["Sent", "<reply@test.com>"],
+      ]);
+    });
+
+    it("keeps going when one folder cannot be opened", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockGetMailboxLock
+        .mockResolvedValueOnce({ release: vi.fn() })
+        .mockResolvedValueOnce({ release: vi.fn() })
+        .mockRejectedValueOnce(new Error("Mailbox does not exist"));
+      mockSearch.mockResolvedValue([1]);
+      streamMessages([
+        {
+          uid: 1,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX", "Ghost"]);
+      expect(result.messages).toHaveLength(1);
+    });
+
+    it("throws EMAIL_NOT_FOUND when the anchor UID is not there", async () => {
+      mockFetchOne.mockResolvedValueOnce(null);
+      await expect(service.fetchThread("INBOX", 99, ["INBOX"])).rejects.toThrow(/not found/);
+    });
+  });
+
   describe("createFolder", () => {
     it("creates a new IMAP folder", async () => {
       await service.createFolder("Projects/Work");

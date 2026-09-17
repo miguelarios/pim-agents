@@ -27,6 +27,7 @@ import {
   rawEmailSchema,
   searchResultSchema,
   sendResultSchema,
+  threadResultSchema,
 } from "./emailSchemas.js";
 
 /**
@@ -338,6 +339,64 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         }
 
         return structured(email);
+      }),
+  },
+  {
+    name: "get_thread",
+    title: "Get Thread",
+    description:
+      "Fetch the whole conversation a message belongs to, oldest first. Given any message in a thread, this follows its References chain back to the root and finds everything that cites it — or uses the server's own thread id where the server keeps one. By default it looks in the message's folder and the account's Sent folder, so your own replies are part of the conversation rather than missing from it; pass folders to search elsewhere. Returns summaries, not bodies — use get_email for the text of any one message.",
+    annotations: READ_ONLY,
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: {
+          type: "string",
+          description: "IMAP folder holding the message to start from. Defaults to INBOX.",
+        },
+        uid: {
+          type: "number",
+          description: "UID of any message in the thread — the root or any reply.",
+        },
+        folders: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Folders to search for thread members. Defaults to the message's folder plus the account's Sent folder. Pass this to search an archive as well; a folder that cannot be opened is skipped rather than failing the call.",
+        },
+      },
+      required: ["uid"],
+    },
+    outputSchema: threadResultSchema,
+    handler: (args: { folder?: string; uid: number; folders?: string[] }, { imap }) =>
+      run(async () => {
+        const folder = args.folder || "INBOX";
+
+        let folders: string[];
+        if (args.folders !== undefined) {
+          if (!Array.isArray(args.folders) || args.folders.length === 0) {
+            return invalid("folders must be a non-empty array of folder paths");
+          }
+          folders = args.folders;
+        } else {
+          // Sent by default: a conversation with your own replies missing from
+          // it is not the conversation. An account with no resolvable Sent
+          // folder simply gets the one folder.
+          folders = [folder];
+          try {
+            const sent = await imap.getSpecialUseFolder("\\Sent");
+            if (sent !== folder) folders.push(sent);
+          } catch {
+            // No Sent folder to add.
+          }
+        }
+
+        const thread = await imap.fetchThread(folder, args.uid, folders);
+        return structured({
+          rootMessageId: thread.rootMessageId,
+          count: thread.messages.length,
+          messages: thread.messages,
+        });
       }),
   },
   {
