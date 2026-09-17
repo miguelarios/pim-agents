@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImapService } from "../services/ImapService.js";
 
 // Mock imapflow
@@ -15,6 +15,9 @@ const mockDownload = vi.fn();
 const mockStatus = vi.fn();
 const mockGetMailboxLock = vi.fn();
 const mockAppend = vi.fn();
+const mockExec = vi.fn();
+/** Shared across the per-call client objects, so a test can turn SORT on. */
+const mockCapabilities = new Map<string, boolean | number>();
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockLogout = vi.fn().mockResolvedValue(undefined);
 
@@ -37,7 +40,10 @@ vi.mock("imapflow", () => ({
     download: mockDownload,
     status: mockStatus,
     append: mockAppend,
-    mailbox: { exists: 100 },
+    exec: mockExec,
+    capabilities: mockCapabilities,
+    enabled: new Set(),
+    mailbox: { exists: 100, flags: new Set() },
   })),
 }));
 
@@ -1372,6 +1378,158 @@ describe("ImapService", () => {
       ]);
       await service.deleteEmails("INBOX", [1, 2], false);
       expect(mockMessageMove).toHaveBeenCalledWith("1,2", "Deleted Items", { uid: true });
+    });
+  });
+
+  describe("searchEmails with server-side SORT", () => {
+    /** Answers UID SORT with `uids`, in the order the server would. */
+    const serverSorts = (uids: number[]) => {
+      mockExec.mockImplementation(async (_command, _attributes, options: any) => {
+        await options.untagged.SORT({ attributes: uids.map((u) => ({ value: String(u) })) });
+        return { next: vi.fn() };
+      });
+    };
+
+    const streamSummaries = (uids: number[]) => {
+      mockFetch.mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {
+          // Deliberately ascending — FETCH streams in sequence order, not in
+          // the order of the UID set it was handed.
+          for (const uid of [...uids].sort((a, b) => a - b)) {
+            yield {
+              uid,
+              envelope: {
+                messageId: `<${uid}@test.com>`,
+                subject: `Subject ${uid}`,
+                date: new Date("2026-03-04T12:00:00Z"),
+                from: [{ address: "sender@test.com" }],
+                to: [],
+              },
+              flags: new Set(),
+            };
+          }
+        },
+      }));
+    };
+
+    beforeEach(() => {
+      mockCapabilities.clear();
+      mockCapabilities.set("SORT", true);
+      mockExec.mockReset();
+      mockFetch.mockReset();
+      mockSearch.mockReset();
+    });
+
+    afterEach(() => {
+      mockCapabilities.clear();
+    });
+
+    it("issues UID SORT and keeps the server's order", async () => {
+      serverSorts([30, 10, 20]);
+      streamSummaries([30, 10, 20]);
+
+      const result = await service.searchEmails("INBOX", {}, { limit: 10 });
+
+      expect(mockExec).toHaveBeenCalledWith("UID SORT", expect.any(Array), expect.any(Object));
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(result.map((r) => r.uid)).toEqual([30, 10, 20]);
+    });
+
+    it("asks for REVERSE on a descending sort and not on an ascending one", async () => {
+      serverSorts([1]);
+      streamSummaries([1]);
+      await service.searchEmails("INBOX", {}, { sortBy: "date", sortOrder: "desc" });
+      expect(mockExec.mock.calls[0][1][0]).toEqual([
+        { type: "ATOM", value: "REVERSE" },
+        { type: "ATOM", value: "DATE" },
+      ]);
+
+      mockExec.mockClear();
+      streamSummaries([1]);
+      await service.searchEmails("INBOX", {}, { sortBy: "subject", sortOrder: "asc" });
+      expect(mockExec.mock.calls[0][1][0]).toEqual([{ type: "ATOM", value: "SUBJECT" }]);
+    });
+
+    it("sends the UTF-8 charset and an ALL key for an unfiltered search", async () => {
+      serverSorts([1]);
+      streamSummaries([1]);
+
+      await service.searchEmails("INBOX", {}, {});
+
+      const attributes = mockExec.mock.calls[0][1];
+      expect(attributes[1]).toEqual({ type: "ATOM", value: "UTF-8" });
+      expect(attributes[2]).toEqual({ type: "ATOM", value: "ALL" });
+    });
+
+    it("fetches only the requested page, not the whole result set", async () => {
+      serverSorts([1, 2, 3, 4, 5, 6]);
+      streamSummaries([3, 4]);
+
+      const result = await service.searchEmails("INBOX", {}, { offset: 2, limit: 2 });
+
+      expect(mockFetch.mock.calls[0][0]).toBe("3,4");
+      expect(result.map((r) => r.uid)).toEqual([3, 4]);
+    });
+
+    it("returns nothing, without fetching, when the page is past the end", async () => {
+      serverSorts([1, 2]);
+
+      const result = await service.searchEmails("INBOX", {}, { offset: 50, limit: 10 });
+
+      expect(result).toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("is exact past 1000 results, where the client-side path approximates", async () => {
+      const uids = Array.from({ length: 1500 }, (_, i) => 1500 - i);
+      serverSorts(uids);
+      streamSummaries([1400, 1399]);
+
+      const result = await service.searchEmails("INBOX", {}, { offset: 100, limit: 2 });
+
+      expect(result.map((r) => r.uid)).toEqual([1400, 1399]);
+    });
+
+    it("falls back to client-side sorting when the server rejects SORT", async () => {
+      mockExec.mockRejectedValue(new Error("BADCHARSET"));
+      mockSearch.mockResolvedValue([5]);
+      streamSummaries([5]);
+
+      const result = await service.searchEmails("INBOX", {}, {});
+
+      expect(mockSearch).toHaveBeenCalled();
+      expect(result.map((r) => r.uid)).toEqual([5]);
+    });
+
+    it("does not issue SORT at all when the server does not advertise it", async () => {
+      mockCapabilities.clear();
+      mockSearch.mockResolvedValue([5]);
+      streamSummaries([5]);
+
+      await service.searchEmails("INBOX", {}, {});
+
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSearch).toHaveBeenCalled();
+    });
+
+    it("intersects multi-term criteria while keeping the sorted order", async () => {
+      // Two subject tokens compile to two criteria objects, so two SORTs.
+      const perCall = [
+        [30, 10, 20],
+        [10, 30],
+      ];
+      let call = 0;
+      mockExec.mockImplementation(async (_command, _attributes, options: any) => {
+        const uids = perCall[call++] ?? [];
+        await options.untagged.SORT({ attributes: uids.map((u) => ({ value: String(u) })) });
+        return { next: vi.fn() };
+      });
+      streamSummaries([30, 10]);
+
+      const result = await service.searchEmails("INBOX", { subject: "budget report" }, {});
+
+      expect(mockExec).toHaveBeenCalledTimes(2);
+      expect(result.map((r) => r.uid)).toEqual([30, 10]);
     });
   });
 

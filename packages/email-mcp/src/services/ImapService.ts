@@ -8,6 +8,7 @@ import {
 } from "@miguelarios/pim-core";
 import { ImapFlow } from "imapflow";
 import { type Attachment, simpleParser } from "mailparser";
+import { uidSort } from "../imapSort.js";
 import { type SearchParams, buildSearchCriteria } from "../search.js";
 
 export interface EmailSummary {
@@ -157,6 +158,26 @@ export class ImapService {
       await client.connect();
       const lock = await client.getMailboxLock(folder);
       try {
+        const offset = options.offset ?? 0;
+        const limit = options.limit ?? 50;
+        const sortBy = options.sortBy ?? "date";
+        const sortOrder = options.sortOrder ?? "desc";
+
+        // Preferred path: the server orders the whole result set, so the page
+        // is exact however large the folder is, and only that page's envelopes
+        // come across the wire. Returns null on a server without SORT, or one
+        // that rejects the command, and the client-side path below takes over.
+        const sorted = await this.sortedUids(client, criteria, sortBy, sortOrder);
+        if (sorted) {
+          const page = sorted.slice(offset, offset + limit);
+          if (page.length === 0) return [];
+          const summaries = await this.fetchSummaries(client, page);
+          // FETCH streams in sequence order, not in the order of the UID set
+          // it was given, so the server's ordering has to be reapplied.
+          const rank = new Map(page.map((uid, index) => [uid, index]));
+          return summaries.sort((a, b) => (rank.get(a.uid) ?? 0) - (rank.get(b.uid) ?? 0));
+        }
+
         // imapflow's search() accepts a single SearchObject, not an array.
         // When buildSearchCriteria returns an array (duplicate keys like
         // multiple subject tokens), run each search separately and intersect.
@@ -180,11 +201,6 @@ export class ImapService {
 
         if (uids.length === 0) return [];
 
-        const offset = options.offset ?? 0;
-        const limit = options.limit ?? 50;
-        const sortBy = options.sortBy ?? "date";
-        const sortOrder = options.sortOrder ?? "desc";
-
         if (uids.length <= 1000) {
           // Tier 1: fetch all envelopes, sort, paginate
           const allSummaries = await this.fetchSummaries(client, uids);
@@ -205,6 +221,34 @@ export class ImapService {
     } finally {
       await client.logout().catch(() => {});
     }
+  }
+
+  /**
+   * The result set in the server's own order, or null when SORT is not
+   * available.
+   *
+   * A criteria array means the search had duplicate keys (several subject
+   * tokens, say) that IMAP cannot express in one command, so each is sorted
+   * separately and intersected. The first result's order is kept: every list
+   * is ordered the same way, so filtering one by membership in the others
+   * preserves it.
+   */
+  private async sortedUids(
+    client: ImapFlow,
+    criteria: unknown,
+    sortBy: "date" | "from" | "subject",
+    sortOrder: "asc" | "desc",
+  ): Promise<number[] | null> {
+    const criteriaList = Array.isArray(criteria) ? criteria : [criteria];
+    const results = await Promise.all(
+      criteriaList.map((one) => uidSort(client, one, sortBy, sortOrder)),
+    );
+    if (results.some((result) => result === null)) return null;
+
+    const [first, ...rest] = results as number[][];
+    if (rest.length === 0) return first;
+    const common = rest.map((list) => new Set(list));
+    return first.filter((uid) => common.every((set) => set.has(uid)));
   }
 
   private async fetchSummaries(client: ImapFlow, uids: number[]): Promise<EmailSummary[]> {

@@ -181,7 +181,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     name: "search_emails",
     title: "Search Emails",
     description:
-      "Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (subject, from, to, etc.) for most searches. Note: for result sets >1000, non-date sort fields are approximate (sorted within page only).",
+      "Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (subject, from, to, etc.) for most searches. Sorting uses the server's native SORT command where the server supports it, which makes pagination exact at any size; where it does not, the result set is sorted here instead and for >1000 results a non-date sort is approximate (ordered within the page only).",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
