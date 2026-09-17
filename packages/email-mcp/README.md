@@ -97,6 +97,8 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 the capability. The whole result set is ordered server-side, only the requested page's
 envelopes come across the wire, and pagination is exact however large the folder is.
 
+A filter carrying non-ASCII is issued under the charset imapflow's compiler asks for, lifted into the slot RFC 5256 gives it rather than left in the search key where it would be a syntax error.
+
 Without `SORT`, the previous behaviour stands: the result set is fetched and sorted here,
 and beyond 1000 messages a non-date sort is approximate — ordered within the page only.
 The same fallback catches a server that advertises `SORT` but rejects the command (an

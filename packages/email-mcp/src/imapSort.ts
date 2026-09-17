@@ -29,7 +29,30 @@ export type SortField = keyof typeof SORT_KEYS;
 
 type Attribute = { type: string; value: string };
 
-function searchCompiler(client: ImapFlow, criteria: unknown): Attribute[] {
+/**
+ * RFC 5256 makes the charset mandatory on SORT, so one is always sent. UTF-8
+ * is the only charset imapflow's compiler ever asks for, and a server that
+ * accepts only US-ASCII answers BADCHARSET — which lands in the catch below
+ * and sends the caller back to client-side sorting rather than failing.
+ */
+const DEFAULT_CHARSET = "UTF-8";
+
+/**
+ * The compiled search key, plus the charset it has to be issued under.
+ *
+ * imapflow's compiler prepends a `CHARSET UTF-8` pair whenever a criteria
+ * value contains non-ASCII and the connection has not enabled `UTF8=ACCEPT`,
+ * because that is how RFC 3501 SEARCH takes a charset. SORT does not: RFC 5256
+ * gives the charset its own slot between the sort keys and the search key, so
+ * leaving the pair in place would emit
+ * `UID SORT (REVERSE DATE) UTF-8 CHARSET UTF-8 SUBJECT "café"` — a syntax
+ * error the server answers BAD. The pair is lifted out and its value used for
+ * the slot instead, which is what makes an accented filter reach SORT at all.
+ */
+function compileSearchKey(
+  client: ImapFlow,
+  criteria: unknown,
+): { charset: string; attributes: Attribute[] } {
   const { searchCompiler: compile } = require("imapflow/lib/search-compiler.js") as {
     searchCompiler: (connection: unknown, query: unknown) => Attribute[];
   };
@@ -37,9 +60,18 @@ function searchCompiler(client: ImapFlow, criteria: unknown): Attribute[] {
   // Mirrors imapflow's own search(): an empty query is "everything", which in
   // IMAP is the ALL key rather than an empty criteria list.
   if (keys.length === 0 || (keys.length === 1 && keys[0] === "all")) {
-    return [{ type: "ATOM", value: "ALL" }];
+    return { charset: DEFAULT_CHARSET, attributes: [{ type: "ATOM", value: "ALL" }] };
   }
-  return compile(client, criteria);
+
+  const attributes = compile(client, criteria);
+  if (
+    attributes[0]?.type === "ATOM" &&
+    String(attributes[0].value).toUpperCase() === "CHARSET" &&
+    attributes[1] !== undefined
+  ) {
+    return { charset: String(attributes[1].value), attributes: attributes.slice(2) };
+  }
+  return { charset: DEFAULT_CHARSET, attributes };
 }
 
 /** True when the connected server advertises RFC 5256 SORT. */
@@ -54,11 +86,6 @@ export function supportsSort(client: ImapFlow): boolean {
 /**
  * Issues `UID SORT` for one search criteria object, returning UIDs in the
  * server's order, or `null` when the command could not be used.
- *
- * The charset is UTF-8 because the criteria may carry non-ASCII — a subject
- * filter, say. A server that only accepts US-ASCII answers BADCHARSET, which
- * lands in the catch below and sends the caller back to client-side sorting
- * rather than failing the search.
  */
 export async function uidSort(
   client: ImapFlow,
@@ -81,7 +108,7 @@ export async function uidSort(
       : [{ type: "ATOM", value: key }];
 
   try {
-    const searchAttributes = searchCompiler(client, criteria);
+    const { charset, attributes: searchAttributes } = compileSearchKey(client, criteria);
     const uids: number[] = [];
     const response = await (
       client as unknown as {
@@ -91,7 +118,7 @@ export async function uidSort(
           options: unknown,
         ) => Promise<{ next?: () => void }>;
       }
-    ).exec("UID SORT", [sortKeys, { type: "ATOM", value: "UTF-8" }, ...searchAttributes], {
+    ).exec("UID SORT", [sortKeys, { type: "ATOM", value: charset }, ...searchAttributes], {
       untagged: {
         SORT: async (untagged: { attributes?: Array<{ value?: unknown }> }) => {
           for (const attribute of untagged?.attributes ?? []) {

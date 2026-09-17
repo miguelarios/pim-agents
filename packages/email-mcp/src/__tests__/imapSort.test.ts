@@ -75,6 +75,45 @@ describe("uidSort", () => {
     expect(attributes.slice(2)).toEqual([{ type: "ATOM", value: "SEEN" }]);
   });
 
+  it("sends no CHARSET atom in the search key for a non-ASCII filter", async () => {
+    // imapflow's compiler prepends `CHARSET UTF-8` to a SEARCH key whenever a
+    // value carries non-ASCII. SORT takes its charset in its own slot, so
+    // leaving the pair in place would emit
+    // `UID SORT (REVERSE DATE) UTF-8 CHARSET UTF-8 SUBJECT "café"` — a BAD.
+    answersWith([1]);
+    await uidSort(fakeClient(), { subject: "café" }, "date", "desc");
+
+    const attributes = mockExec.mock.calls[0][1];
+    expect(attributes[1]).toEqual({ type: "ATOM", value: "UTF-8" });
+    const searchKey = attributes.slice(2);
+    expect(searchKey.map((a: any) => String(a.value).toUpperCase())).not.toContain("CHARSET");
+    expect(searchKey).toEqual([
+      { type: "ATOM", value: "SUBJECT" },
+      { type: "ATOM", value: "café" },
+    ]);
+  });
+
+  it("keeps the single charset slot for an ASCII filter too", async () => {
+    answersWith([1]);
+    await uidSort(fakeClient(), { subject: "budget" }, "date", "desc");
+
+    const attributes = mockExec.mock.calls[0][1];
+    expect(attributes[1]).toEqual({ type: "ATOM", value: "UTF-8" });
+    expect(attributes.slice(2)).toEqual([
+      { type: "ATOM", value: "SUBJECT" },
+      { type: "ATOM", value: "budget" },
+    ]);
+  });
+
+  it("does not strip a search key that merely begins with a CHARSET-like atom", async () => {
+    // Only a leading CHARSET *pair* is the compiler's prefix; a criteria key
+    // that happens to compile to a bare atom must survive intact.
+    answersWith([1]);
+    await uidSort(fakeClient(), { seen: true }, "date", "desc");
+
+    expect(mockExec.mock.calls[0][1].slice(2)).toEqual([{ type: "ATOM", value: "SEEN" }]);
+  });
+
   it("releases the response so the connection is not left waiting", async () => {
     const next = vi.fn();
     mockExec.mockImplementation(async (_c, _a, options: any) => {
