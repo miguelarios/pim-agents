@@ -37,7 +37,8 @@
     "mailparser": "^3.7.0",
     "nodemailer": "^6.9.0",
     "sanitize-html": "^2.17.1",
-    "turndown": "^7.2.2"
+    "turndown": "^7.2.2",
+    "undici": "^7.29.1"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
