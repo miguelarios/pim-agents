@@ -118,6 +118,19 @@ Neither template is enumerable — there is no `resources/list` entry for them, 
 listing every attachment in an account would mean walking every message. Discover
 them through `resources/templates/list`, and find part IDs with `get_email`.
 
+## Quoting on replies
+
+A reply (`send_email` with `replyToUid`) carries the quoted original below the new body,
+the way a mail client writes it: an `On <date>, <Name> <address> wrote:` attribution line,
+then the original as `>`-prefixed text, as an HTML `<blockquote>`, or both — matching
+whichever of `text`/`html` the reply itself uses. Pass `quoteOriginal: false` for a bare reply.
+
+Prefixing follows RFC 3676 §4.5, so an already-quoted line gains a level (`> x` → `>> x`)
+rather than an indent and nesting depth survives a long thread. Where the original lacks the
+part being quoted, it is converted — HTML to markdown for a text quote, plain text escaped
+into the HTML one. If the original has no body, or the conversion fails, the reply goes out
+unquoted rather than not at all.
+
 ## Sending attachments
 
 `send_email` takes attachments three ways:

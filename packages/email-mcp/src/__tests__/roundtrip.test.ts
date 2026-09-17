@@ -381,6 +381,20 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(services.smtp.sendRawMessage).toHaveBeenCalled();
   });
 
+  it("quotes the original when replying, without being asked to", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: { to: ["ada@example.com"], replyToUid: 1, text: "Thanks!" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const [composed] = (services.smtp.composeRawMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(composed.text).toContain("Ada <ada@example.com> wrote:");
+    expect(composed.text).toContain("> Hello there");
+  });
+
   it("fails with an actionable error when the client cannot be asked", async () => {
     const services = fakeServices();
     const { client, elicitations } = await connect(era, services, { action: "unsupported" });
