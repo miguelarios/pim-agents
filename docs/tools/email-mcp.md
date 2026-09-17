@@ -164,7 +164,7 @@ Copy one or more emails into another IMAP folder, leaving the originals where th
 | `uids` | number[] | yes | UIDs of emails to copy. They remain in the source folder. |
 | `destination` | string | yes | Destination folder path. It must already exist — `create_folder` first if not. |
 
-An empty `uids`, or a `destination` equal to `folder`, is rejected with `INVALID_INPUT` before a connection is opened. A self-copy is legal IMAP and duplicates every message in place, which is not what "copy to a folder" means.
+An empty `uids`, or a `destination` equal to `folder`, is rejected with `INVALID_INPUT` before a connection is opened. A destination the server refuses — `NO [TRYCREATE]` for a folder that does not exist — is returned as an `OPERATION_FAILED` error, never as a successful copy. A self-copy is legal IMAP and duplicates every message in place, which is not what "copy to a folder" means.
 
 **Output**
 

@@ -22,7 +22,7 @@ A client that does not support elicitation cannot answer the prompt, so those to
 
 ## Tools
 
-### [Email (12 tools)](docs/tools/email-mcp.md)
+### [Email (13 tools)](docs/tools/email-mcp.md)
 
 | Tool | Description |
 |------|-------------|
@@ -31,6 +31,7 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `send_email` | Compose and send via SMTP, reply with threading, or save as draft (confirms before sending) |
 | `send_draft` | Send an existing draft from the Drafts folder (confirms first) |
 | `move_email` | Move emails between folders |
+| `copy_email` | Copy emails into another folder, leaving the originals in place |
 | `mark_email` | Set/unset flags (read, unread, flagged) |
 | `delete_email` | Move to trash, or permanently delete (confirms first) |
 | `list_folders` | List all IMAP folders with special-use flags |

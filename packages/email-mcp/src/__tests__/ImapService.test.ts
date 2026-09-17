@@ -1409,10 +1409,20 @@ describe("ImapService", () => {
       expect(result).toBeUndefined();
     });
 
-    it("returns no mapping when the server answers COPY with a bare failure", async () => {
+    it("throws when the server refuses the COPY", async () => {
+      // imapflow's copy command catches a server NO (e.g. [TRYCREATE] for a
+      // missing destination) and resolves `false` rather than throwing, so a
+      // refusal must not be mistaken for a copy with no UIDPLUS data.
       mockMessageCopy.mockResolvedValueOnce(false);
-      const result = await service.copyEmails("INBOX", [1], "Archive");
-      expect(result).toBeUndefined();
+      await expect(service.copyEmails("INBOX", [1], "Nope")).rejects.toThrow(/Copy to Nope failed/);
+    });
+
+    it("throws when imapflow answers with undefined", async () => {
+      // The same command returns undefined when its own preconditions fail.
+      mockMessageCopy.mockResolvedValueOnce(undefined as never);
+      await expect(service.copyEmails("INBOX", [1], "Archive")).rejects.toThrow(
+        /Copy to Archive failed/,
+      );
     });
 
     it("releases the mailbox lock and logs out when the copy fails", async () => {

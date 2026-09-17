@@ -1029,8 +1029,8 @@ describe("copy_email", () => {
     expect(mockCopyEmails).not.toHaveBeenCalled();
   });
 
-  it("surfaces a missing destination as a tool error", async () => {
-    mockCopyEmails.mockRejectedValueOnce(new Error("[TRYCREATE] No such mailbox"));
+  it("surfaces a missing destination as a tool error, never as a copy", async () => {
+    mockCopyEmails.mockRejectedValueOnce(new Error("Copy to Nope failed — the server refused it."));
 
     const result = await handleEmailTool(
       "copy_email",
@@ -1040,7 +1040,8 @@ describe("copy_email", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/TRYCREATE/);
+    expect(result.content[0].text).toMatch(/Copy to Nope failed/);
+    expect(result.structuredContent).toBeUndefined();
   });
 
   it("leaves the source untouched — no move, no flag change", async () => {
