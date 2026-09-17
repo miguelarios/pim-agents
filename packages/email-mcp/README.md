@@ -80,7 +80,7 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 |------|-------------|
 | `search_emails` | Search and filter emails by folder, sender, subject, date, flags |
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata, calendar invitation parts |
-| `send_email` | Compose and send via SMTP, reply with threading, save as draft, or use an allowed visible From address |
+| `send_email` | Compose and send via SMTP, reply or reply-all with threading, save as draft, or use an allowed visible From address |
 | `send_draft` | Send an existing draft from the Drafts folder |
 | `move_email` | Move emails between folders |
 | `mark_email` | Set/unset flags (read, unread, flagged) |
@@ -117,6 +117,32 @@ Folder case is preserved, because IMAP mailbox names are case-sensitive.
 Neither template is enumerable — there is no `resources/list` entry for them, since
 listing every attachment in an account would mean walking every message. Discover
 them through `resources/templates/list`, and find part IDs with `get_email`.
+
+## Replying to everyone
+
+`send_email` with `replyAll: true` (and a `replyToUid`) works out the recipients from the
+message being replied to, so `to` becomes optional:
+
+| Field | Derived from |
+|-------|--------------|
+| `to` | The original's `Reply-To` if it has one, otherwise its `From` — plus everyone on its `To`. |
+| `cc` | The original's `Cc`. |
+| `bcc` | The original's `Bcc`, when it has one. |
+
+`Reply-To` replaces `From` rather than joining it, per RFC 5322 §3.6.2 — which is what makes
+replying to a mailing list land on the list.
+
+Every address this account owns (`IMAP_USER`, `SMTP_USER`, and anything in `SMTP_ALLOWED_FROM`)
+is dropped, so the reply is not addressed back to the sender, and an address in more than one
+header is kept once at its strongest position. An explicit `to`, `cc` or `bcc` overrides the
+corresponding derived list, field by field.
+
+A received message carries no `Bcc` header, so there is usually nothing to carry over. One read
+back out of `Sent` or `Drafts` does, and those recipients ride along — still blind, as `Bcc`
+always is — so replying-all to your own sent mail does not silently narrow the thread.
+
+The original is fetched before the send confirmation, so the prompt names the derived recipients:
+the caller sees who the mail is going to before agreeing to send it.
 
 ## Sending attachments
 

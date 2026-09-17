@@ -59,6 +59,24 @@ export class SmtpService {
     );
   }
 
+  /**
+   * Every address this account counts as "us", lower-cased: the mailbox being
+   * read, the submitting SMTP account, and anything SMTP_ALLOWED_FROM adds.
+   *
+   * Used to keep a reply-all from addressing the sender back to themselves —
+   * IMAP_USER and SMTP_USER are usually the same, but nothing requires it, and
+   * an allow-listed alias is just as much "us" for that purpose.
+   */
+  ownAddresses(): string[] {
+    return Array.from(
+      new Set(
+        [this.config.imap.user, this.config.smtp.user, ...(this.config.allowedFrom || [])]
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+  }
+
   resolveFromAddress(requestedFrom?: string): string {
     const fallback = this.config.smtp.user;
     if (!requestedFrom) return fallback;

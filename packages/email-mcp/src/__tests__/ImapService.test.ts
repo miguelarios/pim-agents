@@ -705,6 +705,47 @@ describe("ImapService", () => {
       expect(email.references).toEqual(["<root@test.com>", "<original@test.com>"]);
     });
 
+    it("surfaces Reply-To and Bcc so a reply-all can use them", async () => {
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce({
+        messageId: "<msg-1@test.com>",
+        subject: "Budget",
+        from: { value: [{ address: "ada@example.com", name: "Ada" }] },
+        replyTo: { value: [{ address: "list@example.com", name: "List" }] },
+        to: { value: [{ address: "me@test.com" }] },
+        cc: { value: [{ address: "cara@example.com" }] },
+        bcc: { value: [{ address: "dan@example.com" }] },
+        date: new Date("2026-03-04T12:00:00Z"),
+        text: "body",
+        attachments: [],
+      } as any);
+      mockFetchOne.mockResolvedValueOnce({ source: Buffer.from("raw email"), uid: 42 });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email.replyTo).toEqual([{ name: "List", address: "list@example.com" }]);
+      expect(email.bcc).toEqual([{ name: undefined, address: "dan@example.com" }]);
+      expect(email.cc).toEqual([{ name: undefined, address: "cara@example.com" }]);
+    });
+
+    it("omits Reply-To and Bcc entirely when the message carries neither", async () => {
+      const { simpleParser } = await import("mailparser");
+      vi.mocked(simpleParser).mockResolvedValueOnce({
+        messageId: "<msg-1@test.com>",
+        subject: "Budget",
+        from: { value: [{ address: "ada@example.com" }] },
+        to: { value: [{ address: "me@test.com" }] },
+        cc: null,
+        date: new Date("2026-03-04T12:00:00Z"),
+        text: "body",
+        attachments: [],
+      } as any);
+      mockFetchOne.mockResolvedValueOnce({ source: Buffer.from("raw email"), uid: 42 });
+
+      const email = await service.fetchEmail("INBOX", 42);
+      expect(email).not.toHaveProperty("replyTo");
+      expect(email).not.toHaveProperty("bcc");
+    });
+
     it("returns null inReplyTo and empty references for non-reply emails", async () => {
       mockFetchOne.mockResolvedValueOnce({
         source: Buffer.from("raw email"),
