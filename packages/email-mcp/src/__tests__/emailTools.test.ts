@@ -1113,6 +1113,48 @@ describe("send_email replyAll", () => {
     expect(mockSendRawMessage).not.toHaveBeenCalled();
   });
 
+  it("honours an explicit to even when derivation finds nobody but us", async () => {
+    // The derived lists are empty here, but the caller named a recipient, so
+    // there is nothing to refuse over.
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      from: { address: "user@test.com" },
+      to: [{ address: "user@test.com" }],
+      cc: [],
+    });
+
+    const result = await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, replyAll: true, to: ["ada@example.com"], text: "Sounds good" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(composed().to).toEqual(["ada@example.com"]);
+  });
+
+  it("honours an explicit cc alone when derivation finds nobody but us", async () => {
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      from: { address: "user@test.com" },
+      to: [{ address: "user@test.com" }],
+      cc: [],
+    });
+
+    const result = await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, replyAll: true, cc: ["cara@example.com"], text: "Sounds good" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    // `to` is still empty, so this fails — but on the generic "to is required",
+    // not on the nobody-but-us refusal, because a cc was named.
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/to is required/);
+  });
+
   it("rejects replyAll without replyToUid", async () => {
     const result = await handleEmailTool(
       "send_email",

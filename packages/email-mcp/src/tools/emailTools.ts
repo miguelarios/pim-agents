@@ -560,16 +560,21 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
 
       if (replyAll && original) {
         const derived = deriveReplyAllRecipients(original, smtp.ownAddresses());
-        if (derived.to.length === 0 && derived.cc.length === 0) {
-          return invalid(
-            "replyAll found no recipients other than this account — reply to the original's sender explicitly instead",
-          );
-        }
         // Per field, not all-or-nothing: an explicit `to` with a derived `cc`
         // is a real request ("reply to everyone, but send it to Ada").
         to ??= derived.to;
         cc ??= derived.cc;
         if (derived.bcc.length > 0) bcc ??= derived.bcc;
+
+        // Checked on the effective recipients, after the overrides — not on
+        // the derived ones before them. A caller who supplied `to` has named
+        // someone, and the derivation finding only this account is then not a
+        // problem to refuse over.
+        if (to.length === 0 && (cc?.length ?? 0) === 0) {
+          return invalid(
+            "replyAll found no recipients other than this account — reply to the original's sender explicitly instead",
+          );
+        }
       }
 
       if (!to || to.length === 0) {
