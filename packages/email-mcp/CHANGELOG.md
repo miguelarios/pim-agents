@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.0 (2026-09-17)
+
+- **Behaviour change:** a reply sent with `send_email` (`replyToUid` set) now carries the quoted original below the new body, the way a mail client writes it. Replies previously went out bare, so a recipient saw "Sounds good" with no indication of what was good, and a thread assembled from these replies read as a series of disconnected fragments — clients thread on headers, but they still *show* the quote, because that is what makes a reply legible on a phone or in a digest. Pass `quoteOriginal: false` for the previous behaviour (PR #114, `claude/email-mcp-issues-ii6e3m-quote-reply`).
+- The attribution line is `On <date>, <Name> <address> wrote:`, falling back to the bare address when the sender has no display name, and dropping the date clause rather than emitting `On ,` when the original has no `Date` header (PR #114, `claude/email-mcp-issues-ii6e3m-quote-reply`).
+- The quote follows whichever body the reply uses: `text` gets a `>`-prefixed original, `html` gets a `<blockquote type="cite">`, and a reply carrying both gets both so its two parts do not disagree about what was said. A reply with *neither* body gets the text quote alone, since there is nothing else for it to carry (PR #114, `claude/email-mcp-issues-ii6e3m-quote-reply`).
+- Quote prefixing follows RFC 3676 §4.5: an already-quoted line gains a level (`> x` becomes `>> x`) rather than an indent, so nesting depth survives each pass through a thread instead of drifting rightwards. A blank line becomes a bare `>` rather than `"> "`, so the quote carries no trailing whitespace (PR #114, `claude/email-mcp-issues-ii6e3m-quote-reply`).
+- Where the original lacks the part being quoted it is converted — HTML to markdown for a text quote, plain text HTML-escaped into a `<pre>` for an HTML one. The escaping is not cosmetic: the original is untrusted content being placed into a document we compose (PR #114, `claude/email-mcp-issues-ii6e3m-quote-reply`).
+- Quoting can never fail a send. A conversion error yields no quote for that part, an original with no body yields none at all, and the whole step is guarded so that anything unforeseen leaves the reply the caller wrote intact (PR #114, `claude/email-mcp-issues-ii6e3m-quote-reply`).
+
 ## 0.14.0 (2026-09-16)
 
 - `get_email` and `search_emails` now report attachments that carry `Content-Disposition: inline` with a filename. Apple Mail (iOS and macOS) writes forwarded file attachments that way, so a forwarded message with a real PDF attached previously reported `hasAttachments: false` and an empty `attachments` array — the part was in the MIME source the whole time, and `download_attachment` retrieved it correctly when given the `partId` by hand. Content-ID distinguishes the two inline cases: an image the HTML body references carries one, a forwarded file does not, so embedded signature logos are still not listed as attachments (PR #107, `claude/exciting-wozniak-55ly2k`).
