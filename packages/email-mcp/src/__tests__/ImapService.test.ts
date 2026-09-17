@@ -11,6 +11,7 @@ const mockMessageFlagsAdd = vi.fn();
 const mockMessageFlagsRemove = vi.fn();
 const mockList = vi.fn();
 const mockMailboxCreate = vi.fn();
+const mockMailboxDelete = vi.fn();
 const mockDownload = vi.fn();
 const mockStatus = vi.fn();
 const mockGetMailboxLock = vi.fn();
@@ -34,6 +35,7 @@ vi.mock("imapflow", () => ({
     messageFlagsRemove: mockMessageFlagsRemove,
     list: mockList,
     mailboxCreate: mockMailboxCreate,
+    mailboxDelete: mockMailboxDelete,
     download: mockDownload,
     status: mockStatus,
     append: mockAppend,
@@ -1379,6 +1381,36 @@ describe("ImapService", () => {
     it("creates a new IMAP folder", async () => {
       await service.createFolder("Projects/Work");
       expect(mockMailboxCreate).toHaveBeenCalledWith("Projects/Work");
+    });
+  });
+
+  describe("deleteFolder", () => {
+    beforeEach(() => {
+      mockMailboxDelete.mockResolvedValue({ path: "Projects/Work" });
+    });
+
+    it("deletes an IMAP folder", async () => {
+      await service.deleteFolder("Projects/Work");
+      expect(mockMailboxDelete).toHaveBeenCalledWith("Projects/Work");
+    });
+
+    it("drops the special-use cache so a deleted Sent folder is re-resolved", async () => {
+      mockList.mockResolvedValue([
+        { path: "Sent", specialUse: "\\Sent", delimiter: "/" },
+        { path: "Sent Messages", delimiter: "/" },
+      ]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent");
+
+      await service.deleteFolder("Sent");
+
+      mockList.mockResolvedValue([{ path: "Sent Messages", delimiter: "/" }]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent Messages");
+    });
+
+    it("logs out even when the delete fails", async () => {
+      mockMailboxDelete.mockRejectedValueOnce(new Error("NONEXISTENT"));
+      await expect(service.deleteFolder("Ghost")).rejects.toThrow();
+      expect(mockLogout).toHaveBeenCalled();
     });
   });
 
