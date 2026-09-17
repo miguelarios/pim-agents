@@ -9,6 +9,8 @@ Every tool declares a `title`, all four behaviour annotations, and an `outputSch
 
 `send_email` (when sending, not when saving a draft), `send_draft`, and `delete_email` with `permanent: true` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
 
+Requires Node.js **20.18.1 or newer**.
+
 ## Usage
 
 ```bash

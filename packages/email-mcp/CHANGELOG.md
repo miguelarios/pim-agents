@@ -7,6 +7,7 @@
 - The proxy agent is built once and reused, keyed on the environment value so a changed setting rebuilds rather than sticking, and closed on shutdown alongside the URL cleaner. Where no proxy is configured the `dispatcher` key is omitted from the fetch entirely, so an unproxied request is byte-for-byte what it was before (PR #118, `claude/email-mcp-issues-ii6e3m-url-proxy`).
 - `URL_RESOLVE_DISABLE` still wins over a configured proxy, and the SSRF guard is unchanged and independent: private-range, loopback and reserved-suffix targets are never fetched, proxy or not (PR #118, `claude/email-mcp-issues-ii6e3m-url-proxy`).
 - Adds `undici` as a runtime dependency. Node's global `fetch` is undici, but it exposes no way to construct a `ProxyAgent` and there is no proxy option in the standard fetch init, so the class has to come from the package. Ambient `HTTPS_PROXY`-style variables are deliberately not read: capturing this traffic should be a decision the operator made (PR #118, `claude/email-mcp-issues-ii6e3m-url-proxy`).
+- Declares `engines.node` as `>=20.18.1`, which is what the new `undici` dependency requires. Only this package gains the field — #24 tracks doing it across the monorepo (PR #118, `claude/email-mcp-issues-ii6e3m-url-proxy`).
 - `package-lock.json` now carries this package's real version, which the 0.14.0 release bumped in `package.json` but not in the lockfile (PR #118, `claude/email-mcp-issues-ii6e3m-url-proxy`).
 
 ## 0.14.0 (2026-09-16)
