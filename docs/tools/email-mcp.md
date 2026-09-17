@@ -1,6 +1,6 @@
 # Email MCP Tools
 
-`@miguelarios/email-mcp` — IMAP/SMTP email server with 12 tools.
+`@miguelarios/email-mcp` — IMAP/SMTP email server with 13 tools.
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
 
@@ -151,6 +151,33 @@ Move one or more emails to a different IMAP folder.
 ```json
 { "status": "moved", "uids": [<uid>, ...], "destination": "<folder>" }
 ```
+
+## copy_email
+
+Copy one or more emails into another IMAP folder, leaving the originals where they are. Use [`move_email`](#move_email) to relocate them instead.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder` | string | | Source IMAP folder. Defaults to `INBOX`. |
+| `uids` | number[] | yes | UIDs of emails to copy. They remain in the source folder. |
+| `destination` | string | yes | Destination folder path. It must already exist — `create_folder` first if not. |
+
+An empty `uids`, or a `destination` equal to `folder`, is rejected with `INVALID_INPUT` before a connection is opened. A self-copy is legal IMAP and duplicates every message in place, which is not what "copy to a folder" means.
+
+**Output**
+
+```json
+{
+  "status": "copied",
+  "uids": [<source-uid>, ...],
+  "destination": "<folder>",
+  "copied": [{ "uid": <source-uid>, "destinationUid": <new-uid> }, ...]
+}
+```
+
+`copied` pairs each source UID with the UID its copy took in the destination. It comes from the server's UIDPLUS `COPYUID` response, so it is absent on a server without that extension — the copy still happened, there is just no way to learn the new UIDs short of re-searching the destination.
 
 ## mark_email
 

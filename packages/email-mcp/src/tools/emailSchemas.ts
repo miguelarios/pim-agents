@@ -95,6 +95,18 @@ export const moveResultSchema = v.object({
   destination: v.string(),
 });
 
+export const copyResultSchema = v.object({
+  status: v.literal("copied"),
+  /** The source UIDs, which still exist in the source folder. */
+  uids: v.array(v.number()),
+  destination: v.string(),
+  /**
+   * Source UID paired with the UID the copy took in the destination. Present
+   * only when the server supports UIDPLUS, which is what reports `COPYUID`.
+   */
+  copied: v.optional(v.array(v.object({ uid: v.number(), destinationUid: v.number() }))),
+});
+
 export const markResultSchema = v.object({
   status: v.literal("updated"),
   uids: v.array(v.number()),

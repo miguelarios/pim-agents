@@ -355,6 +355,37 @@ export class ImapService {
     }
   }
 
+  /**
+   * Copies messages, leaving the originals in place.
+   *
+   * The UID pairs come from the server's UIDPLUS `COPYUID` response. Without
+   * that extension there is no way to learn the new UIDs short of re-searching
+   * the destination, so the mapping is simply absent rather than guessed —
+   * a copy still happened.
+   */
+  async copyEmails(
+    folder: string,
+    uids: number[],
+    destination: string,
+  ): Promise<Array<{ uid: number; destinationUid: number }> | undefined> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock(folder);
+      try {
+        const result = await client.messageCopy(uids.join(","), destination, { uid: true });
+        if (!result || !result.uidMap) return undefined;
+        return [...result.uidMap].map(([uid, destinationUid]) => ({ uid, destinationUid }));
+      } finally {
+        lock.release();
+      }
+    } catch (error) {
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
   async moveEmails(folder: string, uids: number[], destination: string): Promise<void> {
     const client = this.createClient();
     try {

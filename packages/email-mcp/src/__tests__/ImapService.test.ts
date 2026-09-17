@@ -6,6 +6,7 @@ const mockFetchOne = vi.fn();
 const mockFetch = vi.fn();
 const mockSearch = vi.fn();
 const mockMessageMove = vi.fn();
+const mockMessageCopy = vi.fn();
 const mockMessageDelete = vi.fn();
 const mockMessageFlagsAdd = vi.fn();
 const mockMessageFlagsRemove = vi.fn();
@@ -29,6 +30,7 @@ vi.mock("imapflow", () => ({
     fetch: mockFetch,
     search: mockSearch,
     messageMove: mockMessageMove,
+    messageCopy: mockMessageCopy,
     messageDelete: mockMessageDelete,
     messageFlagsAdd: mockMessageFlagsAdd,
     messageFlagsRemove: mockMessageFlagsRemove,
@@ -1372,6 +1374,55 @@ describe("ImapService", () => {
       ]);
       await service.deleteEmails("INBOX", [1, 2], false);
       expect(mockMessageMove).toHaveBeenCalledWith("1,2", "Deleted Items", { uid: true });
+    });
+  });
+
+  describe("copyEmails", () => {
+    beforeEach(() => {
+      mockMessageCopy.mockResolvedValue({ path: "INBOX", destination: "Archive" });
+    });
+
+    it("copies a UID range to the destination", async () => {
+      await service.copyEmails("INBOX", [1, 2, 3], "Archive");
+      expect(mockMessageCopy).toHaveBeenCalledWith("1,2,3", "Archive", { uid: true });
+    });
+
+    it("maps source UIDs to destination UIDs when the server has UIDPLUS", async () => {
+      mockMessageCopy.mockResolvedValueOnce({
+        path: "INBOX",
+        destination: "Archive",
+        uidMap: new Map([
+          [1, 101],
+          [2, 102],
+        ]),
+      });
+
+      const result = await service.copyEmails("INBOX", [1, 2], "Archive");
+      expect(result).toEqual([
+        { uid: 1, destinationUid: 101 },
+        { uid: 2, destinationUid: 102 },
+      ]);
+    });
+
+    it("returns no mapping when the server omits UIDPLUS data", async () => {
+      const result = await service.copyEmails("INBOX", [1, 2], "Archive");
+      expect(result).toBeUndefined();
+    });
+
+    it("returns no mapping when the server answers COPY with a bare failure", async () => {
+      mockMessageCopy.mockResolvedValueOnce(false);
+      const result = await service.copyEmails("INBOX", [1], "Archive");
+      expect(result).toBeUndefined();
+    });
+
+    it("releases the mailbox lock and logs out when the copy fails", async () => {
+      const release = vi.fn();
+      mockGetMailboxLock.mockResolvedValueOnce({ release });
+      mockMessageCopy.mockRejectedValueOnce(new Error("TRYCREATE"));
+
+      await expect(service.copyEmails("INBOX", [1], "Nope")).rejects.toThrow();
+      expect(release).toHaveBeenCalled();
+      expect(mockLogout).toHaveBeenCalled();
     });
   });
 
