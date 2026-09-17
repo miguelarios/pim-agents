@@ -82,11 +82,11 @@ Returns summaries, not bodies; use [`get_email`](#get_email) for the text of any
 **How the thread is assembled**
 
 1. **Server-side thread id, where there is one.** A server advertising `OBJECTID` or `X-GM-EXT-1` assigns every message a thread id and answers a search on it with the whole conversation. That is authoritative, and it catches replies whose `References` chain was mangled in transit.
-2. **Otherwise, the `References` chain.** RFC 5322 §3.6.4 has every reply carry the root's `Message-ID` in its `References`, so one search for messages that either *are* the root or *cite* it returns the thread. The header is unfolded before parsing — a long `References` runs across continuation lines, and a chain split mid-header would otherwise lose every id after the first.
+2. **Otherwise, the `References` chain — and `In-Reply-To`.** RFC 5322 §3.6.4 has every reply carry the root's `Message-ID` in its `References`, so one search for messages that either *are* the root or *cite* it returns the thread. `In-Reply-To` is read and searched alongside it, because plenty of mailers send a reply carrying only that header: without it such a reply is missing from the thread, and anchoring on one would make it its own root and lose every ancestor. `References` wins where both are present, since its first entry is the true root. Headers are unfolded before parsing — a long `References` runs across continuation lines, and a chain split mid-header would otherwise lose every id after the first.
 
 RFC 5256's `THREAD` command would be a third option, but imapflow exposes no way to issue it.
 
-Sent is searched by default because a conversation with your own replies missing from it is not the conversation. A folder that cannot be opened is skipped rather than failing the call — a partial thread is more use than none. The same message filed in two folders is de-duplicated by `Message-ID`.
+Sent is searched by default because a conversation with your own replies missing from it is not the conversation. A folder that cannot be **opened** is skipped rather than failing the call — a partial thread is more use than none. Only the select is forgiving: a failure in the search or the fetch propagates, so a server that rejects the search never comes back as an empty conversation. The same message filed in two folders is de-duplicated by `Message-ID`.
 
 **Output**
 

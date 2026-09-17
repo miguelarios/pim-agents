@@ -1428,6 +1428,7 @@ describe("ImapService", () => {
           or: [
             { header: { "message-id": "<root@test.com>" } },
             { header: { references: "<root@test.com>" } },
+            { header: { "in-reply-to": "<root@test.com>" } },
           ],
         },
         { uid: true },
@@ -1535,6 +1536,67 @@ describe("ImapService", () => {
         ["INBOX", "<root@test.com>"],
         ["Sent", "<reply@test.com>"],
       ]);
+    });
+
+    it("falls back to In-Reply-To when the anchor carries no References", async () => {
+      // Plenty of mailers send a reply with In-Reply-To and no References at
+      // all; anchoring on one of those must not make it its own root.
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("In-Reply-To: <root@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("prefers References over In-Reply-To when both are present", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from(
+          "References: <root@test.com> <mid@test.com>\r\nIn-Reply-To: <mid@test.com>\r\n",
+        ),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("does not confuse In-Reply-To with References when reading either", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("In-Reply-To: <parent@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      // Not the anchor's own id, which is what a name-prefix mismatch would give.
+      expect(result.rootMessageId).toBe("<parent@test.com>");
+    });
+
+    it("surfaces a search failure instead of reporting an empty thread", async () => {
+      // A server that rejects SEARCH HEADER, or a connection that drops
+      // mid-fetch, must not look like a conversation with no messages in it.
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockSearch.mockRejectedValueOnce(new Error("BAD Unsupported search key"));
+
+      await expect(service.fetchThread("INBOX", 7, ["INBOX"])).rejects.toThrow();
     });
 
     it("keeps going when one folder cannot be opened", async () => {

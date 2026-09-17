@@ -290,15 +290,20 @@ export class ImapService {
       try {
         const anchor = await client.fetchOne(
           String(uid),
-          { envelope: true, threadId: true, headers: ["references"], uid: true },
+          { envelope: true, threadId: true, headers: ["references", "in-reply-to"], uid: true },
           { uid: true },
         );
         if (!anchor) {
           throw new EmailError(`Email UID ${uid} not found`, ErrorCode.EMAIL_NOT_FOUND, uid);
         }
         threadId = anchor.threadId;
-        const references = parseReferencesHeader(anchor.headers);
-        rootMessageId = references[0] ?? anchor.envelope?.messageId ?? null;
+        // References[0] is the root. Falling back to In-Reply-To matters:
+        // plenty of mailers send a reply with In-Reply-To and no References
+        // at all, and anchoring on one of those would otherwise make the
+        // reply its own root and lose every ancestor.
+        const references = parseMessageIdHeader(anchor.headers, "references");
+        const inReplyTo = parseMessageIdHeader(anchor.headers, "in-reply-to");
+        rootMessageId = references[0] ?? inReplyTo[0] ?? anchor.envelope?.messageId ?? null;
       } finally {
         lock.release();
       }
@@ -307,9 +312,12 @@ export class ImapService {
         ? { threadId }
         : rootMessageId
           ? {
+              // In-Reply-To as well as References: a reply that cites the root
+              // only through In-Reply-To is still part of the conversation.
               or: [
                 { header: { "message-id": rootMessageId } },
                 { header: { references: rootMessageId } },
+                { header: { "in-reply-to": rootMessageId } },
               ],
             }
           : undefined;
@@ -317,25 +325,29 @@ export class ImapService {
       const found: ThreadMessage[] = [];
       if (criteria) {
         for (const folder of folders) {
+          // Only the SELECT is forgiving. A folder that cannot be opened —
+          // renamed, or never existed — is skipped, since a partial thread is
+          // more use than none and the caller chose the list. A failure in the
+          // search or the fetch is a different thing entirely, and must not be
+          // swallowed into a `count: 0` that reads like an empty thread.
+          let folderLock: { release: () => void };
           try {
-            const folderLock = await client.getMailboxLock(folder);
-            try {
-              const uids = (await client.search(criteria as any, { uid: true })) || [];
-              if (uids.length === 0) continue;
-              for await (const msg of client.fetch(
-                uids.join(","),
-                { envelope: true, flags: true, bodyStructure: true, uid: true },
-                { uid: true },
-              )) {
-                found.push({ ...this.toSummary(msg), folder });
-              }
-            } finally {
-              folderLock.release();
-            }
+            folderLock = await client.getMailboxLock(folder);
           } catch {
-            // A folder that cannot be opened — renamed, or never existed — is
-            // skipped. A partial thread is more use than none, and the caller
-            // chose the folder list.
+            continue;
+          }
+          try {
+            const uids = (await client.search(criteria as any, { uid: true })) || [];
+            if (uids.length === 0) continue;
+            for await (const msg of client.fetch(
+              uids.join(","),
+              { envelope: true, flags: true, bodyStructure: true, uid: true },
+              { uid: true },
+            )) {
+              found.push({ ...this.toSummary(msg), folder });
+            }
+          } finally {
+            folderLock.release();
           }
         }
       }
@@ -729,17 +741,18 @@ export class ImapService {
 }
 
 /**
- * Pulls the Message-IDs out of a raw References header block.
+ * Pulls the Message-IDs out of one raw header line, by name.
  *
- * imapflow hands back the header lines as bytes, so the value has to be
+ * imapflow hands back the header lines as bytes, so the block has to be
  * unfolded first: RFC 5322 §2.2.3 lets a long References run across
  * continuation lines, and a chain split mid-header would otherwise lose every
  * id after the first line.
  */
-function parseReferencesHeader(headers: Buffer | undefined): string[] {
+function parseMessageIdHeader(headers: Buffer | undefined, name: string): string[] {
   if (!headers) return [];
   const unfolded = headers.toString("utf-8").replace(/\r?\n[ \t]+/g, " ");
-  const line = unfolded.split(/\r?\n/).find((l) => /^references:/i.test(l));
+  const prefix = `${name.toLowerCase()}:`;
+  const line = unfolded.split(/\r?\n/).find((l) => l.toLowerCase().startsWith(prefix));
   if (!line) return [];
   return line.match(/<[^<>]+>/g) ?? [];
 }
