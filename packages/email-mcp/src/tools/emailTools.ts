@@ -13,8 +13,8 @@ import { simpleParser } from "mailparser";
 import { htmlToMarkdown } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
-import type { ImapService } from "../services/ImapService.js";
-import type { SmtpService } from "../services/SmtpService.js";
+import type { EmailFull, ImapService } from "../services/ImapService.js";
+import type { ComposeOptions, SmtpService } from "../services/SmtpService.js";
 import {
   attachmentSchema,
   createFolderResultSchema,
@@ -146,6 +146,118 @@ function assertAttachmentPathAllowed(p: string): void {
   if (target !== root && !target.startsWith(root + sep)) {
     throw new Error(`attachment path is outside EMAIL_ATTACHMENT_DIR: ${p}`);
   }
+}
+
+/** "Name <address>", or the bare address when there is no display name. */
+function formatAddress(entry: { name?: string; address: string }): string {
+  return entry.name ? `${entry.name} <${entry.address}>` : entry.address;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * The header block every mail client writes above a forwarded message. Lines
+ * the original does not have are omitted rather than left blank, so a message
+ * with no Cc does not claim an empty one.
+ */
+function forwardedHeaderLines(original: EmailFull): string[] {
+  const lines = [`From: ${formatAddress(original.from)}`];
+  if (original.date) lines.push(`Date: ${original.date}`);
+  if (original.subject) lines.push(`Subject: ${original.subject}`);
+  if (original.to?.length) lines.push(`To: ${original.to.map(formatAddress).join(", ")}`);
+  if (original.cc?.length) lines.push(`Cc: ${original.cc.map(formatAddress).join(", ")}`);
+  return lines;
+}
+
+const FORWARD_SEPARATOR = "---------- Forwarded message ----------";
+
+/**
+ * Builds the forwarded body in both formats.
+ *
+ * The text part is authoritative — every message can carry one — while the
+ * HTML part is emitted only when the original had HTML to preserve, since
+ * inventing markup for a plain-text original gains the recipient nothing.
+ */
+async function buildForwardedBodies(
+  original: EmailFull,
+  note: string | undefined,
+): Promise<{ text: string; html?: string }> {
+  const headerLines = forwardedHeaderLines(original);
+
+  let textOriginal = original.textBody;
+  if (textOriginal === undefined && original.htmlBody) {
+    try {
+      textOriginal = await htmlToMarkdown(original.htmlBody);
+    } catch {
+      textOriginal = undefined;
+    }
+  }
+  const textParts = [FORWARD_SEPARATOR, ...headerLines, "", textOriginal ?? ""];
+  const text = [...(note ? [note, ""] : []), ...textParts].join("\n").replace(/\s+$/, "");
+
+  let html: string | undefined;
+  if (original.htmlBody) {
+    const headerHtml = headerLines.map((line) => escapeHtml(line)).join("<br>");
+    const noteHtml = note ? `<p>${escapeHtml(note)}</p>` : "";
+    const blockHtml = `<p>${escapeHtml(FORWARD_SEPARATOR)}<br>${headerHtml}</p>`;
+    html = `${noteHtml}${blockHtml}${original.htmlBody}`;
+  }
+
+  return { text, html };
+}
+
+/**
+ * The last mile shared by send_email and forward_email: compose the message,
+ * then either APPEND it to Drafts or put it on the wire and file a copy in
+ * Sent. Both callers reach it having already passed their confirmation gate.
+ */
+async function deliver(
+  { imap, smtp }: EmailServices,
+  messageOptions: ComposeOptions,
+  saveToDrafts: boolean,
+): Promise<ToolResult> {
+  if (saveToDrafts) {
+    // Draft mode: keep Bcc in the saved message so a later send_draft can
+    // still deliver to it — the header is stripped at send time.
+    const rawMessage = await smtp.composeRawMessage(messageOptions, { keepBcc: true });
+    const draftsFolder = await imap.getSpecialUseFolder("\\Drafts");
+    const appendResult = await imap.appendMessage(draftsFolder, rawMessage, ["\\Draft", "\\Seen"]);
+    return structured({
+      status: "draft" as const,
+      uid: appendResult.uid,
+      folder: draftsFolder,
+    });
+  }
+
+  // Send mode: SMTP send + APPEND to Sent (Bcc stripped per RFC 2822 default)
+  const rawMessage = await smtp.composeRawMessage(messageOptions);
+  const envelope = {
+    from: smtp.config.smtp.user,
+    to: [...messageOptions.to, ...(messageOptions.cc || []), ...(messageOptions.bcc || [])],
+  };
+  const sendResult = await smtp.sendRawMessage(rawMessage, envelope);
+
+  let sentFolderPath = "Sent";
+  if (!smtp.config.autoSent) {
+    try {
+      sentFolderPath = await imap.getSpecialUseFolder("\\Sent");
+      await imap.appendMessage(sentFolderPath, rawMessage, ["\\Seen"]);
+    } catch (appendError) {
+      console.error("[email-mcp] Failed to copy to Sent folder:", appendError);
+    }
+  }
+
+  return structured({
+    status: "sent" as const,
+    messageId: sendResult.messageId,
+    folder: sentFolderPath,
+  });
 }
 
 /** Runs a handler body, converting anything thrown into a tool execution error. */
@@ -521,46 +633,154 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           references,
         };
 
-        if (saveToDrafts) {
-          // Draft mode: keep Bcc in the saved message so a later send_draft
-          // can still deliver to it — the header is stripped at send time.
-          const rawMessage = await smtp.composeRawMessage(messageOptions, { keepBcc: true });
-          // APPEND to Drafts folder
-          const draftsFolder = await imap.getSpecialUseFolder("\\Drafts");
-          const appendResult = await imap.appendMessage(draftsFolder, rawMessage, [
-            "\\Draft",
-            "\\Seen",
-          ]);
-          return structured({
-            status: "draft" as const,
-            uid: appendResult.uid,
-            folder: draftsFolder,
-          });
-        }
+        return deliver({ imap, smtp }, messageOptions, saveToDrafts);
+      });
+    },
+  },
+  {
+    name: "forward_email",
+    title: "Forward Email",
+    description:
+      "Forward an existing message to new recipients, with an optional note above it. The body is reproduced under a '---------- Forwarded message ----------' header block naming the original's From, Date, Subject, To and Cc, and the original's attachments are re-attached unless includeAttachments is false. The subject becomes 'Fwd: <original subject>' unless given explicitly. A forward starts a new thread rather than joining the original's. Sending (but not saving a draft) asks the user to confirm first.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: {
+          type: "string",
+          description: "IMAP folder containing the message to forward. Defaults to INBOX.",
+        },
+        uid: { type: "number", description: "UID of the message to forward." },
+        to: { type: "array", items: { type: "string" }, description: "Recipient addresses." },
+        cc: { type: "array", items: { type: "string" }, description: "CC addresses." },
+        bcc: { type: "array", items: { type: "string" }, description: "BCC addresses." },
+        note: {
+          type: "string",
+          description:
+            "Optional text placed above the forwarded message, where a covering note goes.",
+        },
+        subject: {
+          type: "string",
+          description:
+            "Subject line. Defaults to 'Fwd: <original subject>', and is not prefixed again when the original is already a forward.",
+        },
+        includeAttachments: {
+          type: "boolean",
+          description:
+            "Re-attach the original's attachments. Defaults to true. Set false to forward the text alone — worth doing for a message with large attachments, since the bytes are pulled from IMAP and pushed back out over SMTP.",
+        },
+        saveToDrafts: {
+          type: "boolean",
+          description:
+            "Save the forward to Drafts instead of sending it, so it can be edited in a mail client first. Defaults to false.",
+        },
+        from: {
+          type: "string",
+          description:
+            "Optional visible From address. Must be SMTP_USER or listed in SMTP_ALLOWED_FROM; anything else is rejected.",
+        },
+        fromName: {
+          type: "string",
+          description: "Optional visible display name for the From header.",
+        },
+      },
+      required: ["uid", "to"],
+    },
+    outputSchema: sendResultSchema,
+    handler: async (
+      args: {
+        folder?: string;
+        uid: number;
+        to: string[] | string;
+        cc?: string[] | string;
+        bcc?: string[] | string;
+        note?: string;
+        subject?: string;
+        includeAttachments?: boolean;
+        saveToDrafts?: boolean;
+        from?: string;
+        fromName?: string;
+      },
+      services,
+      ctx,
+    ) => {
+      const { imap, smtp } = services;
+      const list = (value: string[] | string | undefined): string[] | undefined =>
+        value == null ? undefined : Array.isArray(value) ? value : [value];
+      const to = list(args.to) ?? [];
+      const cc = list(args.cc);
+      const bcc = list(args.bcc);
+      const saveToDrafts = args.saveToDrafts || false;
 
-        // Send mode: SMTP send + APPEND to Sent (Bcc stripped per RFC 2822 default)
-        const rawMessage = await smtp.composeRawMessage(messageOptions);
-        const envelope = {
-          from: smtp.config.smtp.user,
-          to: [...to, ...(cc || []), ...(bcc || [])],
-        };
-        const sendResult = await smtp.sendRawMessage(rawMessage, envelope);
+      if (to.length === 0) {
+        return invalid("to must be a non-empty array of recipient addresses");
+      }
 
-        let sentFolderPath = "Sent";
-        if (!smtp.config.autoSent) {
-          try {
-            sentFolderPath = await imap.getSpecialUseFolder("\\Sent");
-            await imap.appendMessage(sentFolderPath, rawMessage, ["\\Seen"]);
-          } catch (appendError) {
-            console.error("[email-mcp] Failed to copy to Sent folder:", appendError);
+      // The original is read before the gate: its subject is what the
+      // confirmation names, and a UID that does not exist should fail as a
+      // lookup error rather than after the user has agreed to send it.
+      let original: EmailFull;
+      try {
+        original = await imap.fetchEmail(args.folder || "INBOX", args.uid);
+      } catch (err) {
+        return toolError(err);
+      }
+
+      const subject =
+        args.subject ??
+        (/^fwd:/i.test(original.subject || "")
+          ? original.subject
+          : `Fwd: ${original.subject || ""}`);
+
+      if (!saveToDrafts) {
+        const recipients = [...to, ...(cc ?? []), ...(bcc ?? [])].join(", ");
+        const gate = confirmDestructive(
+          ctx,
+          "confirm_forward_email",
+          `Forward "${original.subject || "(no subject)"}" to ${recipients}? This cannot be undone.`,
+        );
+        if (gate.status === "interrupt") return gate.result;
+      }
+
+      return run(async () => {
+        const { text, html } = await buildForwardedBodies(original, args.note);
+
+        // Attachments go IMAP → SMTP without passing through a tool result, so
+        // the EMAIL_MAX_INLINE_BYTES ceiling — which exists to keep payloads
+        // out of the model's context — deliberately does not apply here.
+        // includeAttachments: false is the control for a large message.
+        let attachments: ResolvedAttachment[] | undefined;
+        if (args.includeAttachments !== false && original.attachments.length > 0) {
+          attachments = [];
+          for (const att of original.attachments) {
+            const fetched = await imap.downloadAttachment(
+              args.folder || "INBOX",
+              args.uid,
+              att.partId,
+            );
+            attachments.push({
+              filename: fetched.filename,
+              contentType: fetched.contentType,
+              content: fetched.content,
+            });
           }
         }
 
-        return structured({
-          status: "sent" as const,
-          messageId: sendResult.messageId,
-          folder: sentFolderPath,
-        });
+        const from = smtp.formatFromHeader(smtp.resolveFromAddress(args.from), args.fromName);
+
+        // No In-Reply-To or References: a forward starts its own thread. Adding
+        // them would file it under the original conversation in the recipient's
+        // client, which is not what forwarding to a new audience means.
+        return deliver(
+          services,
+          { from, to, cc, bcc, subject, text, html, attachments },
+          saveToDrafts,
+        );
       });
     },
   },

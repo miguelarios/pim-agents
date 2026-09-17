@@ -70,8 +70,8 @@ vi.mock("../htmlToMarkdown.js", () => ({
 }));
 
 describe("EMAIL_TOOLS definitions", () => {
-  it("defines 12 tools", () => {
-    expect(EMAIL_TOOLS).toHaveLength(12);
+  it("defines 13 tools", () => {
+    expect(EMAIL_TOOLS).toHaveLength(13);
   });
 
   it("all tools have name, description, and inputSchema", () => {
@@ -97,6 +97,7 @@ describe("EMAIL_TOOLS definitions", () => {
     expect(names).toContain("get_email_raw");
     expect(names).toContain("get_folder_status");
     expect(names).toContain("send_draft");
+    expect(names).toContain("forward_email");
   });
 
   it("send_email requires only to", () => {

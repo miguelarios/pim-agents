@@ -7,7 +7,7 @@ MCP server for email via IMAP/SMTP — search, read, send, and manage emails and
 Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
 Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
 
-`send_email` (when sending, not when saving a draft), `send_draft`, and `delete_email` with `permanent: true` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
+`send_email` and `forward_email` (when sending, not when saving a draft), `send_draft`, and `delete_email` with `permanent: true` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
 
 ## Usage
 
@@ -72,7 +72,7 @@ server trust you.
 `SMTP_FROM_NAME` and the per-call `fromName` change only the display name, never the address, so they carry no
 deliverability risk. Prefer them when you just want a distinct agent identity on a shared mailbox.
 
-## Tools (12)
+## Tools (13)
 
 See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter and output details.
 
@@ -82,6 +82,7 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata, calendar invitation parts |
 | `send_email` | Compose and send via SMTP, reply with threading, save as draft, or use an allowed visible From address |
 | `send_draft` | Send an existing draft from the Drafts folder |
+| `forward_email` | Forward a message with its attachments and an optional note |
 | `move_email` | Move emails between folders |
 | `mark_email` | Set/unset flags (read, unread, flagged) |
 | `delete_email` | Move to trash or permanently delete |
