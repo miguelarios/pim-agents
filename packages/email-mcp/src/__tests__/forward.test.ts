@@ -132,6 +132,25 @@ describe("forward_email", () => {
     );
   });
 
+  it("keeps a multi-line note's line breaks in the HTML part", async () => {
+    await forward({
+      uid: 42,
+      to: ["dan@example.com"],
+      note: "FYI — see page 3.\n\nThanks,\nMiguel",
+    });
+
+    // The text part keeps the breaks as newlines; the HTML part has to say the
+    // same thing rather than collapsing them into one run-on paragraph.
+    expect(composed().text.startsWith("FYI — see page 3.\n\nThanks,\nMiguel\n\n")).toBe(true);
+    expect(composed().html).toContain("FYI — see page 3.<br><br>Thanks,<br>Miguel");
+  });
+
+  it("still escapes a note that contains markup", async () => {
+    await forward({ uid: 42, to: ["dan@example.com"], note: "<b>not bold</b>\nsecond line" });
+
+    expect(composed().html).toContain("&lt;b&gt;not bold&lt;/b&gt;<br>second line");
+  });
+
   it("omits header lines the original does not have", async () => {
     mockFetchEmail.mockResolvedValue({ ...ORIGINAL, cc: [], date: "" });
     await forward({ uid: 42, to: ["dan@example.com"] });

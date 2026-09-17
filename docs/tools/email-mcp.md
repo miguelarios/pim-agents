@@ -149,7 +149,7 @@ Forward an existing message to new recipients, with an optional note above it.
 | `to` | string[] | yes | Recipient addresses. |
 | `cc` | string[] | | CC addresses. |
 | `bcc` | string[] | | BCC addresses. |
-| `note` | string | | Text placed above the forwarded message, where a covering note goes. |
+| `note` | string | | Text placed above the forwarded message, where a covering note goes. Line breaks are preserved in both the text and HTML parts. |
 | `subject` | string | | Defaults to `Fwd: <original subject>`, and is not prefixed again when the original is already a forward. |
 | `includeAttachments` | boolean | | Re-attach the original's attachments. Defaults to **true**. |
 | `saveToDrafts` | boolean | | Save to Drafts instead of sending, so it can be edited in a mail client first. Defaults to false. |

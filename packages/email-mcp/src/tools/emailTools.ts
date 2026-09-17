@@ -204,7 +204,11 @@ async function buildForwardedBodies(
   let html: string | undefined;
   if (original.htmlBody) {
     const headerHtml = headerLines.map((line) => escapeHtml(line)).join("<br>");
-    const noteHtml = note ? `<p>${escapeHtml(note)}</p>` : "";
+    // The note's own line breaks have to survive into the HTML part, or a
+    // multi-line covering note renders as one run-on paragraph while the text
+    // part keeps its shape — and the two parts would no longer say the same
+    // thing, which is the whole point of emitting both.
+    const noteHtml = note ? `<p>${escapeHtml(note).replace(/\r?\n/g, "<br>")}</p>` : "";
     const blockHtml = `<p>${escapeHtml(FORWARD_SEPARATOR)}<br>${headerHtml}</p>`;
     html = `${noteHtml}${blockHtml}${original.htmlBody}`;
   }
