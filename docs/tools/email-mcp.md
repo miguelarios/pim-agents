@@ -121,7 +121,7 @@ Every address this account owns — `IMAP_USER`, `SMTP_USER`, and anything in `S
 
 **A received message carries no `Bcc`**, so there is normally nothing to carry over. A message read back out of `Sent` or `Drafts` does carry one, and those recipients are included — still blind, as `Bcc` always is. This is the case issue #30 calls out: replying-all to your own sent mail should not silently narrow the thread.
 
-An explicit `to`, `cc` or `bcc` overrides the corresponding derived list, field by field rather than all-or-nothing — "reply to everyone, but send it to Ada" is a real request.
+An explicit `to`, `cc` or `bcc` overrides the corresponding derived list, field by field rather than all-or-nothing — "reply to everyone, but send it to Ada" is a real request. The nobody-but-us failure is judged on what is left *after* those overrides, so supplying `to` is always enough.
 
 The original is fetched *before* the send confirmation, so the prompt names the derived recipients. The caller sees who the mail is going to before agreeing to send it.
 
