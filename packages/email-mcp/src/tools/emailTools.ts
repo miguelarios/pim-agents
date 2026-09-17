@@ -10,7 +10,7 @@ import {
   toolError,
 } from "@miguelarios/pim-core/mcp";
 import { simpleParser } from "mailparser";
-import { htmlToMarkdown } from "../htmlToMarkdown.js";
+import { htmlToMarkdown, sanitizeEmailHtml } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
 import type { EmailFull, ImapService } from "../services/ImapService.js";
@@ -213,8 +213,13 @@ async function quoteOriginalBodies(
   }
 
   if (want.html) {
+    // The original's markup is sanitised before it goes back out. Quoting it
+    // verbatim would re-send the sender's script, style, tracking pixels and
+    // document wrapper under our own From, to every recipient of the reply —
+    // the text path escapes for the same reason.
+    const quotedHtml = original.htmlBody ? sanitizeEmailHtml(original.htmlBody).trim() : "";
     const source =
-      original.htmlBody ??
+      quotedHtml ||
       (original.textBody?.trim()
         ? `<pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(original.textBody)}</pre>`
         : undefined);

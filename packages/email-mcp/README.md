@@ -125,6 +125,10 @@ the way a mail client writes it: an `On <date>, <Name> <address> wrote:` attribu
 then the original as `>`-prefixed text, as an HTML `<blockquote>`, or both — matching
 whichever of `text`/`html` the reply itself uses. Pass `quoteOriginal: false` for a bare reply.
 
+The original's HTML is sanitised before it is quoted, through the same allowlist used when
+rendering a message to markdown — quoting it verbatim would re-send a sender's script, style
+and tracking pixels under your own From to everyone on the reply.
+
 Prefixing follows RFC 3676 §4.5, so an already-quoted line gains a level (`> x` → `>> x`)
 rather than an indent and nesting depth survives a long thread. Where the original lacks the
 part being quoted, it is converted — HTML to markdown for a text quote, plain text escaped

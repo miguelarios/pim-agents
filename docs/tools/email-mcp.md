@@ -120,6 +120,8 @@ The quote itself matches whichever body the reply uses:
 
 Prefixing follows RFC 3676 §4.5: a line that is already quoted gains a level (`> x` becomes `>> x`) rather than an indent, so nesting depth survives each round through a thread. A blank line becomes a bare `>`, not `"> "`, so the quote carries no trailing whitespace.
 
+**The original's HTML is sanitised before it is quoted**, through the same allowlist `get_email` uses when rendering to markdown: script and style contents, the document wrapper, tracking pixels, hidden elements and any unlisted tag are dropped. Quoting it verbatim would re-send a sender's markup under your own From to everyone on the reply. An original whose HTML sanitises away to nothing falls back to its text body.
+
 Where the original lacks the matching part, it is converted: HTML becomes markdown for a text quote, and plain text is HTML-escaped into a `<pre>` for an HTML quote. If the original has no body at all, or the conversion fails, the reply goes out unquoted rather than not at all — the quote is a courtesy, not the message.
 
 **Deliverability when using `from`**

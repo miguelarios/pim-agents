@@ -67,59 +67,79 @@ function isHiddenElement(style: string): boolean {
   );
 }
 
+/**
+ * The one policy for inbound email HTML: what may survive from a message we
+ * did not write.
+ *
+ * Used both when rendering to markdown and when quoting an original into an
+ * outgoing reply. The second is why this is shared rather than inlined —
+ * quoting unsanitised HTML would re-send a sender's script, style and tracking
+ * pixels under our own From, to every recipient of the reply.
+ */
+const SANITIZE_OPTIONS: sanitize.IOptions = {
+  allowedTags: [
+    "p",
+    "br",
+    "b",
+    "i",
+    "em",
+    "strong",
+    "a",
+    "ul",
+    "ol",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "table",
+    "tr",
+    "td",
+    "th",
+    "thead",
+    "tbody",
+    "blockquote",
+    "pre",
+    "code",
+    "hr",
+    "span",
+    "div",
+    "img",
+  ],
+  allowedAttributes: {
+    a: ["href"],
+    img: ["src", "alt", "width", "height", "style"],
+  },
+  exclusiveFilter: (frame) => {
+    // Remove tracking pixels
+    if (frame.tag === "img") {
+      const w = Number.parseInt(frame.attribs.width || "", 10);
+      const h = Number.parseInt(frame.attribs.height || "", 10);
+      if ((w >= 0 && w <= 1) || (h >= 0 && h <= 1)) return true;
+      const style = frame.attribs.style || "";
+      if (isHiddenElement(style)) return true;
+    }
+    // Remove hidden elements
+    const style = frame.attribs?.style || "";
+    if (style && isHiddenElement(style)) return true;
+    return false;
+  },
+};
+
+/**
+ * Strips inbound email HTML down to {@link SANITIZE_OPTIONS}: script and style
+ * contents go entirely, the document wrapper and any unlisted tag go, tracking
+ * pixels and hidden elements go.
+ */
+export function sanitizeEmailHtml(html: string): string {
+  return sanitize(html, SANITIZE_OPTIONS);
+}
+
 export async function htmlToMarkdown(html: string): Promise<string> {
   // Step 1: Sanitize
-  const clean = sanitize(html, {
-    allowedTags: [
-      "p",
-      "br",
-      "b",
-      "i",
-      "em",
-      "strong",
-      "a",
-      "ul",
-      "ol",
-      "li",
-      "h1",
-      "h2",
-      "h3",
-      "h4",
-      "h5",
-      "h6",
-      "table",
-      "tr",
-      "td",
-      "th",
-      "thead",
-      "tbody",
-      "blockquote",
-      "pre",
-      "code",
-      "hr",
-      "span",
-      "div",
-      "img",
-    ],
-    allowedAttributes: {
-      a: ["href"],
-      img: ["src", "alt", "width", "height", "style"],
-    },
-    exclusiveFilter: (frame) => {
-      // Remove tracking pixels
-      if (frame.tag === "img") {
-        const w = Number.parseInt(frame.attribs.width || "", 10);
-        const h = Number.parseInt(frame.attribs.height || "", 10);
-        if ((w >= 0 && w <= 1) || (h >= 0 && h <= 1)) return true;
-        const style = frame.attribs.style || "";
-        if (isHiddenElement(style)) return true;
-      }
-      // Remove hidden elements
-      const style = frame.attribs?.style || "";
-      if (style && isHiddenElement(style)) return true;
-      return false;
-    },
-  });
+  const clean = sanitizeEmailHtml(html);
 
   // Step 2: Convert to markdown
   const td = new TurndownService({
