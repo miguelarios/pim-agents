@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.23.0 (2026-09-17)
+
+- New `forward_email` tool. Passing a message on previously meant reconstructing it: `get_email` for the body, `download_attachment` for each file, then `send_email` with the bytes re-encoded as base64 attachments and the headers retyped by hand into the body. Every attachment made a round trip through the model's context, and the forwarded-from block was whatever the caller remembered to write (PR #115, `claude/email-mcp-issues-ii6e3m-forward`).
+- The body is reproduced under the conventional `---------- Forwarded message ----------` block naming the original's From, Date, Subject, To and Cc. Lines the original does not have are omitted rather than left blank — a message with no `Cc` should not claim an empty one. An optional `note` goes above the block (PR #115, `claude/email-mcp-issues-ii6e3m-forward`).
+- The text part is always built, since every message can carry one, so an HTML-only original is rendered to markdown for it. An HTML part is emitted only when the original had HTML: inventing markup for a plain-text original gains the recipient nothing (PR #115, `claude/email-mcp-issues-ii6e3m-forward`).
+- Attachments are re-attached by part ID, straight from IMAP to SMTP. They never enter a tool result, so `EMAIL_MAX_INLINE_BYTES` — which exists to keep payloads out of the model's context — deliberately does not apply; `includeAttachments: false` is the control for a message with large attachments (PR #115, `claude/email-mcp-issues-ii6e3m-forward`).
+- A forward starts a new thread: no `In-Reply-To`, no `References`. Threading it under the original would file it into a conversation the new recipients were never part of (PR #115, `claude/email-mcp-issues-ii6e3m-forward`).
+- Sending asks the user to confirm first, and `saveToDrafts` bypasses that gate so a forward can be reviewed in a mail client before it goes. The original is fetched before the gate, so the prompt names its subject and a nonexistent UID fails as a lookup error rather than after the user has agreed to send (PR #115, `claude/email-mcp-issues-ii6e3m-forward`).
+- The subject defaults to `Fwd: <original subject>`, and is not prefixed again when the original is already a forward (PR #115, `claude/email-mcp-issues-ii6e3m-forward`).
+
 ## 0.14.0 (2026-09-16)
 
 - `get_email` and `search_emails` now report attachments that carry `Content-Disposition: inline` with a filename. Apple Mail (iOS and macOS) writes forwarded file attachments that way, so a forwarded message with a real PDF attached previously reported `hasAttachments: false` and an empty `attachments` array — the part was in the MIME source the whole time, and `download_attachment` retrieved it correctly when given the `partId` by hand. Content-ID distinguishes the two inline cases: an image the HTML body references carries one, a forwarded file does not, so embedded signature logos are still not listed as attachments (PR #107, `claude/exciting-wozniak-55ly2k`).
