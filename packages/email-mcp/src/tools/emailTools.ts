@@ -17,6 +17,7 @@ import type { ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 import {
   attachmentSchema,
+  copyResultSchema,
   createFolderResultSchema,
   deleteFolderResultSchema,
   deleteResultSchema,
@@ -596,6 +597,55 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           status: "moved" as const,
           uids: args.uids,
           destination: args.destination,
+        });
+      }),
+  },
+  {
+    name: "copy_email",
+    title: "Copy Email",
+    description:
+      "Copy one or more emails into another IMAP folder, leaving the originals where they are. Use move_email to relocate them instead. When the server supports UIDPLUS, the result pairs each source UID with the UID its copy took in the destination; otherwise only the source UIDs come back, and the copy still happened.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Not idempotent: a second call adds a second copy rather than doing
+      // nothing, since each COPY allocates a fresh UID in the destination.
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: { type: "string", description: "Source IMAP folder. Defaults to INBOX." },
+        uids: UIDS_PROP("UIDs of emails to copy. They remain in the source folder."),
+        destination: {
+          type: "string",
+          description:
+            "Destination folder path. It must already exist — create_folder first if not.",
+        },
+      },
+      required: ["uids", "destination"],
+    },
+    outputSchema: copyResultSchema,
+    handler: (args: { folder?: string; uids: number[]; destination: string }, { imap }) =>
+      run(async () => {
+        if (!Array.isArray(args.uids) || args.uids.length === 0) {
+          return invalid("uids must be a non-empty array of message UIDs");
+        }
+        const folder = args.folder || "INBOX";
+        // A self-copy is legal IMAP and duplicates every message in place,
+        // which is never what a caller reaching for "copy to a folder" wants.
+        if (folder === args.destination) {
+          return invalid(
+            `destination is the source folder (${folder}) — this would duplicate the messages in place`,
+          );
+        }
+        const copied = await imap.copyEmails(folder, args.uids, args.destination);
+        return structured({
+          status: "copied" as const,
+          uids: args.uids,
+          destination: args.destination,
+          ...(copied ? { copied } : {}),
         });
       }),
   },

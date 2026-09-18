@@ -72,7 +72,7 @@ server trust you.
 `SMTP_FROM_NAME` and the per-call `fromName` change only the display name, never the address, so they carry no
 deliverability risk. Prefer them when you just want a distinct agent identity on a shared mailbox.
 
-## Tools (14)
+## Tools (15)
 
 See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter and output details.
 
@@ -83,6 +83,7 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 | `send_email` | Compose and send via SMTP, reply with threading, save as draft, or use an allowed visible From address |
 | `send_draft` | Send an existing draft from the Drafts folder |
 | `move_email` | Move emails between folders |
+| `copy_email` | Copy emails into another folder, leaving the originals in place |
 | `mark_email` | Set/unset flags (read, unread, flagged) |
 | `delete_email` | Move to trash or permanently delete |
 | `list_folders` | List all IMAP folders with special-use flags |

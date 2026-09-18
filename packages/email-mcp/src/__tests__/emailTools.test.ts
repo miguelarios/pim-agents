@@ -72,8 +72,8 @@ vi.mock("../htmlToMarkdown.js", () => ({
 }));
 
 describe("EMAIL_TOOLS definitions", () => {
-  it("defines 14 tools", () => {
-    expect(EMAIL_TOOLS).toHaveLength(14);
+  it("defines 15 tools", () => {
+    expect(EMAIL_TOOLS).toHaveLength(15);
   });
 
   it("all tools have name, description, and inputSchema", () => {
@@ -88,6 +88,7 @@ describe("EMAIL_TOOLS definitions", () => {
   it("defines the expected tool names", () => {
     const names = EMAIL_TOOLS.map((t) => t.name);
     expect(names).toContain("search_emails");
+    expect(names).toContain("copy_email");
     expect(names).toContain("get_email");
     expect(names).toContain("send_email");
     expect(names).toContain("move_email");
@@ -1160,5 +1161,112 @@ describe("rename_folder", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/Mailbox already exists/);
+  });
+});
+
+describe("copy_email", () => {
+  const mockCopyEmails = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockImapService.copyEmails = mockCopyEmails;
+    mockCopyEmails.mockResolvedValue(undefined);
+  });
+
+  it("copies from the default folder to the destination", async () => {
+    const result = await handleEmailTool(
+      "copy_email",
+      { uids: [1, 2], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockCopyEmails).toHaveBeenCalledWith("INBOX", [1, 2], "Archive");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      status: "copied",
+      uids: [1, 2],
+      destination: "Archive",
+    });
+  });
+
+  it("copies from an explicit source folder", async () => {
+    await handleEmailTool(
+      "copy_email",
+      { folder: "Archive/2025", uids: [9], destination: "Receipts" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockCopyEmails).toHaveBeenCalledWith("Archive/2025", [9], "Receipts");
+  });
+
+  it("reports the destination UIDs when the server supplies them", async () => {
+    mockCopyEmails.mockResolvedValueOnce([
+      { uid: 1, destinationUid: 101 },
+      { uid: 2, destinationUid: 102 },
+    ]);
+
+    const result = await handleEmailTool(
+      "copy_email",
+      { uids: [1, 2], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.structuredContent).toEqual({
+      status: "copied",
+      uids: [1, 2],
+      destination: "Archive",
+      copied: [
+        { uid: 1, destinationUid: 101 },
+        { uid: 2, destinationUid: 102 },
+      ],
+    });
+  });
+
+  it("rejects copying a folder onto itself", async () => {
+    const result = await handleEmailTool(
+      "copy_email",
+      { folder: "Archive", uids: [1], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/destination is the source folder/);
+    expect(mockCopyEmails).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a missing destination as a tool error, never as a copy", async () => {
+    mockCopyEmails.mockRejectedValueOnce(new Error("Copy to Nope failed — the server refused it."));
+
+    const result = await handleEmailTool(
+      "copy_email",
+      { uids: [1], destination: "Nope" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Copy to Nope failed/);
+    expect(result.structuredContent).toBeUndefined();
+  });
+
+  it("leaves the source untouched — no move, no flag change", async () => {
+    const mockMoveEmails = vi.fn();
+    const mockMarkEmails = vi.fn();
+    mockImapService.moveEmails = mockMoveEmails;
+    mockImapService.markEmails = mockMarkEmails;
+
+    await handleEmailTool(
+      "copy_email",
+      { uids: [1], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockMoveEmails).not.toHaveBeenCalled();
+    expect(mockMarkEmails).not.toHaveBeenCalled();
   });
 });

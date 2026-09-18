@@ -355,6 +355,51 @@ export class ImapService {
     }
   }
 
+  /**
+   * Copies messages, leaving the originals in place.
+   *
+   * imapflow's `messageCopy` does not throw on a server refusal: its command
+   * catches the error, logs a warning, and resolves `false` (and resolves
+   * `undefined` when its own preconditions fail). So a missing destination —
+   * `NO [TRYCREATE]`, the most likely failure here — would otherwise be
+   * indistinguishable from a successful copy on a server without UIDPLUS.
+   * Both falsy results are turned back into a thrown error.
+   *
+   * The UID pairs come from the server's UIDPLUS `COPYUID` response. Without
+   * that extension there is no way to learn the new UIDs short of re-searching
+   * the destination, so the mapping is absent rather than guessed — the copy
+   * did happen.
+   */
+  async copyEmails(
+    folder: string,
+    uids: number[],
+    destination: string,
+  ): Promise<Array<{ uid: number; destinationUid: number }> | undefined> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock(folder);
+      try {
+        const result = await client.messageCopy(uids.join(","), destination, { uid: true });
+        if (!result) {
+          throw new EmailError(
+            `Copy to ${destination} failed — the server refused it. The folder may not exist; create_folder first, or check list_folders for the exact path.`,
+            ErrorCode.OPERATION_FAILED,
+          );
+        }
+        if (!result.uidMap) return undefined;
+        return [...result.uidMap].map(([uid, destinationUid]) => ({ uid, destinationUid }));
+      } finally {
+        lock.release();
+      }
+    } catch (error) {
+      if (error instanceof EmailError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
   async moveEmails(folder: string, uids: number[], destination: string): Promise<void> {
     const client = this.createClient();
     try {
