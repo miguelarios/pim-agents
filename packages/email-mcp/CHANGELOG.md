@@ -1,12 +1,5 @@
 # Changelog
 
-## 0.15.0 (2026-09-17)
-
-- New `rename_folder` tool. An IMAP mailbox could be created but never renamed, so reorganising a folder tree meant `create_folder`, then `move_email` for every message, then `delete_email` — three tools and a per-message round trip for something IMAP expresses as a single `RENAME`, which also carries child folders along with the parent (PR #110, `claude/email-mcp-issues-ii6e3m-rename-folder`).
-- `rename_folder` reports both paths as the server returned them rather than as requested. A server may normalise the hierarchy delimiter or prefix the personal namespace — `Work` can come back as `INBOX.Work` — and the `RENAME` response is the authority on where the folder ended up, so a caller does not have to assume its request survived intact (PR #110, `claude/email-mcp-issues-ii6e3m-rename-folder`).
-- Renaming a folder now drops the special-use cache. `getSpecialUseFolder` caches flag → path for the process lifetime, and a rename can move the very Sent, Drafts or Trash mailbox it cached, which would then cost a failed append on the next `send_email`. Every entry is dropped rather than the one guessed to be affected: re-resolving costs one `LIST` (PR #110, `claude/email-mcp-issues-ii6e3m-rename-folder`).
-- A blank `path`, a blank `newPath`, or a `newPath` equal to `path` is rejected with `INVALID_INPUT` before the connection is opened. IMAP cannot express any of the three, and the protocol error a server returns for them names neither argument, so the caller would otherwise have to guess which end was wrong (PR #110, `claude/email-mcp-issues-ii6e3m-rename-folder`).
-
 ## 0.14.0 (2026-09-16)
 
 - `get_email` and `search_emails` now report attachments that carry `Content-Disposition: inline` with a filename. Apple Mail (iOS and macOS) writes forwarded file attachments that way, so a forwarded message with a real PDF attached previously reported `hasAttachments: false` and an empty `attachments` array — the part was in the MIME source the whole time, and `download_attachment` retrieved it correctly when given the `partId` by hand. Content-ID distinguishes the two inline cases: an image the HTML body references carries one, a forwarded file does not, so embedded signature logos are still not listed as attachments (PR #107, `claude/exciting-wozniak-55ly2k`).
