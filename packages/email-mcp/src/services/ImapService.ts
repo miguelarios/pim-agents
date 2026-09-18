@@ -483,6 +483,51 @@ export class ImapService {
     }
   }
 
+  /**
+   * Renames a mailbox, returning the paths the server reports rather than the
+   * ones requested — a server is free to normalise the delimiter or to prefix
+   * the personal namespace, and the RENAME response is the authority on where
+   * the folder ended up.
+   */
+  async renameFolder(path: string, newPath: string): Promise<{ path: string; newPath: string }> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const result = await client.mailboxRename(path, newPath);
+      // A rename can move the Sent/Drafts/Trash folder this service resolves
+      // special-use flags to, and the cache lives for the process lifetime, so
+      // every entry is dropped rather than guessing which one was affected —
+      // re-resolving costs one LIST, a stale entry costs a failed append.
+      this.specialUseCache.clear();
+      return {
+        path: result?.path ?? path,
+        newPath: result?.newPath ?? newPath,
+      };
+    } catch (error) {
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
+  async deleteFolder(path: string): Promise<void> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      await client.mailboxDelete(path);
+      // The deleted folder may be the Sent/Drafts/Trash mailbox this service
+      // resolved a special-use flag to, and that cache lives for the process
+      // lifetime. Every entry is dropped rather than guessing which one was
+      // affected — re-resolving costs one LIST, a stale entry costs an append
+      // to a folder that no longer exists.
+      this.specialUseCache.clear();
+    } catch (error) {
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
   async downloadAttachment(folder: string, uid: number, partId: string): Promise<AttachmentBytes>;
   async downloadAttachment(
     folder: string,

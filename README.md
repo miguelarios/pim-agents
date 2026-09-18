@@ -22,7 +22,7 @@ A client that does not support elicitation cannot answer the prompt, so those to
 
 ## Tools
 
-### [Email (13 tools)](docs/tools/email-mcp.md)
+### [Email (15 tools)](docs/tools/email-mcp.md)
 
 | Tool | Description |
 |------|-------------|
@@ -36,6 +36,8 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `delete_email` | Move to trash, or permanently delete (confirms first) |
 | `list_folders` | List all IMAP folders with special-use flags |
 | `create_folder` | Create an IMAP folder |
+| `rename_folder` | Rename an IMAP folder, or move it under a different parent |
+| `delete_folder` | Delete an IMAP folder and everything in it (confirms first) |
 | `download_attachment` | Download attachment by email UID and part ID, as an embedded binary resource |
 | `get_email_raw` | Export email as raw .eml, as an embedded `message/rfc822` resource |
 | `get_folder_status` | Get total and unread message counts for a folder |

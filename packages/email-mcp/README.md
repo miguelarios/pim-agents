@@ -7,7 +7,7 @@ MCP server for email via IMAP/SMTP — search, read, send, and manage emails and
 Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
 Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
 
-`send_email` (when sending, not when saving a draft), `send_draft`, and `delete_email` with `permanent: true` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
+`send_email` (when sending, not when saving a draft), `send_draft`, `delete_email` with `permanent: true`, and `delete_folder` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
 
 ## Usage
 
@@ -72,7 +72,7 @@ server trust you.
 `SMTP_FROM_NAME` and the per-call `fromName` change only the display name, never the address, so they carry no
 deliverability risk. Prefer them when you just want a distinct agent identity on a shared mailbox.
 
-## Tools (13)
+## Tools (15)
 
 See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter and output details.
 
@@ -88,6 +88,8 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 | `delete_email` | Move to trash or permanently delete |
 | `list_folders` | List all IMAP folders with special-use flags |
 | `create_folder` | Create an IMAP folder |
+| `rename_folder` | Rename an IMAP folder, or move it under a different parent |
+| `delete_folder` | Delete an IMAP folder and everything in it (asks to confirm) |
 | `download_attachment` | Download attachment by email UID and part ID |
 | `get_email_raw` | Export email as raw .eml |
 | `get_folder_status` | Get total and unread message counts for a folder |

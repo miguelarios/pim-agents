@@ -124,6 +124,23 @@ export const createFolderResultSchema = v.object({
   path: v.string(),
 });
 
+/** Both paths as the server reported them, so a normalised target is visible. */
+export const renameFolderResultSchema = v.object({
+  status: v.literal("renamed"),
+  path: v.string(),
+  newPath: v.string(),
+});
+
+export const deleteFolderResultSchema = v.object({
+  status: v.literal("deleted"),
+  path: v.string(),
+  /**
+   * Messages the folder held when it was deleted. Absent when the server would
+   * not report a count — a `\Noselect` hierarchy node has none.
+   */
+  messages: v.optional(v.number()),
+});
+
 /**
  * Metadata only — the bytes ride in the result's embedded binary resource
  * block, so a large attachment is not duplicated in the payload.

@@ -12,6 +12,8 @@ const mockMessageFlagsAdd = vi.fn();
 const mockMessageFlagsRemove = vi.fn();
 const mockList = vi.fn();
 const mockMailboxCreate = vi.fn();
+const mockMailboxDelete = vi.fn();
+const mockMailboxRename = vi.fn();
 const mockDownload = vi.fn();
 const mockStatus = vi.fn();
 const mockGetMailboxLock = vi.fn();
@@ -36,6 +38,8 @@ vi.mock("imapflow", () => ({
     messageFlagsRemove: mockMessageFlagsRemove,
     list: mockList,
     mailboxCreate: mockMailboxCreate,
+    mailboxDelete: mockMailboxDelete,
+    mailboxRename: mockMailboxRename,
     download: mockDownload,
     status: mockStatus,
     append: mockAppend,
@@ -1440,6 +1444,81 @@ describe("ImapService", () => {
     it("creates a new IMAP folder", async () => {
       await service.createFolder("Projects/Work");
       expect(mockMailboxCreate).toHaveBeenCalledWith("Projects/Work");
+    });
+  });
+
+  describe("renameFolder", () => {
+    beforeEach(() => {
+      mockMailboxRename.mockResolvedValue({ path: "Projects/Work", newPath: "Projects/Clients" });
+    });
+
+    it("renames an IMAP folder", async () => {
+      const result = await service.renameFolder("Projects/Work", "Projects/Clients");
+      expect(mockMailboxRename).toHaveBeenCalledWith("Projects/Work", "Projects/Clients");
+      expect(result).toEqual({ path: "Projects/Work", newPath: "Projects/Clients" });
+    });
+
+    it("reports the paths the server echoed, not the ones requested", async () => {
+      // A server may normalise the hierarchy delimiter or the personal-namespace
+      // prefix, so the RENAME response is the authority on where the folder is.
+      mockMailboxRename.mockResolvedValueOnce({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+      const result = await service.renameFolder("Work", "Clients");
+      expect(result).toEqual({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+    });
+
+    it("falls back to the requested paths when the server echoes nothing", async () => {
+      mockMailboxRename.mockResolvedValueOnce(undefined as never);
+      const result = await service.renameFolder("Work", "Clients");
+      expect(result).toEqual({ path: "Work", newPath: "Clients" });
+    });
+
+    it("drops the special-use cache so a renamed Sent folder is re-resolved", async () => {
+      mockList.mockResolvedValue([
+        { path: "Sent", specialUse: "\\Sent", delimiter: "/" },
+        { path: "Archive/Sent", specialUse: "\\Sent", delimiter: "/" },
+      ]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent");
+
+      await service.renameFolder("Sent", "Archive/Sent");
+
+      mockList.mockResolvedValue([{ path: "Archive/Sent", specialUse: "\\Sent", delimiter: "/" }]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Archive/Sent");
+    });
+
+    it("logs out even when the rename fails", async () => {
+      mockMailboxRename.mockRejectedValueOnce(new Error("ALREADYEXISTS"));
+      await expect(service.renameFolder("Work", "Clients")).rejects.toThrow();
+      expect(mockLogout).toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteFolder", () => {
+    beforeEach(() => {
+      mockMailboxDelete.mockResolvedValue({ path: "Projects/Work" });
+    });
+
+    it("deletes an IMAP folder", async () => {
+      await service.deleteFolder("Projects/Work");
+      expect(mockMailboxDelete).toHaveBeenCalledWith("Projects/Work");
+    });
+
+    it("drops the special-use cache so a deleted Sent folder is re-resolved", async () => {
+      mockList.mockResolvedValue([
+        { path: "Sent", specialUse: "\\Sent", delimiter: "/" },
+        { path: "Sent Messages", delimiter: "/" },
+      ]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent");
+
+      await service.deleteFolder("Sent");
+
+      mockList.mockResolvedValue([{ path: "Sent Messages", delimiter: "/" }]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent Messages");
+    });
+
+    it("logs out even when the delete fails", async () => {
+      mockMailboxDelete.mockRejectedValueOnce(new Error("NONEXISTENT"));
+      await expect(service.deleteFolder("Ghost")).rejects.toThrow();
+      expect(mockLogout).toHaveBeenCalled();
     });
   });
 
