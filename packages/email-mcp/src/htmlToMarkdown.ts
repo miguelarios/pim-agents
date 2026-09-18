@@ -2,6 +2,7 @@ import { appendFileSync } from "node:fs";
 import URLCleaner from "@backrunner/url-cleaner";
 import sanitize from "sanitize-html";
 import TurndownService from "turndown";
+import { ProxyAgent } from "undici";
 
 // Supplemental tracking params not covered by uBlock/AdGuard lists
 const SUPPLEMENTAL_TRACKING_PARAMS = ["_ke", "sc_cid", "campaign_id"];
@@ -14,6 +15,64 @@ function getCleaner(): URLCleaner {
     cleanerInstance = new URLCleaner({ useDefaultLists: true });
   }
   return cleanerInstance;
+}
+
+/**
+ * How link resolution reaches the network.
+ *
+ * `direct` is the default and the previous behaviour. `proxied` routes every
+ * resolution fetch through URL_RESOLVE_PROXY. `broken` means a proxy was asked
+ * for but cannot be built — resolution is then skipped entirely rather than
+ * falling back to a direct fetch, because a direct fetch is the exact
+ * disclosure the setting exists to prevent.
+ */
+type ProxyRoute =
+  | { kind: "direct" }
+  | { kind: "proxied"; dispatcher: ProxyAgent }
+  | { kind: "broken"; reason: string };
+
+/** Keyed on the env value, so a changed setting rebuilds rather than sticking. */
+let routeCache: { key: string; route: ProxyRoute } | undefined;
+
+function proxyRoute(): ProxyRoute {
+  const key = process.env.URL_RESOLVE_PROXY?.trim() ?? "";
+  if (routeCache?.key === key) return routeCache.route;
+
+  // The old agent is no longer reachable; close it rather than leak its
+  // sockets. Nothing awaits this — it is a teardown, not a step.
+  if (routeCache?.route.kind === "proxied") {
+    void routeCache.route.dispatcher.close().catch(() => {});
+  }
+
+  let route: ProxyRoute;
+  if (key === "") {
+    route = { kind: "direct" };
+  } else {
+    try {
+      const url = new URL(key);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        route = { kind: "broken", reason: `unsupported proxy scheme "${url.protocol}"` };
+      } else {
+        route = { kind: "proxied", dispatcher: new ProxyAgent(key) };
+      }
+    } catch (err) {
+      route = {
+        kind: "broken",
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  routeCache = { key, route };
+  return route;
+}
+
+/** Closes the proxy agent, if one was built. Part of shutdown. */
+export async function disposeUrlProxy(): Promise<void> {
+  if (routeCache?.route.kind === "proxied") {
+    await routeCache.route.dispatcher.close().catch(() => {});
+  }
+  routeCache = undefined;
 }
 
 export async function disposeUrlCleaner(): Promise<void> {
@@ -279,16 +338,21 @@ async function fetchOne(
   url: string,
   timeoutMs: number,
   log: (msg: string) => void,
+  dispatcher?: ProxyAgent,
 ): Promise<FetchResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const start = Date.now();
   try {
+    // `dispatcher` is undici's, which Node's global fetch accepts. The key is
+    // omitted rather than passed as undefined when resolving directly, so the
+    // unproxied request is byte-for-byte what it was before.
     const res = await fetch(url, {
       method: "GET",
       redirect: "follow",
       signal: controller.signal,
-    });
+      ...(dispatcher ? { dispatcher } : {}),
+    } as RequestInit);
     clearTimeout(timer);
     controller.abort();
     const elapsed = Date.now() - start;
@@ -366,6 +430,18 @@ async function resolveUrls(urls: string[]): Promise<Map<string, string>> {
     return new Map();
   }
 
+  const route = proxyRoute();
+  if (route.kind === "broken") {
+    // Fail closed. Resolving direct here would hand this machine's IP to every
+    // host an email links to, which is what the proxy was configured to stop.
+    const remedy = "Fix the proxy URL, or unset the variable to resolve links directly.";
+    console.error(
+      `[email-mcp] URL_RESOLVE_PROXY is set but unusable (${route.reason}); link resolution is disabled. ${remedy}`,
+    );
+    return new Map();
+  }
+  const dispatcher = route.kind === "proxied" ? route.dispatcher : undefined;
+
   const debug = process.env.DEBUG_URL_RESOLVE === "1";
   const timeoutMs = debug
     ? Number.parseInt(process.env.URL_RESOLVE_TIMEOUT || String(DEFAULT_TIMEOUT), 10)
@@ -392,7 +468,7 @@ async function resolveUrls(urls: string[]): Promise<Map<string, string>> {
     if (attempt > 0) retryRounds++;
 
     const results = await pooledResolve(remaining, POOL_SIZE, (url) =>
-      fetchOne(url, timeoutMs, log),
+      fetchOne(url, timeoutMs, log, dispatcher),
     );
 
     const timedOut: string[] = [];

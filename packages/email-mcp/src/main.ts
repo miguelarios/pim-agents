@@ -3,7 +3,7 @@ import { loadEmailConfig } from "@miguelarios/pim-core";
 import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
-import { disposeUrlCleaner } from "./htmlToMarkdown.js";
+import { disposeUrlCleaner, disposeUrlProxy } from "./htmlToMarkdown.js";
 import { registerImapResources } from "./resources/imapResources.js";
 import { ImapService } from "./services/ImapService.js";
 import { SmtpService } from "./services/SmtpService.js";
@@ -38,7 +38,7 @@ export async function createServer(): Promise<McpServer> {
   registerImapResources(server, services.imap);
 
   const handleShutdown = async () => {
-    await disposeUrlCleaner();
+    await Promise.all([disposeUrlCleaner(), disposeUrlProxy()]);
     process.exit(0);
   };
   process.on("SIGINT", handleShutdown);

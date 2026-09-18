@@ -17,7 +17,9 @@ import type { EmailFull, ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 import {
   attachmentSchema,
+  copyResultSchema,
   createFolderResultSchema,
+  deleteFolderResultSchema,
   deleteResultSchema,
   emailFullSchema,
   folderListSchema,
@@ -25,8 +27,10 @@ import {
   markResultSchema,
   moveResultSchema,
   rawEmailSchema,
+  renameFolderResultSchema,
   searchResultSchema,
   sendResultSchema,
+  threadResultSchema,
 } from "./emailSchemas.js";
 
 /**
@@ -148,6 +152,55 @@ function assertAttachmentPathAllowed(p: string): void {
   }
 }
 
+/** Lower-cased and trimmed, for comparing and de-duplicating addresses. */
+function addressKey(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+/**
+ * Works out who a reply-all goes to, from the message being replied to.
+ *
+ * Every address the account owns is dropped, so the sender is not copied back
+ * to themselves, and an address that appears twice across the headers is kept
+ * once — at the strongest position it held, since To outranks Cc.
+ */
+function deriveReplyAllRecipients(
+  original: EmailFull,
+  ownAddresses: string[],
+): { to: string[]; cc: string[]; bcc: string[] } {
+  // Seeding `placed` with our own addresses drops them and de-duplicates in
+  // one pass: an address already "placed" is never emitted again.
+  const placed = new Set(ownAddresses.map(addressKey));
+  const take = (addresses: Array<{ address: string }> | undefined): string[] => {
+    const out: string[] = [];
+    for (const entry of addresses ?? []) {
+      const address = entry?.address?.trim();
+      if (!address) continue;
+      const key = addressKey(address);
+      if (placed.has(key)) continue;
+      placed.add(key);
+      out.push(address);
+    }
+    return out;
+  };
+
+  // RFC 5322 §3.6.2: Reply-To is precisely the author's statement of where
+  // replies belong, so it replaces From rather than joining it.
+  const authors = original.replyTo?.length ? original.replyTo : [original.from];
+  const to = [...take(authors), ...take(original.to)];
+  const cc = take(original.cc);
+  // A received message never carries Bcc; one read back out of Sent or Drafts
+  // does, and dropping it there would quietly narrow the thread.
+  const bcc = take(original.bcc);
+
+  // Everything on To was ours. Rather than send a message with an empty To
+  // header, promote the Cc list — which is what a mail client does.
+  if (to.length === 0 && cc.length > 0) {
+    return { to: cc, cc: [], bcc };
+  }
+  return { to, cc, bcc };
+}
+
 /**
  * "On <date>, <name> <address> wrote:" — the line every mail client puts above
  * a quote. The date clause is dropped rather than left empty when the original
@@ -265,7 +318,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     name: "search_emails",
     title: "Search Emails",
     description:
-      "Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (subject, from, to, etc.) for most searches. Note: for result sets >1000, non-date sort fields are approximate (sorted within page only).",
+      "Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (subject, from, to, etc.) for most searches. Sorting uses the server's native SORT command where the server supports it, which makes pagination exact at any size; where it does not, the result set is sorted here instead and for >1000 results a non-date sort is approximate (ordered within the page only).",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
@@ -425,6 +478,64 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       }),
   },
   {
+    name: "get_thread",
+    title: "Get Thread",
+    description:
+      "Fetch the whole conversation a message belongs to, oldest first. Given any message in a thread, this follows its References chain back to the root and finds everything that cites it — or uses the server's own thread id where the server keeps one. By default it looks in the message's folder and the account's Sent folder, so your own replies are part of the conversation rather than missing from it; pass folders to search elsewhere. Returns summaries, not bodies — use get_email for the text of any one message.",
+    annotations: READ_ONLY,
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: {
+          type: "string",
+          description: "IMAP folder holding the message to start from. Defaults to INBOX.",
+        },
+        uid: {
+          type: "number",
+          description: "UID of any message in the thread — the root or any reply.",
+        },
+        folders: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Folders to search for thread members. Defaults to the message's folder plus the account's Sent folder. Pass this to search an archive as well; a folder that cannot be opened is skipped rather than failing the call.",
+        },
+      },
+      required: ["uid"],
+    },
+    outputSchema: threadResultSchema,
+    handler: (args: { folder?: string; uid: number; folders?: string[] }, { imap }) =>
+      run(async () => {
+        const folder = args.folder || "INBOX";
+
+        let folders: string[];
+        if (args.folders !== undefined) {
+          if (!Array.isArray(args.folders) || args.folders.length === 0) {
+            return invalid("folders must be a non-empty array of folder paths");
+          }
+          folders = args.folders;
+        } else {
+          // Sent by default: a conversation with your own replies missing from
+          // it is not the conversation. An account with no resolvable Sent
+          // folder simply gets the one folder.
+          folders = [folder];
+          try {
+            const sent = await imap.getSpecialUseFolder("\\Sent");
+            if (sent !== folder) folders.push(sent);
+          } catch {
+            // No Sent folder to add.
+          }
+        }
+
+        const thread = await imap.fetchThread(folder, args.uid, folders);
+        return structured({
+          rootMessageId: thread.rootMessageId,
+          count: thread.messages.length,
+          messages: thread.messages,
+        });
+      }),
+  },
+  {
     name: "send_email",
     title: "Send Email",
     description:
@@ -441,10 +552,21 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         to: {
           type: "array",
           items: { type: "string" },
-          description: "Recipient email addresses.",
+          description:
+            "Recipient email addresses. Required unless replyAll is set, which derives them from the message being replied to. Giving it explicitly overrides the derived list.",
         },
-        cc: { type: "array", items: { type: "string" }, description: "CC email addresses." },
-        bcc: { type: "array", items: { type: "string" }, description: "BCC email addresses." },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "CC email addresses. Under replyAll, omitting this derives the CC list from the original; giving it overrides that list.",
+        },
+        bcc: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "BCC email addresses. Under replyAll, omitting this carries over the original's BCC when there is one to carry — see replyAll.",
+        },
         subject: {
           type: "string",
           description:
@@ -490,6 +612,11 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           description:
             "IMAP folder containing the email referenced by replyToUid. Defaults to INBOX.",
         },
+        replyAll: {
+          type: "boolean",
+          description:
+            "Reply to everyone on the original rather than only its sender. Requires replyToUid. To becomes the original's Reply-To (or its From) plus its To; CC becomes the original's CC; addresses this account owns are dropped so the reply is not sent back to the sender. When the original itself carries a BCC — which happens only for a message this account sent, read back from Sent or Drafts — those recipients are carried over too, and remain blind. An explicit to, cc or bcc overrides the corresponding derived list. Defaults to false.",
+        },
         quoteOriginal: {
           type: "boolean",
           description:
@@ -511,12 +638,11 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
             "Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. Changes only the display name, never the address.",
         },
       },
-      required: ["to"],
     },
     outputSchema: sendResultSchema,
     handler: async (
       args: {
-        to: string[] | string;
+        to?: string[] | string;
         cc?: string[] | string;
         bcc?: string[] | string;
         subject?: string;
@@ -525,6 +651,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         attachments?: Attachment[];
         replyToUid?: number;
         replyToFolder?: string;
+        replyAll?: boolean;
         quoteOriginal?: boolean;
         saveToDrafts?: boolean;
         from?: string;
@@ -533,14 +660,20 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       { imap, smtp },
       ctx,
     ) => {
-      const to = Array.isArray(args.to) ? args.to : [args.to];
-      const cc = args.cc == null ? undefined : Array.isArray(args.cc) ? args.cc : [args.cc];
-      const bcc = args.bcc == null ? undefined : Array.isArray(args.bcc) ? args.bcc : [args.bcc];
+      const list = (value: string[] | string | undefined): string[] | undefined =>
+        value == null ? undefined : Array.isArray(value) ? value : [value];
+      let to = list(args.to);
+      let cc = list(args.cc);
+      let bcc = list(args.bcc);
       const saveToDrafts = args.saveToDrafts || false;
+      const replyAll = args.replyAll || false;
 
       // Validation: subject required when not replying
       if (!args.subject && !args.replyToUid) {
         return invalid("subject is required when not replying to an existing email");
+      }
+      if (replyAll && args.replyToUid === undefined) {
+        return invalid("replyAll requires replyToUid — there is no thread to reply to without it");
       }
 
       // Attachments are resolved before the gate, not inside the handler body.
@@ -564,6 +697,44 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         return invalid(err instanceof Error ? err.message : String(err));
       }
 
+      // The original is fetched before the gate, not inside the handler body,
+      // because under replyAll it is what decides the recipients — and a
+      // confirmation that cannot name who the mail is going to is not a
+      // confirmation. The cost is one extra FETCH per confirmation round trip.
+      let original: EmailFull | undefined;
+      if (args.replyToUid !== undefined) {
+        try {
+          original = await imap.fetchEmail(args.replyToFolder || "INBOX", args.replyToUid);
+        } catch (err) {
+          return toolError(err);
+        }
+      }
+
+      if (replyAll && original) {
+        const derived = deriveReplyAllRecipients(original, smtp.ownAddresses());
+        // Per field, not all-or-nothing: an explicit `to` with a derived `cc`
+        // is a real request ("reply to everyone, but send it to Ada").
+        to ??= derived.to;
+        cc ??= derived.cc;
+        if (derived.bcc.length > 0) bcc ??= derived.bcc;
+
+        // Checked on the effective recipients, after the overrides — not on
+        // the derived ones before them. A caller who supplied `to` has named
+        // someone, and the derivation finding only this account is then not a
+        // problem to refuse over.
+        if (to.length === 0 && (cc?.length ?? 0) === 0) {
+          return invalid(
+            "replyAll found no recipients other than this account — reply to the original's sender explicitly instead",
+          );
+        }
+      }
+
+      if (!to || to.length === 0) {
+        return invalid(
+          "to is required — pass recipient addresses, or set replyAll with replyToUid to derive them",
+        );
+      }
+
       // Saving a draft is reversible; actually putting mail on the wire is not.
       if (!saveToDrafts) {
         const recipients = [...to, ...(cc ?? []), ...(bcc ?? [])].join(", ");
@@ -576,16 +747,14 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       }
 
       return run(async () => {
-        const replyToFolder = args.replyToFolder || "INBOX";
         let subject = args.subject;
 
-        // Threading: fetch original email for reply context
+        // Threading, from the original already fetched above.
         let inReplyTo: string | undefined;
         let references: string[] | undefined;
         let text = args.text;
         let html = args.html;
-        if (args.replyToUid) {
-          const original = await imap.fetchEmail(replyToFolder, args.replyToUid);
+        if (original) {
           inReplyTo = original.messageId;
           references = [...(original.references || [])];
           if (original.messageId && !references.includes(original.messageId)) {
@@ -702,6 +871,55 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           status: "moved" as const,
           uids: args.uids,
           destination: args.destination,
+        });
+      }),
+  },
+  {
+    name: "copy_email",
+    title: "Copy Email",
+    description:
+      "Copy one or more emails into another IMAP folder, leaving the originals where they are. Use move_email to relocate them instead. When the server supports UIDPLUS, the result pairs each source UID with the UID its copy took in the destination; otherwise only the source UIDs come back, and the copy still happened.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Not idempotent: a second call adds a second copy rather than doing
+      // nothing, since each COPY allocates a fresh UID in the destination.
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: { type: "string", description: "Source IMAP folder. Defaults to INBOX." },
+        uids: UIDS_PROP("UIDs of emails to copy. They remain in the source folder."),
+        destination: {
+          type: "string",
+          description:
+            "Destination folder path. It must already exist — create_folder first if not.",
+        },
+      },
+      required: ["uids", "destination"],
+    },
+    outputSchema: copyResultSchema,
+    handler: (args: { folder?: string; uids: number[]; destination: string }, { imap }) =>
+      run(async () => {
+        if (!Array.isArray(args.uids) || args.uids.length === 0) {
+          return invalid("uids must be a non-empty array of message UIDs");
+        }
+        const folder = args.folder || "INBOX";
+        // A self-copy is legal IMAP and duplicates every message in place,
+        // which is never what a caller reaching for "copy to a folder" wants.
+        if (folder === args.destination) {
+          return invalid(
+            `destination is the source folder (${folder}) — this would duplicate the messages in place`,
+          );
+        }
+        const copied = await imap.copyEmails(folder, args.uids, args.destination);
+        return structured({
+          status: "copied" as const,
+          uids: args.uids,
+          destination: args.destination,
+          ...(copied ? { copied } : {}),
         });
       }),
   },
@@ -840,6 +1058,112 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         await imap.createFolder(args.path);
         return structured({ status: "created" as const, path: args.path });
       }),
+  },
+  {
+    name: "rename_folder",
+    title: "Rename Folder",
+    description:
+      "Rename an IMAP folder, or move it in the hierarchy by giving a newPath under a different parent. Child folders move with it. Renaming INBOX is special-cased by IMAP: the server moves INBOX's messages into the new folder and leaves an empty INBOX behind, and INBOX's children do not follow. The server may normalise the path it reports back, so use the returned newPath rather than assuming the requested one.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Not idempotent: the second call finds nothing at the old path and fails.
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Existing folder path to rename (e.g., 'Projects/Work').",
+        },
+        newPath: {
+          type: "string",
+          description:
+            "New folder path. A path under a different parent moves the folder there, creating the parent only if the server does so implicitly — call create_folder first if it does not.",
+        },
+      },
+      required: ["path", "newPath"],
+    },
+    outputSchema: renameFolderResultSchema,
+    handler: (args: { path: string; newPath: string }, { imap }) =>
+      run(async () => {
+        // Checked before connecting: a blank path is a RENAME the server would
+        // answer with a protocol error naming neither argument, and IMAP has no
+        // way to express "rename to nothing".
+        const path = typeof args.path === "string" ? args.path.trim() : "";
+        const newPath = typeof args.newPath === "string" ? args.newPath.trim() : "";
+        if (!path) return invalid("path must be a non-empty folder path");
+        if (!newPath) return invalid("newPath must be a non-empty folder path");
+        if (path === newPath) {
+          return invalid(`newPath is already the folder's path: ${path}`);
+        }
+        const renamed = await imap.renameFolder(path, newPath);
+        return structured({ status: "renamed" as const, ...renamed });
+      }),
+  },
+  {
+    name: "delete_folder",
+    title: "Delete Folder",
+    description:
+      "Delete an IMAP folder and every message in it. This is irreversible — the messages are not moved to Trash — so the tool asks the user to confirm first, naming the folder and how many messages it holds. INBOX cannot be deleted. Whether a folder with sub-folders can be deleted is up to the server; many refuse, so delete or move the children first.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      // A second call finds nothing to delete and fails, but the account ends
+      // up in the same state either way.
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Folder path to delete (e.g., 'Projects/Work')." },
+      },
+      required: ["path"],
+    },
+    outputSchema: deleteFolderResultSchema,
+    handler: async (args: { path: string }, { imap }, ctx) => {
+      const path = typeof args.path === "string" ? args.path.trim() : "";
+      if (!path) return invalid("path must be a non-empty folder path");
+      // RFC 3501 §6.3.4 makes deleting INBOX an error, and a server's reply to
+      // it is a bare NO. Rejecting here spends no confirmation on a request
+      // that was never going to succeed.
+      if (path.toUpperCase() === "INBOX") {
+        return invalid("INBOX cannot be deleted — IMAP reserves it");
+      }
+
+      // STATUS before the gate so the prompt says what is actually at stake:
+      // "delete Projects/Work" and "delete Projects/Work and its 412 messages"
+      // are different decisions. A folder the server will not count is still
+      // worth confirming, so a failure here is not fatal — the delete itself
+      // raises the real error.
+      let messages: number | undefined;
+      try {
+        messages = (await imap.getFolderStatus(path)).total;
+      } catch {
+        messages = undefined;
+      }
+
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_delete_folder",
+        `Delete the folder ${path}${
+          messages === undefined ? "" : ` and the ${messages} message(s) in it`
+        }? This cannot be undone — the messages do not go to Trash.`,
+      );
+      if (gate.status === "interrupt") return gate.result;
+
+      return run(async () => {
+        await imap.deleteFolder(path);
+        return structured({
+          status: "deleted" as const,
+          path,
+          ...(messages === undefined ? {} : { messages }),
+        });
+      });
+    },
   },
   {
     name: "download_attachment",
