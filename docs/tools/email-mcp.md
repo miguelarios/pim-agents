@@ -1,6 +1,6 @@
 # Email MCP Tools
 
-`@miguelarios/email-mcp` — IMAP/SMTP email server with 13 tools.
+`@miguelarios/email-mcp` — IMAP/SMTP email server with 14 tools.
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
 
@@ -223,6 +223,29 @@ Create a new IMAP folder.
 
 ```json
 { "status": "created", "path": "<folder-path>" }
+```
+
+## rename_folder
+
+Rename an IMAP folder, or move it in the hierarchy by giving a `newPath` under a different parent. Child folders move with it.
+
+Renaming `INBOX` is special-cased by IMAP (RFC 3501 §6.3.5): the server moves `INBOX`'s messages into the new folder and leaves an empty `INBOX` behind, and `INBOX`'s children do not follow.
+
+The server may normalise the path it reports back — a different hierarchy delimiter, or a personal-namespace prefix — so use the returned `newPath` rather than assuming the requested one.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | Existing folder path to rename (e.g., `Projects/Work`). |
+| `newPath` | string | yes | New folder path. A path under a different parent moves the folder there, creating the parent only if the server does so implicitly — call `create_folder` first if it does not. |
+
+A blank `path` or `newPath`, or a `newPath` equal to `path`, is rejected with `INVALID_INPUT` before a connection is opened.
+
+**Output**
+
+```json
+{ "status": "renamed", "path": "<old-path>", "newPath": "<new-path>" }
 ```
 
 ## delete_folder

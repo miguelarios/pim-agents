@@ -72,8 +72,8 @@ vi.mock("../htmlToMarkdown.js", () => ({
 }));
 
 describe("EMAIL_TOOLS definitions", () => {
-  it("defines 13 tools", () => {
-    expect(EMAIL_TOOLS).toHaveLength(13);
+  it("defines 14 tools", () => {
+    expect(EMAIL_TOOLS).toHaveLength(14);
   });
 
   it("all tools have name, description, and inputSchema", () => {
@@ -95,6 +95,7 @@ describe("EMAIL_TOOLS definitions", () => {
     expect(names).toContain("delete_email");
     expect(names).toContain("list_folders");
     expect(names).toContain("create_folder");
+    expect(names).toContain("rename_folder");
     expect(names).toContain("delete_folder");
     expect(names).toContain("download_attachment");
     expect(names).toContain("get_email_raw");
@@ -1077,5 +1078,87 @@ describe("delete_folder", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/inferior hierarchical names/);
+  });
+});
+
+describe("rename_folder", () => {
+  const mockRenameFolder = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockImapService.renameFolder = mockRenameFolder;
+    mockRenameFolder.mockResolvedValue({ path: "Projects/Work", newPath: "Projects/Clients" });
+  });
+
+  it("renames a folder and reports both paths", async () => {
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Projects/Work", newPath: "Projects/Clients" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockRenameFolder).toHaveBeenCalledWith("Projects/Work", "Projects/Clients");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      status: "renamed",
+      path: "Projects/Work",
+      newPath: "Projects/Clients",
+    });
+  });
+
+  it("returns the paths the server reported rather than the requested ones", async () => {
+    mockRenameFolder.mockResolvedValueOnce({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Work", newPath: "Clients" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.structuredContent).toEqual({
+      status: "renamed",
+      path: "INBOX.Work",
+      newPath: "INBOX.Clients",
+    });
+  });
+
+  it.each([
+    ["path", { path: "  ", newPath: "Clients" }],
+    ["newPath", { path: "Work", newPath: "" }],
+  ])("rejects a blank %s without opening a connection", async (_field, args) => {
+    const result = await handleEmailTool("rename_folder", args, mockImapService, mockSmtpService);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/must be a non-empty folder path/);
+    expect(mockRenameFolder).not.toHaveBeenCalled();
+  });
+
+  it("rejects a rename to the same path", async () => {
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Work", newPath: "Work" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/already the folder's path/);
+    expect(mockRenameFolder).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a server rejection as a tool error", async () => {
+    mockRenameFolder.mockRejectedValueOnce(new Error("Mailbox already exists"));
+
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Work", newPath: "Clients" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Mailbox already exists/);
   });
 });
