@@ -9,6 +9,8 @@ Every tool declares a `title`, all four behaviour annotations, and an `outputSch
 
 `send_email` (when sending, not when saving a draft), `send_draft`, `delete_email` with `permanent: true`, and `delete_folder` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
 
+Requires Node.js **20.18.1 or newer**.
+
 ## Usage
 
 ```bash
@@ -48,6 +50,10 @@ Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMT
   deliberately.
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. Path-based attachments (`attachments[].path`) are rejected unless this is set, and only files resolving inside it are allowed. Use `attachments[].content` for inline content without setting this.
 - `URL_RESOLVE_DISABLE` — set to `1`/`true` to skip network link-resolution when rendering email to markdown; links are left unresolved in the output.
+- `URL_RESOLVE_PROXY` — route link resolution through an HTTP proxy, so the machine running
+  the server does not hand its IP address to every host an email links to. Takes an
+  `http://` or `https://` URL, with credentials if the proxy needs them
+  (`http://user:pass@proxy.internal:3128`). See [Link resolution and your IP address](#link-resolution-and-your-ip-address).
 - `SMTP_AUTO_SENT` — set to `true` if your provider auto-files sent mail, so the server skips the extra IMAP append to Sent.
 - `SMTP_ALLOWED_FROM` — comma-separated allowlist of additional visible `From` addresses that `send_email` may use via its `from` parameter. Any address not in this list (and not `SMTP_USER`) is rejected. Read [Deliverability](#deliverability-spf-dkim-and-dmarc) before setting it.
 
@@ -112,6 +118,28 @@ fails over it.
 Server-side ordering is not byte-identical to the fallback, because RFC 5256 defines the
 keys differently: `SUBJECT` sorts on the *base* subject with `Re:`/`Fwd:` stripped, and
 `FROM` sorts on the sender's mailbox address where the fallback prefers the display name.
+
+## Link resolution and your IP address
+
+Rendering an email to markdown resolves the links in it, which means a GET to every distinct
+URL the message contains. Those hosts see the request come from whatever machine the server
+runs on — a home connection, typically — and marketing links are often instrumented precisely
+to record that. The links come from senders you did not choose.
+
+Set `URL_RESOLVE_PROXY` to an `http://` or `https://` proxy URL and every resolution fetch
+goes through it instead. Credentials are supported in the URL. Nothing else about the
+server's traffic is proxied: IMAP and SMTP connections are unaffected.
+
+**A proxy that cannot be used disables resolution rather than falling back to a direct
+fetch.** If the value is unparseable or has a scheme other than `http`/`https`, the server
+logs the reason to stderr and leaves links unresolved. Resolving directly at that point would
+disclose exactly the address the setting exists to protect, so it fails closed.
+
+Unset the variable to resolve directly (the default), or `URL_RESOLVE_DISABLE=1` to skip
+resolution entirely — that still wins over a configured proxy.
+
+The SSRF guard is unchanged and independent: private-range, loopback and reserved-suffix
+targets are never fetched, proxy or not.
 
 ## Resources
 
