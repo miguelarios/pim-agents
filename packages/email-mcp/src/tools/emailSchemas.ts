@@ -112,6 +112,13 @@ export const createFolderResultSchema = v.object({
   path: v.string(),
 });
 
+/** Both paths as the server reported them, so a normalised target is visible. */
+export const renameFolderResultSchema = v.object({
+  status: v.literal("renamed"),
+  path: v.string(),
+  newPath: v.string(),
+});
+
 /**
  * Metadata only — the bytes ride in the result's embedded binary resource
  * block, so a large attachment is not duplicated in the payload.
