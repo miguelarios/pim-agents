@@ -1,6 +1,6 @@
 # Email MCP Tools
 
-`@miguelarios/email-mcp` — IMAP/SMTP email server with 15 tools.
+`@miguelarios/email-mcp` — IMAP/SMTP email server with 16 tools.
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
 
@@ -64,6 +64,41 @@ Fetch a full email by UID including headers, body, and attachment metadata. Cale
 - `text` → `textBody` populated, `htmlBody` removed.
 
 Calendar parts are detected from the message structure regardless of content disposition, so invitations delivered inline (no filename, no `Content-Disposition: attachment`) still count toward `hasAttachments`, appear in `attachments` (with a synthetic `attachment-<n>` filename when the part has none), and are listed in `calendarParts`. Decoded iCalendar text is inlined up to 256 KiB; larger parts set `truncated: true` and can be fetched via `download_attachment` with the part's `partId`.
+
+## get_thread
+
+Fetch the whole conversation a message belongs to, oldest first. Given *any* message in a thread — the root or any reply — this returns every message in it that the searched folders hold.
+
+Returns summaries, not bodies; use [`get_email`](#get_email) for the text of any one message.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder` | string | | IMAP folder holding the message to start from. Defaults to `INBOX`. |
+| `uid` | number | yes | UID of any message in the thread. |
+| `folders` | string[] | | Folders to search for thread members. Defaults to the message's folder **plus the account's Sent folder**. |
+
+**How the thread is assembled**
+
+1. **Server-side thread id, where there is one.** A server advertising `OBJECTID` or `X-GM-EXT-1` assigns every message a thread id and answers a search on it with the whole conversation. That is authoritative, and it catches replies whose `References` chain was mangled in transit.
+2. **Otherwise, the `References` chain — and `In-Reply-To`.** RFC 5322 §3.6.4 has every reply carry the root's `Message-ID` in its `References`, so one search for messages that either *are* the root or *cite* it returns the thread. `In-Reply-To` is read and searched alongside it, because plenty of mailers send a reply carrying only that header: without it such a reply is missing from the thread, and anchoring on one would make it its own root and lose every ancestor. `References` wins where both are present, since its first entry is the true root. Headers are unfolded before parsing — a long `References` runs across continuation lines, and a chain split mid-header would otherwise lose every id after the first.
+
+RFC 5256's `THREAD` command would be a third option, but imapflow exposes no way to issue it.
+
+Sent is searched by default because a conversation with your own replies missing from it is not the conversation. A folder that cannot be **opened** is skipped rather than failing the call — a partial thread is more use than none. Only the select is forgiving: a failure in the search or the fetch propagates, so a server that rejects the search never comes back as an empty conversation. The same message filed in two folders is de-duplicated by `Message-ID`.
+
+**Output**
+
+```json
+{
+  "rootMessageId": "<root@example.com>",
+  "count": 3,
+  "messages": [{ "folder": "INBOX", "uid": 1, "...": "EmailSummary fields" }]
+}
+```
+
+`rootMessageId` is the first entry of the anchor's `References` chain, or the anchor's own `Message-ID` when it starts the thread, or `null` when it carries neither. `messages` are `EmailSummary` objects (see [Email shapes](#email-shapes)) each tagged with the `folder` it was found in, oldest first.
 
 ## send_email
 

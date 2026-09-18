@@ -22,12 +22,13 @@ A client that does not support elicitation cannot answer the prompt, so those to
 
 ## Tools
 
-### [Email (15 tools)](docs/tools/email-mcp.md)
+### [Email (16 tools)](docs/tools/email-mcp.md)
 
 | Tool | Description |
 |------|-------------|
 | `search_emails` | Search and filter emails by folder, sender, subject, date, flags |
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata |
+| `get_thread` | Fetch the whole conversation a message belongs to, oldest first |
 | `send_email` | Compose and send via SMTP, reply with threading, or save as draft (confirms before sending) |
 | `send_draft` | Send an existing draft from the Drafts folder (confirms first) |
 | `move_email` | Move emails between folders |

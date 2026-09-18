@@ -50,6 +50,10 @@ function fakeServices() {
         .fn()
         .mockResolvedValue([{ path: "INBOX", delimiter: "/", specialUse: "\\Inbox" }]),
       getFolderStatus: vi.fn().mockResolvedValue({ total: 10, unseen: 2 }),
+      fetchThread: vi.fn().mockResolvedValue({
+        rootMessageId: "<a@test.com>",
+        messages: [{ ...SUMMARY, folder: "INBOX" }],
+      }),
       deleteEmails: vi.fn().mockResolvedValue(undefined),
       getSpecialUseFolder: vi.fn().mockResolvedValue("Drafts"),
       appendMessage: vi.fn().mockResolvedValue({ uid: 100 }),
@@ -178,6 +182,20 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     const second = (await client.listTools()).tools.map((t) => t.name);
     expect(second).toEqual(first);
     expect(first).toEqual(EMAIL_TOOLS.map((t) => t.name));
+  });
+
+  it("delivers a thread through the advertised get_thread outputSchema", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+    const result = await client.callTool({ name: "get_thread", arguments: { uid: 1 } });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      rootMessageId: "<a@test.com>",
+      count: 1,
+    });
+    // Defaults to the anchor folder plus Sent, which the stub resolves.
+    expect(services.imap.fetchThread).toHaveBeenCalledWith("INBOX", 1, ["INBOX", "Drafts"]);
   });
 
   it("returns structuredContent matching the advertised outputSchema", async () => {
