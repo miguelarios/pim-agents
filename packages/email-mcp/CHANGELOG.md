@@ -1,14 +1,5 @@
 # Changelog
 
-## 0.16.0 (2026-09-17)
-
-- New `delete_folder` tool. A folder could be created but never removed, so an account only ever accumulated folders — there was no way to undo a `create_folder` typo, let alone tidy a tree (PR #111, `claude/email-mcp-issues-ii6e3m-delete-folder`).
-- `delete_folder` asks the user to confirm first, and the prompt names the folder's message count as well as its path. This delete is irreversible in a way `delete_email` is not: the messages go with the folder and do **not** land in Trash, so "delete Projects/Work" and "delete Projects/Work and its 412 messages" are different decisions. The count comes from a `STATUS` issued before the gate, and is echoed in the result as `messages` (PR #111, `claude/email-mcp-issues-ii6e3m-delete-folder`).
-- A folder the server will not `STATUS` — a `\Noselect` hierarchy node has no messages to count — is still confirmed and still deleted. The prompt simply drops the count clause, `messages` is absent from the output, and the `DELETE` itself raises the real error if there is one (PR #111, `claude/email-mcp-issues-ii6e3m-delete-folder`).
-- Deleting `INBOX` is rejected with `INVALID_INPUT` before anything is asked or connected, whatever its casing. RFC 3501 §6.3.4 makes it an error and servers answer with a bare `NO`; spending a confirmation on a request that cannot succeed teaches the user that confirming does not mean the thing happened (PR #111, `claude/email-mcp-issues-ii6e3m-delete-folder`).
-- Deleting a folder drops the special-use cache, for the same reason a rename does: the folder just removed may be the Sent, Drafts or Trash mailbox `getSpecialUseFolder` resolved, and a stale entry costs an append to a folder that is gone (PR #111, `claude/email-mcp-issues-ii6e3m-delete-folder`).
-- Whether a folder with sub-folders can be deleted is left to the server. RFC 3501 permits either answer and real servers differ, so a refusal surfaces rather than being pre-empted by a guess about this server's behaviour (PR #111, `claude/email-mcp-issues-ii6e3m-delete-folder`).
-
 ## 0.14.0 (2026-09-16)
 
 - `get_email` and `search_emails` now report attachments that carry `Content-Disposition: inline` with a filename. Apple Mail (iOS and macOS) writes forwarded file attachments that way, so a forwarded message with a real PDF attached previously reported `hasAttachments: false` and an empty `attachments` array — the part was in the MIME source the whole time, and `download_attachment` retrieved it correctly when given the `partId` by hand. Content-ID distinguishes the two inline cases: an image the HTML body references carries one, a forwarded file does not, so embedded signature logos are still not listed as attachments (PR #107, `claude/exciting-wozniak-55ly2k`).
