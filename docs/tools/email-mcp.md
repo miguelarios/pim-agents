@@ -114,15 +114,16 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `to` | string[] | yes | Recipient email addresses. |
-| `cc` | string[] | | CC email addresses. |
-| `bcc` | string[] | | BCC email addresses. |
+| `to` | string[] | unless `replyAll` | Recipient email addresses. Required unless `replyAll` is set, which derives them from the message being replied to. Giving it explicitly overrides the derived list. |
+| `cc` | string[] | | CC email addresses. Under `replyAll`, omitting this derives the CC list from the original; giving it overrides that list. |
+| `bcc` | string[] | | BCC email addresses. Under `replyAll`, omitting this carries over the original's BCC when there is one to carry. |
 | `subject` | string | | Email subject line. Required for new emails. When `replyToUid` is set and subject is omitted, automatically uses `Re: <original subject>`. When provided explicitly, used as-is. |
 | `text` | string | | Plain text body. |
 | `html` | string | | HTML body. |
 | `attachments` | `{ filename: string, path?: string, content?: string }[]` | | File attachments. Use `content` for inline string content. `path` (attach a file from disk) is **disabled unless the `EMAIL_ATTACHMENT_DIR` env var is set**, and only files resolving inside that directory are allowed. |
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
+| `replyAll` | boolean | | Reply to everyone on the original rather than only its sender. Requires `replyToUid`. See [Reply-all recipients](#reply-all-recipients). Defaults to false. |
 | `saveToDrafts` | boolean | | When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false. |
 | `from` | string | | Optional visible From address. Must be either `SMTP_USER` or listed in `SMTP_ALLOWED_FROM`; anything else is rejected. SMTP envelope delivery still uses the account sender, so the address should share a domain with `SMTP_USER` — see the deliverability note below. |
 | `fromName` | string | | Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. |
@@ -140,6 +141,28 @@ When sending (default):
 ```
 
 Errors with `subject is required when not replying to an existing email` if no subject and no `replyToUid`.
+
+Errors with `to is required` when neither `to` nor `replyAll` is given, and with `replyAll requires replyToUid` when `replyAll` is set without one.
+
+**Reply-all recipients**
+
+With `replyAll: true`, recipients are derived from the message `replyToUid` names:
+
+| Field | Derived from |
+|-------|--------------|
+| `to` | The original's `Reply-To` if it has one, otherwise its `From` — plus everyone on its `To`. |
+| `cc` | The original's `Cc`. |
+| `bcc` | The original's `Bcc`, when it has one. |
+
+`Reply-To` *replaces* `From` rather than joining it; RFC 5322 §3.6.2 makes that header the author's statement of where replies belong, which matters for mailing lists.
+
+Every address this account owns — `IMAP_USER`, `SMTP_USER`, and anything in `SMTP_ALLOWED_FROM` — is dropped, so the reply is not addressed back to the sender. An address appearing in more than one header is kept once, at the strongest position it held (`To` outranks `Cc`). If every `To` address was the account's own, the derived `Cc` list is promoted to `To` rather than sending a message with an empty `To` header. When nothing is left at all, the call fails rather than sending a reply to nobody.
+
+**A received message carries no `Bcc`**, so there is normally nothing to carry over. A message read back out of `Sent` or `Drafts` does carry one, and those recipients are included — still blind, as `Bcc` always is. This is the case issue #30 calls out: replying-all to your own sent mail should not silently narrow the thread.
+
+An explicit `to`, `cc` or `bcc` overrides the corresponding derived list, field by field rather than all-or-nothing — "reply to everyone, but send it to Ada" is a real request. The nobody-but-us failure is judged on what is left *after* those overrides, so supplying `to` is always enough.
+
+The original is fetched *before* the send confirmation, so the prompt names the derived recipients. The caller sees who the mail is going to before agreeing to send it.
 
 **Deliverability when using `from`**
 
@@ -441,6 +464,12 @@ interface EmailSummary {
 ```ts
 interface EmailFull extends EmailSummary {
   cc?: Array<{ name?: string; address: string }>;
+  replyTo?: Array<{ name?: string; address: string }>;  // present only when the
+                                   // message carries a Reply-To header
+  bcc?: Array<{ name?: string; address: string }>;      // present only when the
+                                   // message carries a Bcc header — in practice
+                                   // only for mail this account sent, read back
+                                   // from Sent or Drafts
   inReplyTo: string | null;        // Message-ID being replied to
   references: string[];            // full thread chain
   textBody?: string;               // present when format = "text" or "markdown" fallback

@@ -13,7 +13,7 @@ import { simpleParser } from "mailparser";
 import { htmlToMarkdown } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
-import type { ImapService } from "../services/ImapService.js";
+import type { EmailFull, ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 import {
   attachmentSchema,
@@ -150,6 +150,55 @@ function assertAttachmentPathAllowed(p: string): void {
   if (target !== root && !target.startsWith(root + sep)) {
     throw new Error(`attachment path is outside EMAIL_ATTACHMENT_DIR: ${p}`);
   }
+}
+
+/** Lower-cased and trimmed, for comparing and de-duplicating addresses. */
+function addressKey(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+/**
+ * Works out who a reply-all goes to, from the message being replied to.
+ *
+ * Every address the account owns is dropped, so the sender is not copied back
+ * to themselves, and an address that appears twice across the headers is kept
+ * once — at the strongest position it held, since To outranks Cc.
+ */
+function deriveReplyAllRecipients(
+  original: EmailFull,
+  ownAddresses: string[],
+): { to: string[]; cc: string[]; bcc: string[] } {
+  // Seeding `placed` with our own addresses drops them and de-duplicates in
+  // one pass: an address already "placed" is never emitted again.
+  const placed = new Set(ownAddresses.map(addressKey));
+  const take = (addresses: Array<{ address: string }> | undefined): string[] => {
+    const out: string[] = [];
+    for (const entry of addresses ?? []) {
+      const address = entry?.address?.trim();
+      if (!address) continue;
+      const key = addressKey(address);
+      if (placed.has(key)) continue;
+      placed.add(key);
+      out.push(address);
+    }
+    return out;
+  };
+
+  // RFC 5322 §3.6.2: Reply-To is precisely the author's statement of where
+  // replies belong, so it replaces From rather than joining it.
+  const authors = original.replyTo?.length ? original.replyTo : [original.from];
+  const to = [...take(authors), ...take(original.to)];
+  const cc = take(original.cc);
+  // A received message never carries Bcc; one read back out of Sent or Drafts
+  // does, and dropping it there would quietly narrow the thread.
+  const bcc = take(original.bcc);
+
+  // Everything on To was ours. Rather than send a message with an empty To
+  // header, promote the Cc list — which is what a mail client does.
+  if (to.length === 0 && cc.length > 0) {
+    return { to: cc, cc: [], bcc };
+  }
+  return { to, cc, bcc };
 }
 
 /** Runs a handler body, converting anything thrown into a tool execution error. */
@@ -419,10 +468,21 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         to: {
           type: "array",
           items: { type: "string" },
-          description: "Recipient email addresses.",
+          description:
+            "Recipient email addresses. Required unless replyAll is set, which derives them from the message being replied to. Giving it explicitly overrides the derived list.",
         },
-        cc: { type: "array", items: { type: "string" }, description: "CC email addresses." },
-        bcc: { type: "array", items: { type: "string" }, description: "BCC email addresses." },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "CC email addresses. Under replyAll, omitting this derives the CC list from the original; giving it overrides that list.",
+        },
+        bcc: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "BCC email addresses. Under replyAll, omitting this carries over the original's BCC when there is one to carry — see replyAll.",
+        },
         subject: {
           type: "string",
           description:
@@ -468,6 +528,11 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           description:
             "IMAP folder containing the email referenced by replyToUid. Defaults to INBOX.",
         },
+        replyAll: {
+          type: "boolean",
+          description:
+            "Reply to everyone on the original rather than only its sender. Requires replyToUid. To becomes the original's Reply-To (or its From) plus its To; CC becomes the original's CC; addresses this account owns are dropped so the reply is not sent back to the sender. When the original itself carries a BCC — which happens only for a message this account sent, read back from Sent or Drafts — those recipients are carried over too, and remain blind. An explicit to, cc or bcc overrides the corresponding derived list. Defaults to false.",
+        },
         saveToDrafts: {
           type: "boolean",
           description:
@@ -484,12 +549,11 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
             "Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. Changes only the display name, never the address.",
         },
       },
-      required: ["to"],
     },
     outputSchema: sendResultSchema,
     handler: async (
       args: {
-        to: string[] | string;
+        to?: string[] | string;
         cc?: string[] | string;
         bcc?: string[] | string;
         subject?: string;
@@ -498,6 +562,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         attachments?: Attachment[];
         replyToUid?: number;
         replyToFolder?: string;
+        replyAll?: boolean;
         saveToDrafts?: boolean;
         from?: string;
         fromName?: string;
@@ -505,14 +570,20 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       { imap, smtp },
       ctx,
     ) => {
-      const to = Array.isArray(args.to) ? args.to : [args.to];
-      const cc = args.cc == null ? undefined : Array.isArray(args.cc) ? args.cc : [args.cc];
-      const bcc = args.bcc == null ? undefined : Array.isArray(args.bcc) ? args.bcc : [args.bcc];
+      const list = (value: string[] | string | undefined): string[] | undefined =>
+        value == null ? undefined : Array.isArray(value) ? value : [value];
+      let to = list(args.to);
+      let cc = list(args.cc);
+      let bcc = list(args.bcc);
       const saveToDrafts = args.saveToDrafts || false;
+      const replyAll = args.replyAll || false;
 
       // Validation: subject required when not replying
       if (!args.subject && !args.replyToUid) {
         return invalid("subject is required when not replying to an existing email");
+      }
+      if (replyAll && args.replyToUid === undefined) {
+        return invalid("replyAll requires replyToUid — there is no thread to reply to without it");
       }
 
       // Attachments are resolved before the gate, not inside the handler body.
@@ -536,6 +607,44 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         return invalid(err instanceof Error ? err.message : String(err));
       }
 
+      // The original is fetched before the gate, not inside the handler body,
+      // because under replyAll it is what decides the recipients — and a
+      // confirmation that cannot name who the mail is going to is not a
+      // confirmation. The cost is one extra FETCH per confirmation round trip.
+      let original: EmailFull | undefined;
+      if (args.replyToUid !== undefined) {
+        try {
+          original = await imap.fetchEmail(args.replyToFolder || "INBOX", args.replyToUid);
+        } catch (err) {
+          return toolError(err);
+        }
+      }
+
+      if (replyAll && original) {
+        const derived = deriveReplyAllRecipients(original, smtp.ownAddresses());
+        // Per field, not all-or-nothing: an explicit `to` with a derived `cc`
+        // is a real request ("reply to everyone, but send it to Ada").
+        to ??= derived.to;
+        cc ??= derived.cc;
+        if (derived.bcc.length > 0) bcc ??= derived.bcc;
+
+        // Checked on the effective recipients, after the overrides — not on
+        // the derived ones before them. A caller who supplied `to` has named
+        // someone, and the derivation finding only this account is then not a
+        // problem to refuse over.
+        if (to.length === 0 && (cc?.length ?? 0) === 0) {
+          return invalid(
+            "replyAll found no recipients other than this account — reply to the original's sender explicitly instead",
+          );
+        }
+      }
+
+      if (!to || to.length === 0) {
+        return invalid(
+          "to is required — pass recipient addresses, or set replyAll with replyToUid to derive them",
+        );
+      }
+
       // Saving a draft is reversible; actually putting mail on the wire is not.
       if (!saveToDrafts) {
         const recipients = [...to, ...(cc ?? []), ...(bcc ?? [])].join(", ");
@@ -548,14 +657,12 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       }
 
       return run(async () => {
-        const replyToFolder = args.replyToFolder || "INBOX";
         let subject = args.subject;
 
-        // Threading: fetch original email for reply context
+        // Threading, from the original already fetched above.
         let inReplyTo: string | undefined;
         let references: string[] | undefined;
-        if (args.replyToUid) {
-          const original = await imap.fetchEmail(replyToFolder, args.replyToUid);
+        if (original) {
           inReplyTo = original.messageId;
           references = [...(original.references || [])];
           if (original.messageId && !references.includes(original.messageId)) {

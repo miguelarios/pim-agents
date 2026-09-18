@@ -224,6 +224,22 @@ describe("SmtpService", () => {
     });
   });
 
+  describe("ownAddresses", () => {
+    it("covers the IMAP user, the SMTP user and the allowlist, lower-cased", () => {
+      expect(service.ownAddresses()).toEqual(["user@test.com", "shared@test.com"]);
+    });
+
+    it("keeps an IMAP user that differs from the SMTP user", () => {
+      const split = new SmtpService({
+        ...testConfig,
+        imap: { ...testConfig.imap, user: "Reader@Test.com" },
+        allowedFrom: undefined,
+      } as never);
+
+      expect(split.ownAddresses()).toEqual(["reader@test.com", "user@test.com"]);
+    });
+  });
+
   describe("sendRawMessage", () => {
     it("sends a pre-composed raw message via SMTP", async () => {
       mockSendMail.mockResolvedValueOnce({

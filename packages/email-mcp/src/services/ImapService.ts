@@ -24,6 +24,14 @@ export interface EmailSummary {
 
 export interface EmailFull extends EmailSummary {
   cc?: Array<{ name?: string; address: string }>;
+  /** Present only when the message carries a Reply-To header. */
+  replyTo?: Array<{ name?: string; address: string }>;
+  /**
+   * Present only when the message carries a Bcc header — in practice only for
+   * a message this account sent, read back out of Sent or Drafts. A received
+   * message never names its blind recipients.
+   */
+  bcc?: Array<{ name?: string; address: string }>;
   inReplyTo: string | null;
   references: string[];
   textBody?: string;
@@ -437,6 +445,8 @@ export class ImapService {
         }
 
         const parsed = await simpleParser(fetchResult.source);
+        const replyTo = addressList(parsed.replyTo);
+        const bcc = addressList(parsed.bcc);
         const attachmentParts = collectAttachmentParts(fetchResult.bodyStructure);
         const calendarParts = buildCalendarParts(attachmentParts, parsed.attachments ?? []);
         return {
@@ -455,13 +465,12 @@ export class ImapService {
                 address: parsed.from.value[0].address || "",
               }
             : { address: "unknown" },
-          to: (Array.isArray(parsed.to) ? parsed.to : parsed.to ? [parsed.to] : [])
-            .flatMap((addr) => addr.value)
-            .map((a: any) => ({ name: a.name, address: a.address || "" })),
-          cc:
-            (Array.isArray(parsed.cc) ? parsed.cc : parsed.cc ? [parsed.cc] : [])
-              .flatMap((addr) => addr.value)
-              .map((a: any) => ({ name: a.name, address: a.address || "" })) || undefined,
+          to: addressList(parsed.to),
+          cc: addressList(parsed.cc),
+          // Omitted rather than empty: the schema marks both optional, and
+          // "no Reply-To header" should not read as "Reply-To: nobody".
+          ...(replyTo.length > 0 ? { replyTo } : {}),
+          ...(bcc.length > 0 ? { bcc } : {}),
           date: parsed.date ? formatInTimezone(parsed.date.toISOString(), this.timezone) : "",
           flags: [...(fetchResult.flags ?? [])],
           hasAttachments: attachmentParts.length > 0,
@@ -889,6 +898,17 @@ function parseMessageIdHeader(headers: Buffer | undefined, name: string): string
   const line = unfolded.split(/\r?\n/).find((l) => l.toLowerCase().startsWith(prefix));
   if (!line) return [];
   return line.match(/<[^<>]+>/g) ?? [];
+}
+
+/**
+ * Flattens one of mailparser's address fields, which is either a single
+ * `AddressObject`, an array of them, or absent.
+ */
+function addressList(field: unknown): Array<{ name?: string; address: string }> {
+  const objects = Array.isArray(field) ? field : field ? [field] : [];
+  return objects
+    .flatMap((addr: any) => addr?.value ?? [])
+    .map((a: any) => ({ name: a.name, address: a.address || "" }));
 }
 
 function compareSummaries(

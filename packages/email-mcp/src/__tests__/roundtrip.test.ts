@@ -76,6 +76,7 @@ function fakeServices() {
       config: { smtp: { user: "me@example.com" }, autoSent: true, fromName: undefined },
       // Mirrors SmtpService: an allowed address passes through, otherwise the
       // account sender is used; the header is only formatted, never validated here.
+      ownAddresses: vi.fn(() => ["me@example.com"]),
       resolveFromAddress: vi.fn((requested?: string) => requested?.trim() || "me@example.com"),
       formatFromHeader: vi.fn((address: string, displayName?: string) =>
         displayName ? `"${displayName}" <${address}>` : address,
@@ -397,6 +398,40 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(elicitations[0]).toContain("r@test.com");
     expect(result.isError).toBeFalsy();
     expect(services.smtp.sendRawMessage).toHaveBeenCalled();
+  });
+
+  it("accepts a reply-all with no explicit recipients, and names them when asking", async () => {
+    const services = fakeServices();
+    services.imap.fetchEmail = vi.fn().mockResolvedValue({
+      ...SUMMARY,
+      from: { address: "ada@example.com" },
+      to: [{ address: "me@example.com" }, { address: "bob@example.com" }],
+      cc: [{ address: "cara@example.com" }],
+      inReplyTo: null,
+      references: [],
+      attachments: [],
+    });
+
+    const { client, elicitations } = await connect(era, services);
+    // `to` is deliberately absent: the SDK validates arguments against the
+    // advertised inputSchema, so this call only reaches the handler because
+    // the schema no longer marks it required.
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: { replyToUid: 1, replyAll: true, text: "Sounds good" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(elicitations[0]).toContain("ada@example.com");
+    expect(elicitations[0]).toContain("cara@example.com");
+    expect(elicitations[0]).not.toContain("me@example.com");
+    expect(services.smtp.composeRawMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: ["ada@example.com", "bob@example.com"],
+        cc: ["cara@example.com"],
+        subject: "Re: Hello",
+      }),
+    );
   });
 
   it("fails with an actionable error when the client cannot be asked", async () => {

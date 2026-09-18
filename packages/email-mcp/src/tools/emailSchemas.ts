@@ -28,6 +28,10 @@ export const emailSummarySchema = v.object({
 export const emailFullSchema = v.object({
   ...emailSummarySchema.entries,
   cc: v.optional(v.array(address)),
+  /** Present only when the message carries a Reply-To header. */
+  replyTo: v.optional(v.array(address)),
+  /** Present only when the message carries a Bcc header — i.e. one we sent. */
+  bcc: v.optional(v.array(address)),
   inReplyTo: v.nullable(v.string()),
   references: v.array(v.string()),
   textBody: v.optional(v.string()),
