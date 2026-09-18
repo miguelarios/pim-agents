@@ -1,6 +1,6 @@
 # Email MCP Tools
 
-`@miguelarios/email-mcp` — IMAP/SMTP email server with 16 tools.
+`@miguelarios/email-mcp` — IMAP/SMTP email server with 17 tools.
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
 
@@ -218,6 +218,51 @@ Send an existing email draft from the Drafts folder. Fetches the draft's raw RFC
 ```
 
 Errors with `Draft has no recipients — cannot send` if the draft is missing `To`/`Cc`/`Bcc`.
+
+## forward_email
+
+Forward an existing message to new recipients, with an optional note above it.
+
+> **Asks for confirmation.** Only when actually sending — `saveToDrafts: true` is not gated. Set `PIM_MCP_CONFIRM=off` to skip.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder` | string | | IMAP folder containing the message to forward. Defaults to `INBOX`. |
+| `uid` | number | yes | UID of the message to forward. |
+| `to` | string[] | yes | Recipient addresses. |
+| `cc` | string[] | | CC addresses. |
+| `bcc` | string[] | | BCC addresses. |
+| `note` | string | | Text placed above the forwarded message, where a covering note goes. Line breaks are preserved in both the text and HTML parts. |
+| `subject` | string | | Defaults to `Fwd: <original subject>`, and is not prefixed again when the original is already a forward. |
+| `includeAttachments` | boolean | | Re-attach the original's attachments. Defaults to **true**. |
+| `saveToDrafts` | boolean | | Save to Drafts instead of sending, so it can be edited in a mail client first. Defaults to false. |
+| `from` | string | | Visible From address. Must be `SMTP_USER` or in `SMTP_ALLOWED_FROM`. |
+| `fromName` | string | | Visible display name for the From header. |
+
+The body is reproduced under the conventional header block:
+
+```
+---------- Forwarded message ----------
+From: Ada Lovelace <ada@example.com>
+Date: 2026-03-04T12:00:00.000Z
+Subject: Q3 numbers
+To: user@example.com, Bob <bob@example.com>
+Cc: cara@example.com
+
+Numbers attached.
+```
+
+Lines the original does not have are omitted rather than left blank. An HTML part is emitted only when the original had HTML; an HTML-only original is rendered to markdown for the text part, so both parts say the same thing.
+
+**A forward starts a new thread** — no `In-Reply-To`, no `References`. Threading it under the original would file it into a conversation the new recipients were never part of.
+
+**Attachments** go IMAP → SMTP without passing through a tool result, so the `EMAIL_MAX_INLINE_BYTES` ceiling (which exists to keep payloads out of the model's context) deliberately does not apply. `includeAttachments: false` is the control for a message with large attachments.
+
+**Output**
+
+Same shape as [`send_email`](#send_email): `{ "status": "sent", ... }`, or `{ "status": "draft", ... }` with `saveToDrafts`.
 
 ## move_email
 

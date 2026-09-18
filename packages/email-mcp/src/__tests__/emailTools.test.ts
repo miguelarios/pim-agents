@@ -72,8 +72,8 @@ vi.mock("../htmlToMarkdown.js", () => ({
 }));
 
 describe("EMAIL_TOOLS definitions", () => {
-  it("defines 16 tools", () => {
-    expect(EMAIL_TOOLS).toHaveLength(16);
+  it("defines 17 tools", () => {
+    expect(EMAIL_TOOLS).toHaveLength(17);
   });
 
   it("all tools have name, description, and inputSchema", () => {
@@ -88,6 +88,7 @@ describe("EMAIL_TOOLS definitions", () => {
   it("defines the expected tool names", () => {
     const names = EMAIL_TOOLS.map((t) => t.name);
     expect(names).toContain("search_emails");
+    expect(names).toContain("forward_email");
     expect(names).toContain("get_thread");
     expect(names).toContain("copy_email");
     expect(names).toContain("get_email");
