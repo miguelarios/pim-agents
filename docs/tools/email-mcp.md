@@ -1,6 +1,6 @@
 # Email MCP Tools
 
-`@miguelarios/email-mcp` — IMAP/SMTP email server with 13 tools.
+`@miguelarios/email-mcp` — IMAP/SMTP email server with 17 tools.
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
 
@@ -8,7 +8,11 @@
 
 ## search_emails
 
-Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (`subject`, `from`, `to`, etc.) for most searches. **Note:** for result sets >1000, non-date sort fields are approximate (sorted within page only).
+Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (`subject`, `from`, `to`, etc.) for most searches.
+
+**Sorting** uses the server's own `SORT` command (RFC 5256) where the server advertises it: the whole result set is ordered server-side, only the requested page's envelopes are fetched, and pagination is exact at any size. Without `SORT` — or if the server rejects the command — the result set is fetched and sorted here instead, and the old caveat applies: **for result sets >1000, non-date sort fields are approximate (sorted within page only)**.
+
+Server-side ordering is not byte-identical to the client-side fallback, because RFC 5256 defines the keys differently: `SUBJECT` sorts on the *base* subject, with `Re:`/`Fwd:` prefixes stripped, and `FROM` sorts on the sender's mailbox address, where the fallback prefers the display name.
 
 **Parameters**
 
@@ -65,6 +69,41 @@ Fetch a full email by UID including headers, body, and attachment metadata. Cale
 
 Calendar parts are detected from the message structure regardless of content disposition, so invitations delivered inline (no filename, no `Content-Disposition: attachment`) still count toward `hasAttachments`, appear in `attachments` (with a synthetic `attachment-<n>` filename when the part has none), and are listed in `calendarParts`. Decoded iCalendar text is inlined up to 256 KiB; larger parts set `truncated: true` and can be fetched via `download_attachment` with the part's `partId`.
 
+## get_thread
+
+Fetch the whole conversation a message belongs to, oldest first. Given *any* message in a thread — the root or any reply — this returns every message in it that the searched folders hold.
+
+Returns summaries, not bodies; use [`get_email`](#get_email) for the text of any one message.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder` | string | | IMAP folder holding the message to start from. Defaults to `INBOX`. |
+| `uid` | number | yes | UID of any message in the thread. |
+| `folders` | string[] | | Folders to search for thread members. Defaults to the message's folder **plus the account's Sent folder**. |
+
+**How the thread is assembled**
+
+1. **Server-side thread id, where there is one.** A server advertising `OBJECTID` or `X-GM-EXT-1` assigns every message a thread id and answers a search on it with the whole conversation. That is authoritative, and it catches replies whose `References` chain was mangled in transit.
+2. **Otherwise, the `References` chain — and `In-Reply-To`.** RFC 5322 §3.6.4 has every reply carry the root's `Message-ID` in its `References`, so one search for messages that either *are* the root or *cite* it returns the thread. `In-Reply-To` is read and searched alongside it, because plenty of mailers send a reply carrying only that header: without it such a reply is missing from the thread, and anchoring on one would make it its own root and lose every ancestor. `References` wins where both are present, since its first entry is the true root. Headers are unfolded before parsing — a long `References` runs across continuation lines, and a chain split mid-header would otherwise lose every id after the first.
+
+RFC 5256's `THREAD` command would be a third option, but imapflow exposes no way to issue it.
+
+Sent is searched by default because a conversation with your own replies missing from it is not the conversation. A folder that cannot be **opened** is skipped rather than failing the call — a partial thread is more use than none. Only the select is forgiving: a failure in the search or the fetch propagates, so a server that rejects the search never comes back as an empty conversation. The same message filed in two folders is de-duplicated by `Message-ID`.
+
+**Output**
+
+```json
+{
+  "rootMessageId": "<root@example.com>",
+  "count": 3,
+  "messages": [{ "folder": "INBOX", "uid": 1, "...": "EmailSummary fields" }]
+}
+```
+
+`rootMessageId` is the first entry of the anchor's `References` chain, or the anchor's own `Message-ID` when it starts the thread, or `null` when it carries neither. `messages` are `EmailSummary` objects (see [Email shapes](#email-shapes)) each tagged with the `folder` it was found in, oldest first.
+
 ## send_email
 
 Compose and send an email, or save it as a draft. Supports replies with automatic threading — when `replyToUid` is provided, the tool fetches the original email and sets correct `In-Reply-To`/`References` headers and `Re:` subject prefix automatically. Set `saveToDrafts` to true to save to the Drafts folder instead of sending. Sent emails are automatically copied to the Sent folder. Callers may optionally set a visible `From` address, but only when it is explicitly allowed by server configuration.
@@ -75,15 +114,18 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `to` | string[] | yes | Recipient email addresses. |
-| `cc` | string[] | | CC email addresses. |
-| `bcc` | string[] | | BCC email addresses. |
+| `to` | string[] | unless `replyAll` | Recipient email addresses. Required unless `replyAll` is set, which derives them from the message being replied to. Giving it explicitly overrides the derived list. |
+| `cc` | string[] | | CC email addresses. Under `replyAll`, omitting this derives the CC list from the original; giving it overrides that list. |
+| `bcc` | string[] | | BCC email addresses. Under `replyAll`, omitting this carries over the original's BCC when there is one to carry. |
 | `subject` | string | | Email subject line. Required for new emails. When `replyToUid` is set and subject is omitted, automatically uses `Re: <original subject>`. When provided explicitly, used as-is. |
 | `text` | string | | Plain text body. |
 | `html` | string | | HTML body. |
 | `attachments` | `{ filename: string, path?: string, content?: string }[]` | | File attachments. Use `content` for inline string content. `path` (attach a file from disk) is **disabled unless the `EMAIL_ATTACHMENT_DIR` env var is set**, and only files resolving inside that directory are allowed. |
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
+| `replyAll` | boolean | | Reply to everyone on the original rather than only its sender. Requires `replyToUid`. See [Reply-all recipients](#reply-all-recipients). Defaults to false. |
+
+| `quoteOriginal` | boolean | | Append the conventional quoted original below the new body when replying. Defaults to **true**. See [Quoting the original](#quoting-the-original). |
 | `saveToDrafts` | boolean | | When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false. |
 | `from` | string | | Optional visible From address. Must be either `SMTP_USER` or listed in `SMTP_ALLOWED_FROM`; anything else is rejected. SMTP envelope delivery still uses the account sender, so the address should share a domain with `SMTP_USER` — see the deliverability note below. |
 | `fromName` | string | | Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. |
@@ -101,6 +143,49 @@ When sending (default):
 ```
 
 Errors with `subject is required when not replying to an existing email` if no subject and no `replyToUid`.
+
+Errors with `to is required` when neither `to` nor `replyAll` is given, and with `replyAll requires replyToUid` when `replyAll` is set without one.
+
+**Reply-all recipients**
+
+With `replyAll: true`, recipients are derived from the message `replyToUid` names:
+
+| Field | Derived from |
+|-------|--------------|
+| `to` | The original's `Reply-To` if it has one, otherwise its `From` — plus everyone on its `To`. |
+| `cc` | The original's `Cc`. |
+| `bcc` | The original's `Bcc`, when it has one. |
+
+`Reply-To` *replaces* `From` rather than joining it; RFC 5322 §3.6.2 makes that header the author's statement of where replies belong, which matters for mailing lists.
+
+Every address this account owns — `IMAP_USER`, `SMTP_USER`, and anything in `SMTP_ALLOWED_FROM` — is dropped, so the reply is not addressed back to the sender. An address appearing in more than one header is kept once, at the strongest position it held (`To` outranks `Cc`). If every `To` address was the account's own, the derived `Cc` list is promoted to `To` rather than sending a message with an empty `To` header. When nothing is left at all, the call fails rather than sending a reply to nobody.
+
+**A received message carries no `Bcc`**, so there is normally nothing to carry over. A message read back out of `Sent` or `Drafts` does carry one, and those recipients are included — still blind, as `Bcc` always is. This is the case issue #30 calls out: replying-all to your own sent mail should not silently narrow the thread.
+
+An explicit `to`, `cc` or `bcc` overrides the corresponding derived list, field by field rather than all-or-nothing — "reply to everyone, but send it to Ada" is a real request. The nobody-but-us failure is judged on what is left *after* those overrides, so supplying `to` is always enough.
+
+The original is fetched *before* the send confirmation, so the prompt names the derived recipients. The caller sees who the mail is going to before agreeing to send it.
+
+**Quoting the original**
+
+When `replyToUid` is set, the reply carries the quoted original below the new body, the way a mail client writes it. Set `quoteOriginal: false` for a bare reply.
+
+The attribution line is `On <date>, <Name> <address> wrote:`, falling back to the bare address when the sender has no display name, and dropping the date clause when the original has no `Date` header.
+
+The quote itself matches whichever body the reply uses:
+
+| Reply body | Quote |
+|---|---|
+| `text` | `>`-prefixed original, blank line separating it from the new body. |
+| `html` | `<blockquote type="cite">` containing the original. |
+| both | Both, so the two parts say the same thing. |
+| neither | The text quote alone — an empty reply has nothing else to carry. |
+
+Prefixing follows RFC 3676 §4.5: a line that is already quoted gains a level (`> x` becomes `>> x`) rather than an indent, so nesting depth survives each round through a thread. A blank line becomes a bare `>`, not `"> "`, so the quote carries no trailing whitespace.
+
+**The original's HTML is sanitised before it is quoted**, through the same allowlist `get_email` uses when rendering to markdown: script and style contents, the document wrapper, tracking pixels, hidden elements and any unlisted tag are dropped. Quoting it verbatim would re-send a sender's markup under your own From to everyone on the reply. An original whose HTML sanitises away to nothing falls back to its text body.
+
+Where the original lacks the matching part, it is converted: HTML becomes markdown for a text quote, and plain text is HTML-escaped into a `<pre>` for an HTML quote. If the original has no body at all, or the conversion fails, the reply goes out unquoted rather than not at all — the quote is a courtesy, not the message.
 
 **Deliverability when using `from`**
 
@@ -197,6 +282,33 @@ Move one or more emails to a different IMAP folder.
 { "status": "moved", "uids": [<uid>, ...], "destination": "<folder>" }
 ```
 
+## copy_email
+
+Copy one or more emails into another IMAP folder, leaving the originals where they are. Use [`move_email`](#move_email) to relocate them instead.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder` | string | | Source IMAP folder. Defaults to `INBOX`. |
+| `uids` | number[] | yes | UIDs of emails to copy. They remain in the source folder. |
+| `destination` | string | yes | Destination folder path. It must already exist — `create_folder` first if not. |
+
+An empty `uids`, or a `destination` equal to `folder`, is rejected with `INVALID_INPUT` before a connection is opened. A destination the server refuses — `NO [TRYCREATE]` for a folder that does not exist — is returned as an `OPERATION_FAILED` error, never as a successful copy. A self-copy is legal IMAP and duplicates every message in place, which is not what "copy to a folder" means.
+
+**Output**
+
+```json
+{
+  "status": "copied",
+  "uids": [<source-uid>, ...],
+  "destination": "<folder>",
+  "copied": [{ "uid": <source-uid>, "destinationUid": <new-uid> }, ...]
+}
+```
+
+`copied` pairs each source UID with the UID its copy took in the destination. It comes from the server's UIDPLUS `COPYUID` response, so it is absent on a server without that extension — the copy still happened, there is just no way to learn the new UIDs short of re-searching the destination.
+
 ## mark_email
 
 Set or unset flags on one or more emails. Common flags: `\Seen` (read), `\Flagged` (starred).
@@ -269,6 +381,49 @@ Create a new IMAP folder.
 ```json
 { "status": "created", "path": "<folder-path>" }
 ```
+
+## rename_folder
+
+Rename an IMAP folder, or move it in the hierarchy by giving a `newPath` under a different parent. Child folders move with it.
+
+Renaming `INBOX` is special-cased by IMAP (RFC 3501 §6.3.5): the server moves `INBOX`'s messages into the new folder and leaves an empty `INBOX` behind, and `INBOX`'s children do not follow.
+
+The server may normalise the path it reports back — a different hierarchy delimiter, or a personal-namespace prefix — so use the returned `newPath` rather than assuming the requested one.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | Existing folder path to rename (e.g., `Projects/Work`). |
+| `newPath` | string | yes | New folder path. A path under a different parent moves the folder there, creating the parent only if the server does so implicitly — call `create_folder` first if it does not. |
+
+A blank `path` or `newPath`, or a `newPath` equal to `path`, is rejected with `INVALID_INPUT` before a connection is opened.
+
+**Output**
+
+```json
+{ "status": "renamed", "path": "<old-path>", "newPath": "<new-path>" }
+```
+
+## delete_folder
+
+Delete an IMAP folder and every message in it. **Irreversible** — the messages are not moved to Trash — so the tool asks the user to confirm first, naming the folder and how many messages it holds.
+
+`INBOX` cannot be deleted (RFC 3501 §6.3.4 reserves it); the request is rejected with `INVALID_INPUT` before anything is asked or connected. Whether a folder with sub-folders can be deleted is up to the server — many refuse, so delete or move the children first.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | Folder path to delete (e.g., `Projects/Work`). |
+
+**Output**
+
+```json
+{ "status": "deleted", "path": "<folder-path>", "messages": 12 }
+```
+
+`messages` is the count the folder held when it was deleted. It is absent when the server would not report one — a `\Noselect` hierarchy node has no messages to count — and the delete still proceeds.
 
 ## download_attachment
 
@@ -377,6 +532,12 @@ interface EmailSummary {
 ```ts
 interface EmailFull extends EmailSummary {
   cc?: Array<{ name?: string; address: string }>;
+  replyTo?: Array<{ name?: string; address: string }>;  // present only when the
+                                   // message carries a Reply-To header
+  bcc?: Array<{ name?: string; address: string }>;      // present only when the
+                                   // message carries a Bcc header — in practice
+                                   // only for mail this account sent, read back
+                                   // from Sent or Drafts
   inReplyTo: string | null;        // Message-ID being replied to
   references: string[];            // full thread chain
   textBody?: string;               // present when format = "text" or "markdown" fallback

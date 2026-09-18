@@ -50,6 +50,10 @@ function fakeServices() {
         .fn()
         .mockResolvedValue([{ path: "INBOX", delimiter: "/", specialUse: "\\Inbox" }]),
       getFolderStatus: vi.fn().mockResolvedValue({ total: 10, unseen: 2 }),
+      fetchThread: vi.fn().mockResolvedValue({
+        rootMessageId: "<a@test.com>",
+        messages: [{ ...SUMMARY, folder: "INBOX" }],
+      }),
       deleteEmails: vi.fn().mockResolvedValue(undefined),
       getSpecialUseFolder: vi.fn().mockResolvedValue("Drafts"),
       appendMessage: vi.fn().mockResolvedValue({ uid: 100 }),
@@ -72,6 +76,7 @@ function fakeServices() {
       config: { smtp: { user: "me@example.com" }, autoSent: true, fromName: undefined },
       // Mirrors SmtpService: an allowed address passes through, otherwise the
       // account sender is used; the header is only formatted, never validated here.
+      ownAddresses: vi.fn(() => ["me@example.com"]),
       resolveFromAddress: vi.fn((requested?: string) => requested?.trim() || "me@example.com"),
       formatFromHeader: vi.fn((address: string, displayName?: string) =>
         displayName ? `"${displayName}" <${address}>` : address,
@@ -178,6 +183,20 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     const second = (await client.listTools()).tools.map((t) => t.name);
     expect(second).toEqual(first);
     expect(first).toEqual(EMAIL_TOOLS.map((t) => t.name));
+  });
+
+  it("delivers a thread through the advertised get_thread outputSchema", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+    const result = await client.callTool({ name: "get_thread", arguments: { uid: 1 } });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      rootMessageId: "<a@test.com>",
+      count: 1,
+    });
+    // Defaults to the anchor folder plus Sent, which the stub resolves.
+    expect(services.imap.fetchThread).toHaveBeenCalledWith("INBOX", 1, ["INBOX", "Drafts"]);
   });
 
   it("returns structuredContent matching the advertised outputSchema", async () => {
@@ -379,6 +398,54 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(elicitations[0]).toContain("r@test.com");
     expect(result.isError).toBeFalsy();
     expect(services.smtp.sendRawMessage).toHaveBeenCalled();
+  });
+
+  it("accepts a reply-all with no explicit recipients, and names them when asking", async () => {
+    const services = fakeServices();
+    services.imap.fetchEmail = vi.fn().mockResolvedValue({
+      ...SUMMARY,
+      from: { address: "ada@example.com" },
+      to: [{ address: "me@example.com" }, { address: "bob@example.com" }],
+      cc: [{ address: "cara@example.com" }],
+      inReplyTo: null,
+      references: [],
+      attachments: [],
+    });
+
+    const { client, elicitations } = await connect(era, services);
+    // `to` is deliberately absent: the SDK validates arguments against the
+    // advertised inputSchema, so this call only reaches the handler because
+    // the schema no longer marks it required.
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: { replyToUid: 1, replyAll: true, text: "Sounds good" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(elicitations[0]).toContain("ada@example.com");
+    expect(elicitations[0]).toContain("cara@example.com");
+    expect(elicitations[0]).not.toContain("me@example.com");
+    expect(services.smtp.composeRawMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: ["ada@example.com", "bob@example.com"],
+        cc: ["cara@example.com"],
+        subject: "Re: Hello",
+      }),
+    );
+  });
+
+  it("quotes the original when replying, without being asked to", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: { to: ["ada@example.com"], replyToUid: 1, text: "Thanks!" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const [composed] = (services.smtp.composeRawMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(composed.text).toContain("Ada <ada@example.com> wrote:");
+    expect(composed.text).toContain("> Hello there");
   });
 
   it("fails with an actionable error when the client cannot be asked", async () => {
