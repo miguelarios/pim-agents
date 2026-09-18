@@ -1,6 +1,6 @@
 # Email MCP Tools
 
-`@miguelarios/email-mcp` — IMAP/SMTP email server with 13 tools.
+`@miguelarios/email-mcp` — IMAP/SMTP email server with 14 tools.
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
 
@@ -247,6 +247,26 @@ A blank `path` or `newPath`, or a `newPath` equal to `path`, is rejected with `I
 ```json
 { "status": "renamed", "path": "<old-path>", "newPath": "<new-path>" }
 ```
+
+## delete_folder
+
+Delete an IMAP folder and every message in it. **Irreversible** — the messages are not moved to Trash — so the tool asks the user to confirm first, naming the folder and how many messages it holds.
+
+`INBOX` cannot be deleted (RFC 3501 §6.3.4 reserves it); the request is rejected with `INVALID_INPUT` before anything is asked or connected. Whether a folder with sub-folders can be deleted is up to the server — many refuse, so delete or move the children first.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | Folder path to delete (e.g., `Projects/Work`). |
+
+**Output**
+
+```json
+{ "status": "deleted", "path": "<folder-path>", "messages": 12 }
+```
+
+`messages` is the count the folder held when it was deleted. It is absent when the server would not report one — a `\Noselect` hierarchy node has no messages to count — and the delete still proceeds.
 
 ## download_attachment
 

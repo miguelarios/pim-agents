@@ -18,6 +18,7 @@ import type { SmtpService } from "../services/SmtpService.js";
 import {
   attachmentSchema,
   createFolderResultSchema,
+  deleteFolderResultSchema,
   deleteResultSchema,
   emailFullSchema,
   folderListSchema,
@@ -777,6 +778,68 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         const renamed = await imap.renameFolder(path, newPath);
         return structured({ status: "renamed" as const, ...renamed });
       }),
+  },
+  {
+    name: "delete_folder",
+    title: "Delete Folder",
+    description:
+      "Delete an IMAP folder and every message in it. This is irreversible — the messages are not moved to Trash — so the tool asks the user to confirm first, naming the folder and how many messages it holds. INBOX cannot be deleted. Whether a folder with sub-folders can be deleted is up to the server; many refuse, so delete or move the children first.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      // A second call finds nothing to delete and fails, but the account ends
+      // up in the same state either way.
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Folder path to delete (e.g., 'Projects/Work')." },
+      },
+      required: ["path"],
+    },
+    outputSchema: deleteFolderResultSchema,
+    handler: async (args: { path: string }, { imap }, ctx) => {
+      const path = typeof args.path === "string" ? args.path.trim() : "";
+      if (!path) return invalid("path must be a non-empty folder path");
+      // RFC 3501 §6.3.4 makes deleting INBOX an error, and a server's reply to
+      // it is a bare NO. Rejecting here spends no confirmation on a request
+      // that was never going to succeed.
+      if (path.toUpperCase() === "INBOX") {
+        return invalid("INBOX cannot be deleted — IMAP reserves it");
+      }
+
+      // STATUS before the gate so the prompt says what is actually at stake:
+      // "delete Projects/Work" and "delete Projects/Work and its 412 messages"
+      // are different decisions. A folder the server will not count is still
+      // worth confirming, so a failure here is not fatal — the delete itself
+      // raises the real error.
+      let messages: number | undefined;
+      try {
+        messages = (await imap.getFolderStatus(path)).total;
+      } catch {
+        messages = undefined;
+      }
+
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_delete_folder",
+        `Delete the folder ${path}${
+          messages === undefined ? "" : ` and the ${messages} message(s) in it`
+        }? This cannot be undone — the messages do not go to Trash.`,
+      );
+      if (gate.status === "interrupt") return gate.result;
+
+      return run(async () => {
+        await imap.deleteFolder(path);
+        return structured({
+          status: "deleted" as const,
+          path,
+          ...(messages === undefined ? {} : { messages }),
+        });
+      });
+    },
   },
   {
     name: "download_attachment",

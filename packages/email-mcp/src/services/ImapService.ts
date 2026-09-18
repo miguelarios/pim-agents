@@ -465,6 +465,24 @@ export class ImapService {
     }
   }
 
+  async deleteFolder(path: string): Promise<void> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      await client.mailboxDelete(path);
+      // The deleted folder may be the Sent/Drafts/Trash mailbox this service
+      // resolved a special-use flag to, and that cache lives for the process
+      // lifetime. Every entry is dropped rather than guessing which one was
+      // affected — re-resolving costs one LIST, a stale entry costs an append
+      // to a folder that no longer exists.
+      this.specialUseCache.clear();
+    } catch (error) {
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
   async downloadAttachment(folder: string, uid: number, partId: string): Promise<AttachmentBytes>;
   async downloadAttachment(
     folder: string,
