@@ -8,7 +8,11 @@
 
 ## search_emails
 
-Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (`subject`, `from`, `to`, etc.) for most searches. **Note:** for result sets >1000, non-date sort fields are approximate (sorted within page only).
+Search and list emails in a folder. Returns email summaries with configurable sorting (default: date descending). All filters combine with AND logic. Use the dedicated fields (`subject`, `from`, `to`, etc.) for most searches.
+
+**Sorting** uses the server's own `SORT` command (RFC 5256) where the server advertises it: the whole result set is ordered server-side, only the requested page's envelopes are fetched, and pagination is exact at any size. Without `SORT` — or if the server rejects the command — the result set is fetched and sorted here instead, and the old caveat applies: **for result sets >1000, non-date sort fields are approximate (sorted within page only)**.
+
+Server-side ordering is not byte-identical to the client-side fallback, because RFC 5256 defines the keys differently: `SUBJECT` sorts on the *base* subject, with `Re:`/`Fwd:` prefixes stripped, and `FROM` sorts on the sender's mailbox address, where the fallback prefers the display name.
 
 **Parameters**
 

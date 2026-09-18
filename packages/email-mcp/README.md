@@ -78,7 +78,7 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 
 | Tool | Description |
 |------|-------------|
-| `search_emails` | Search and filter emails by folder, sender, subject, date, flags |
+| `search_emails` | Search and filter emails by folder, sender, subject, date, flags — server-side `SORT` where available |
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata, calendar invitation parts |
 | `get_thread` | Fetch the whole conversation a message belongs to, oldest first |
 | `send_email` | Compose and send via SMTP, reply with threading, save as draft, or use an allowed visible From address |
@@ -94,6 +94,24 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 | `download_attachment` | Download attachment by email UID and part ID |
 | `get_email_raw` | Export email as raw .eml |
 | `get_folder_status` | Get total and unread message counts for a folder |
+
+## Sorting
+
+`search_emails` uses the server's own `SORT` command (RFC 5256) when the server advertises
+the capability. The whole result set is ordered server-side, only the requested page's
+envelopes come across the wire, and pagination is exact however large the folder is.
+
+A filter carrying non-ASCII is issued under the charset imapflow's compiler asks for, lifted into the slot RFC 5256 gives it rather than left in the search key where it would be a syntax error.
+
+Without `SORT`, the previous behaviour stands: the result set is fetched and sorted here,
+and beyond 1000 messages a non-date sort is approximate — ordered within the page only.
+The same fallback catches a server that advertises `SORT` but rejects the command (an
+older server that only accepts `US-ASCII`, say, answers `BADCHARSET`), so a search never
+fails over it.
+
+Server-side ordering is not byte-identical to the fallback, because RFC 5256 defines the
+keys differently: `SUBJECT` sorts on the *base* subject with `Re:`/`Fwd:` stripped, and
+`FROM` sorts on the sender's mailbox address where the fallback prefers the display name.
 
 ## Resources
 
