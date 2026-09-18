@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImapService } from "../services/ImapService.js";
 
 // Mock imapflow
@@ -6,15 +6,21 @@ const mockFetchOne = vi.fn();
 const mockFetch = vi.fn();
 const mockSearch = vi.fn();
 const mockMessageMove = vi.fn();
+const mockMessageCopy = vi.fn();
 const mockMessageDelete = vi.fn();
 const mockMessageFlagsAdd = vi.fn();
 const mockMessageFlagsRemove = vi.fn();
 const mockList = vi.fn();
 const mockMailboxCreate = vi.fn();
+const mockMailboxDelete = vi.fn();
+const mockMailboxRename = vi.fn();
 const mockDownload = vi.fn();
 const mockStatus = vi.fn();
 const mockGetMailboxLock = vi.fn();
 const mockAppend = vi.fn();
+const mockExec = vi.fn();
+/** Shared across the per-call client objects, so a test can turn SORT on. */
+const mockCapabilities = new Map<string, boolean | number>();
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockLogout = vi.fn().mockResolvedValue(undefined);
 
@@ -29,15 +35,21 @@ vi.mock("imapflow", () => ({
     fetch: mockFetch,
     search: mockSearch,
     messageMove: mockMessageMove,
+    messageCopy: mockMessageCopy,
     messageDelete: mockMessageDelete,
     messageFlagsAdd: mockMessageFlagsAdd,
     messageFlagsRemove: mockMessageFlagsRemove,
     list: mockList,
     mailboxCreate: mockMailboxCreate,
+    mailboxDelete: mockMailboxDelete,
+    mailboxRename: mockMailboxRename,
     download: mockDownload,
     status: mockStatus,
     append: mockAppend,
-    mailbox: { exists: 100 },
+    exec: mockExec,
+    capabilities: mockCapabilities,
+    enabled: new Set(),
+    mailbox: { exists: 100, flags: new Set() },
   })),
 }));
 
@@ -1375,10 +1387,550 @@ describe("ImapService", () => {
     });
   });
 
+  describe("copyEmails", () => {
+    beforeEach(() => {
+      mockMessageCopy.mockResolvedValue({ path: "INBOX", destination: "Archive" });
+    });
+
+    it("copies a UID range to the destination", async () => {
+      await service.copyEmails("INBOX", [1, 2, 3], "Archive");
+      expect(mockMessageCopy).toHaveBeenCalledWith("1,2,3", "Archive", { uid: true });
+    });
+
+    it("maps source UIDs to destination UIDs when the server has UIDPLUS", async () => {
+      mockMessageCopy.mockResolvedValueOnce({
+        path: "INBOX",
+        destination: "Archive",
+        uidMap: new Map([
+          [1, 101],
+          [2, 102],
+        ]),
+      });
+
+      const result = await service.copyEmails("INBOX", [1, 2], "Archive");
+      expect(result).toEqual([
+        { uid: 1, destinationUid: 101 },
+        { uid: 2, destinationUid: 102 },
+      ]);
+    });
+
+    it("returns no mapping when the server omits UIDPLUS data", async () => {
+      const result = await service.copyEmails("INBOX", [1, 2], "Archive");
+      expect(result).toBeUndefined();
+    });
+
+    it("throws when the server refuses the COPY", async () => {
+      // imapflow's copy command catches a server NO (e.g. [TRYCREATE] for a
+      // missing destination) and resolves `false` rather than throwing, so a
+      // refusal must not be mistaken for a copy with no UIDPLUS data.
+      mockMessageCopy.mockResolvedValueOnce(false);
+      await expect(service.copyEmails("INBOX", [1], "Nope")).rejects.toThrow(/Copy to Nope failed/);
+    });
+
+    it("throws when imapflow answers with undefined", async () => {
+      // The same command returns undefined when its own preconditions fail.
+      mockMessageCopy.mockResolvedValueOnce(undefined as never);
+      await expect(service.copyEmails("INBOX", [1], "Archive")).rejects.toThrow(
+        /Copy to Archive failed/,
+      );
+    });
+
+    it("releases the mailbox lock and logs out when the copy fails", async () => {
+      const release = vi.fn();
+      mockGetMailboxLock.mockResolvedValueOnce({ release });
+      mockMessageCopy.mockRejectedValueOnce(new Error("TRYCREATE"));
+
+      await expect(service.copyEmails("INBOX", [1], "Nope")).rejects.toThrow();
+      expect(release).toHaveBeenCalled();
+      expect(mockLogout).toHaveBeenCalled();
+    });
+  });
+
+  describe("fetchThread", () => {
+    const envelopeFor = (messageId: string, date: string, subject = "Budget") => ({
+      messageId,
+      subject,
+      date: new Date(date),
+      from: [{ address: "ada@example.com", name: "Ada" }],
+      to: [{ address: "user@test.com" }],
+    });
+
+    /** One FETCH response per uid, streamed the way imapflow streams them. */
+    const streamMessages = (messages: any[]) => {
+      mockFetch.mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {
+          for (const msg of messages) yield msg;
+        },
+      }));
+    };
+
+    beforeEach(() => {
+      mockFetchOne.mockReset();
+      mockFetch.mockReset();
+      mockSearch.mockReset();
+    });
+
+    it("walks References: searches for the root id and everything citing it", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(["\\Seen"]),
+        headers: Buffer.from("References: <root@test.com> <mid@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([3, 7]);
+      streamMessages([
+        {
+          uid: 3,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+        {
+          uid: 7,
+          envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+
+      expect(result.rootMessageId).toBe("<root@test.com>");
+      expect(mockSearch).toHaveBeenCalledWith(
+        {
+          or: [
+            { header: { "message-id": "<root@test.com>" } },
+            { header: { references: "<root@test.com>" } },
+            { header: { "in-reply-to": "<root@test.com>" } },
+          ],
+        },
+        { uid: true },
+      );
+      expect(result.messages.map((m) => m.messageId)).toEqual([
+        "<root@test.com>",
+        "<reply@test.com>",
+      ]);
+      expect(result.messages.every((m) => m.folder === "INBOX")).toBe(true);
+    });
+
+    it("treats the anchor as the root when it cites nothing", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 3,
+        envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("\r\n"),
+      });
+      mockSearch.mockResolvedValue([3]);
+      streamMessages([
+        {
+          uid: 3,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 3, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("unfolds a References header split across continuation lines", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n\t<mid@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("prefers a server-side thread id over the References walk", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        threadId: "thread-42",
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([3, 7]);
+      streamMessages([
+        {
+          uid: 3,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+        {
+          uid: 7,
+          envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(mockSearch).toHaveBeenCalledWith({ threadId: "thread-42" }, { uid: true });
+    });
+
+    it("merges folders, de-duplicates by Message-ID and orders oldest first", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([1]);
+      // INBOX holds the root; Sent holds our reply plus a second copy of the
+      // root that a client filed there.
+      streamMessages([
+        {
+          uid: 1,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+      streamMessages([
+        {
+          uid: 9,
+          envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+          flags: new Set(),
+        },
+        {
+          uid: 10,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX", "Sent"]);
+
+      expect(result.messages.map((m) => [m.folder, m.messageId])).toEqual([
+        ["INBOX", "<root@test.com>"],
+        ["Sent", "<reply@test.com>"],
+      ]);
+    });
+
+    it("falls back to In-Reply-To when the anchor carries no References", async () => {
+      // Plenty of mailers send a reply with In-Reply-To and no References at
+      // all; anchoring on one of those must not make it its own root.
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("In-Reply-To: <root@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("prefers References over In-Reply-To when both are present", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from(
+          "References: <root@test.com> <mid@test.com>\r\nIn-Reply-To: <mid@test.com>\r\n",
+        ),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      expect(result.rootMessageId).toBe("<root@test.com>");
+    });
+
+    it("does not confuse In-Reply-To with References when reading either", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("In-Reply-To: <parent@test.com>\r\n"),
+      });
+      mockSearch.mockResolvedValue([]);
+      streamMessages([]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX"]);
+      // Not the anchor's own id, which is what a name-prefix mismatch would give.
+      expect(result.rootMessageId).toBe("<parent@test.com>");
+    });
+
+    it("surfaces a search failure instead of reporting an empty thread", async () => {
+      // A server that rejects SEARCH HEADER, or a connection that drops
+      // mid-fetch, must not look like a conversation with no messages in it.
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockSearch.mockRejectedValueOnce(new Error("BAD Unsupported search key"));
+
+      await expect(service.fetchThread("INBOX", 7, ["INBOX"])).rejects.toThrow();
+    });
+
+    it("keeps going when one folder cannot be opened", async () => {
+      mockFetchOne.mockResolvedValueOnce({
+        uid: 7,
+        envelope: envelopeFor("<reply@test.com>", "2026-03-02T10:00:00Z"),
+        flags: new Set(),
+        headers: Buffer.from("References: <root@test.com>\r\n"),
+      });
+      mockGetMailboxLock
+        .mockResolvedValueOnce({ release: vi.fn() })
+        .mockResolvedValueOnce({ release: vi.fn() })
+        .mockRejectedValueOnce(new Error("Mailbox does not exist"));
+      mockSearch.mockResolvedValue([1]);
+      streamMessages([
+        {
+          uid: 1,
+          envelope: envelopeFor("<root@test.com>", "2026-03-01T10:00:00Z"),
+          flags: new Set(),
+        },
+      ]);
+
+      const result = await service.fetchThread("INBOX", 7, ["INBOX", "Ghost"]);
+      expect(result.messages).toHaveLength(1);
+    });
+
+    it("throws EMAIL_NOT_FOUND when the anchor UID is not there", async () => {
+      mockFetchOne.mockResolvedValueOnce(null);
+      await expect(service.fetchThread("INBOX", 99, ["INBOX"])).rejects.toThrow(/not found/);
+    });
+  });
+
+  describe("searchEmails with server-side SORT", () => {
+    /** Answers UID SORT with `uids`, in the order the server would. */
+    const serverSorts = (uids: number[]) => {
+      mockExec.mockImplementation(async (_command, _attributes, options: any) => {
+        await options.untagged.SORT({ attributes: uids.map((u) => ({ value: String(u) })) });
+        return { next: vi.fn() };
+      });
+    };
+
+    const streamSummaries = (uids: number[]) => {
+      mockFetch.mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {
+          // Deliberately ascending — FETCH streams in sequence order, not in
+          // the order of the UID set it was handed.
+          for (const uid of [...uids].sort((a, b) => a - b)) {
+            yield {
+              uid,
+              envelope: {
+                messageId: `<${uid}@test.com>`,
+                subject: `Subject ${uid}`,
+                date: new Date("2026-03-04T12:00:00Z"),
+                from: [{ address: "sender@test.com" }],
+                to: [],
+              },
+              flags: new Set(),
+            };
+          }
+        },
+      }));
+    };
+
+    beforeEach(() => {
+      mockCapabilities.clear();
+      mockCapabilities.set("SORT", true);
+      mockExec.mockReset();
+      mockFetch.mockReset();
+      mockSearch.mockReset();
+    });
+
+    afterEach(() => {
+      mockCapabilities.clear();
+    });
+
+    it("issues UID SORT and keeps the server's order", async () => {
+      serverSorts([30, 10, 20]);
+      streamSummaries([30, 10, 20]);
+
+      const result = await service.searchEmails("INBOX", {}, { limit: 10 });
+
+      expect(mockExec).toHaveBeenCalledWith("UID SORT", expect.any(Array), expect.any(Object));
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(result.map((r) => r.uid)).toEqual([30, 10, 20]);
+    });
+
+    it("asks for REVERSE on a descending sort and not on an ascending one", async () => {
+      serverSorts([1]);
+      streamSummaries([1]);
+      await service.searchEmails("INBOX", {}, { sortBy: "date", sortOrder: "desc" });
+      expect(mockExec.mock.calls[0][1][0]).toEqual([
+        { type: "ATOM", value: "REVERSE" },
+        { type: "ATOM", value: "DATE" },
+      ]);
+
+      mockExec.mockClear();
+      streamSummaries([1]);
+      await service.searchEmails("INBOX", {}, { sortBy: "subject", sortOrder: "asc" });
+      expect(mockExec.mock.calls[0][1][0]).toEqual([{ type: "ATOM", value: "SUBJECT" }]);
+    });
+
+    it("sends the UTF-8 charset and an ALL key for an unfiltered search", async () => {
+      serverSorts([1]);
+      streamSummaries([1]);
+
+      await service.searchEmails("INBOX", {}, {});
+
+      const attributes = mockExec.mock.calls[0][1];
+      expect(attributes[1]).toEqual({ type: "ATOM", value: "UTF-8" });
+      expect(attributes[2]).toEqual({ type: "ATOM", value: "ALL" });
+    });
+
+    it("fetches only the requested page, not the whole result set", async () => {
+      serverSorts([1, 2, 3, 4, 5, 6]);
+      streamSummaries([3, 4]);
+
+      const result = await service.searchEmails("INBOX", {}, { offset: 2, limit: 2 });
+
+      expect(mockFetch.mock.calls[0][0]).toBe("3,4");
+      expect(result.map((r) => r.uid)).toEqual([3, 4]);
+    });
+
+    it("returns nothing, without fetching, when the page is past the end", async () => {
+      serverSorts([1, 2]);
+
+      const result = await service.searchEmails("INBOX", {}, { offset: 50, limit: 10 });
+
+      expect(result).toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("is exact past 1000 results, where the client-side path approximates", async () => {
+      const uids = Array.from({ length: 1500 }, (_, i) => 1500 - i);
+      serverSorts(uids);
+      streamSummaries([1400, 1399]);
+
+      const result = await service.searchEmails("INBOX", {}, { offset: 100, limit: 2 });
+
+      expect(result.map((r) => r.uid)).toEqual([1400, 1399]);
+    });
+
+    it("falls back to client-side sorting when the server rejects SORT", async () => {
+      mockExec.mockRejectedValue(new Error("BADCHARSET"));
+      mockSearch.mockResolvedValue([5]);
+      streamSummaries([5]);
+
+      const result = await service.searchEmails("INBOX", {}, {});
+
+      expect(mockSearch).toHaveBeenCalled();
+      expect(result.map((r) => r.uid)).toEqual([5]);
+    });
+
+    it("does not issue SORT at all when the server does not advertise it", async () => {
+      mockCapabilities.clear();
+      mockSearch.mockResolvedValue([5]);
+      streamSummaries([5]);
+
+      await service.searchEmails("INBOX", {}, {});
+
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSearch).toHaveBeenCalled();
+    });
+
+    it("intersects multi-term criteria while keeping the sorted order", async () => {
+      // Two subject tokens compile to two criteria objects, so two SORTs.
+      const perCall = [
+        [30, 10, 20],
+        [10, 30],
+      ];
+      let call = 0;
+      mockExec.mockImplementation(async (_command, _attributes, options: any) => {
+        const uids = perCall[call++] ?? [];
+        await options.untagged.SORT({ attributes: uids.map((u) => ({ value: String(u) })) });
+        return { next: vi.fn() };
+      });
+      streamSummaries([30, 10]);
+
+      const result = await service.searchEmails("INBOX", { subject: "budget report" }, {});
+
+      expect(mockExec).toHaveBeenCalledTimes(2);
+      expect(result.map((r) => r.uid)).toEqual([30, 10]);
+    });
+  });
+
   describe("createFolder", () => {
     it("creates a new IMAP folder", async () => {
       await service.createFolder("Projects/Work");
       expect(mockMailboxCreate).toHaveBeenCalledWith("Projects/Work");
+    });
+  });
+
+  describe("renameFolder", () => {
+    beforeEach(() => {
+      mockMailboxRename.mockResolvedValue({ path: "Projects/Work", newPath: "Projects/Clients" });
+    });
+
+    it("renames an IMAP folder", async () => {
+      const result = await service.renameFolder("Projects/Work", "Projects/Clients");
+      expect(mockMailboxRename).toHaveBeenCalledWith("Projects/Work", "Projects/Clients");
+      expect(result).toEqual({ path: "Projects/Work", newPath: "Projects/Clients" });
+    });
+
+    it("reports the paths the server echoed, not the ones requested", async () => {
+      // A server may normalise the hierarchy delimiter or the personal-namespace
+      // prefix, so the RENAME response is the authority on where the folder is.
+      mockMailboxRename.mockResolvedValueOnce({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+      const result = await service.renameFolder("Work", "Clients");
+      expect(result).toEqual({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+    });
+
+    it("falls back to the requested paths when the server echoes nothing", async () => {
+      mockMailboxRename.mockResolvedValueOnce(undefined as never);
+      const result = await service.renameFolder("Work", "Clients");
+      expect(result).toEqual({ path: "Work", newPath: "Clients" });
+    });
+
+    it("drops the special-use cache so a renamed Sent folder is re-resolved", async () => {
+      mockList.mockResolvedValue([
+        { path: "Sent", specialUse: "\\Sent", delimiter: "/" },
+        { path: "Archive/Sent", specialUse: "\\Sent", delimiter: "/" },
+      ]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent");
+
+      await service.renameFolder("Sent", "Archive/Sent");
+
+      mockList.mockResolvedValue([{ path: "Archive/Sent", specialUse: "\\Sent", delimiter: "/" }]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Archive/Sent");
+    });
+
+    it("logs out even when the rename fails", async () => {
+      mockMailboxRename.mockRejectedValueOnce(new Error("ALREADYEXISTS"));
+      await expect(service.renameFolder("Work", "Clients")).rejects.toThrow();
+      expect(mockLogout).toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteFolder", () => {
+    beforeEach(() => {
+      mockMailboxDelete.mockResolvedValue({ path: "Projects/Work" });
+    });
+
+    it("deletes an IMAP folder", async () => {
+      await service.deleteFolder("Projects/Work");
+      expect(mockMailboxDelete).toHaveBeenCalledWith("Projects/Work");
+    });
+
+    it("drops the special-use cache so a deleted Sent folder is re-resolved", async () => {
+      mockList.mockResolvedValue([
+        { path: "Sent", specialUse: "\\Sent", delimiter: "/" },
+        { path: "Sent Messages", delimiter: "/" },
+      ]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent");
+
+      await service.deleteFolder("Sent");
+
+      mockList.mockResolvedValue([{ path: "Sent Messages", delimiter: "/" }]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent Messages");
+    });
+
+    it("logs out even when the delete fails", async () => {
+      mockMailboxDelete.mockRejectedValueOnce(new Error("NONEXISTENT"));
+      await expect(service.deleteFolder("Ghost")).rejects.toThrow();
+      expect(mockLogout).toHaveBeenCalled();
     });
   });
 
