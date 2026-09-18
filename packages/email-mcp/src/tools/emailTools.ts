@@ -10,7 +10,7 @@ import {
   toolError,
 } from "@miguelarios/pim-core/mcp";
 import { simpleParser } from "mailparser";
-import { htmlToMarkdown } from "../htmlToMarkdown.js";
+import { htmlToMarkdown, sanitizeEmailHtml } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
 import type { EmailFull, ImapService } from "../services/ImapService.js";
@@ -199,6 +199,90 @@ function deriveReplyAllRecipients(
     return { to: cc, cc: [], bcc };
   }
   return { to, cc, bcc };
+}
+
+/**
+ * "On <date>, <name> <address> wrote:" — the line every mail client puts above
+ * a quote. The date clause is dropped rather than left empty when the original
+ * carries no Date header.
+ */
+function attributionLine(original: EmailFull): string {
+  const { name, address } = original.from ?? {};
+  const who = name && address ? `${name} <${address}>` : (address ?? name ?? "an unknown sender");
+  return original.date ? `On ${original.date}, ${who} wrote:` : `${who} wrote:`;
+}
+
+/**
+ * Prefixes each line with a quote marker, per RFC 3676 §4.5: a line that is
+ * already quoted gains a level rather than a space, so nesting depth survives
+ * a round trip through this function. A blank line becomes a bare ">" instead
+ * of "> " so the quote carries no trailing whitespace.
+ */
+function quoteTextBody(body: string): string {
+  return body
+    .replace(/\r\n/g, "\n")
+    .replace(/\s+$/, "")
+    .split("\n")
+    .map((line) => (line.startsWith(">") ? `>${line}` : line === "" ? ">" : `> ${line}`))
+    .join("\n");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * The quoted original, in whichever body formats the reply itself uses.
+ *
+ * A reply's text and HTML parts must say the same thing, so each is quoted
+ * from the original's matching part where there is one and converted where
+ * there is not: HTML becomes markdown for the text quote, and text is escaped
+ * into the HTML quote. Conversion failure yields no quote for that part rather
+ * than failing the send — an unquoted reply still delivers.
+ */
+async function quoteOriginalBodies(
+  original: EmailFull,
+  want: { text: boolean; html: boolean },
+): Promise<{ text?: string; html?: string }> {
+  const attribution = attributionLine(original);
+  const quoted: { text?: string; html?: string } = {};
+
+  if (want.text) {
+    let source = original.textBody;
+    if (source === undefined && original.htmlBody) {
+      try {
+        source = await htmlToMarkdown(original.htmlBody);
+      } catch {
+        source = undefined;
+      }
+    }
+    if (source?.trim()) {
+      quoted.text = `${attribution}\n\n${quoteTextBody(source)}`;
+    }
+  }
+
+  if (want.html) {
+    // The original's markup is sanitised before it goes back out. Quoting it
+    // verbatim would re-send the sender's script, style, tracking pixels and
+    // document wrapper under our own From, to every recipient of the reply —
+    // the text path escapes for the same reason.
+    const quotedHtml = original.htmlBody ? sanitizeEmailHtml(original.htmlBody).trim() : "";
+    const source =
+      quotedHtml ||
+      (original.textBody?.trim()
+        ? `<pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(original.textBody)}</pre>`
+        : undefined);
+    if (source) {
+      const style = "margin:0 0 0 0.8ex;border-left:2px solid #ccc;padding-left:1ex";
+      quoted.html = `<p>${escapeHtml(attribution)}</p><blockquote type="cite" style="${style}">${source}</blockquote>`;
+    }
+  }
+
+  return quoted;
 }
 
 /** Runs a handler body, converting anything thrown into a tool execution error. */
@@ -533,6 +617,11 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           description:
             "Reply to everyone on the original rather than only its sender. Requires replyToUid. To becomes the original's Reply-To (or its From) plus its To; CC becomes the original's CC; addresses this account owns are dropped so the reply is not sent back to the sender. When the original itself carries a BCC — which happens only for a message this account sent, read back from Sent or Drafts — those recipients are carried over too, and remain blind. An explicit to, cc or bcc overrides the corresponding derived list. Defaults to false.",
         },
+        quoteOriginal: {
+          type: "boolean",
+          description:
+            "When replying (replyToUid set), append the conventional quoted original below the new body: an 'On <date>, <sender> wrote:' attribution line, then the original as '>'-prefixed text or an HTML blockquote, matching whichever of text/html the reply uses. Defaults to true. Set false for a reply with no quote.",
+        },
         saveToDrafts: {
           type: "boolean",
           description:
@@ -563,6 +652,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         replyToUid?: number;
         replyToFolder?: string;
         replyAll?: boolean;
+        quoteOriginal?: boolean;
         saveToDrafts?: boolean;
         from?: string;
         fromName?: string;
@@ -662,6 +752,8 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         // Threading, from the original already fetched above.
         let inReplyTo: string | undefined;
         let references: string[] | undefined;
+        let text = args.text;
+        let html = args.html;
         if (original) {
           inReplyTo = original.messageId;
           references = [...(original.references || [])];
@@ -671,6 +763,22 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           if (!subject) {
             const origSubject = original.subject || "";
             subject = origSubject.startsWith("Re:") ? origSubject : `Re: ${origSubject}`;
+          }
+
+          if (args.quoteOriginal !== false) {
+            try {
+              // A reply with neither body is still a reply, and the quote is
+              // the only thing it can carry — so an empty reply quotes as text.
+              const quoted = await quoteOriginalBodies(original, {
+                text: text !== undefined || html === undefined,
+                html: html !== undefined,
+              });
+              if (quoted.text) text = text ? `${text}\n\n${quoted.text}` : quoted.text;
+              if (quoted.html) html = html ? `${html}\n${quoted.html}` : quoted.html;
+            } catch {
+              // A quote is a courtesy, not the message. Whatever went wrong
+              // building it, the reply the caller wrote still goes out.
+            }
           }
         }
 
@@ -683,8 +791,8 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           cc,
           bcc,
           subject: subject as string,
-          text: args.text,
-          html: args.html,
+          text,
+          html,
           attachments: args.attachments === undefined ? undefined : attachments,
           inReplyTo,
           references,

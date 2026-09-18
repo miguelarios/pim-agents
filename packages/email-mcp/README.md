@@ -194,6 +194,23 @@ always is — so replying-all to your own sent mail does not silently narrow the
 The original is fetched before the send confirmation, so the prompt names the derived recipients:
 the caller sees who the mail is going to before agreeing to send it.
 
+## Quoting on replies
+
+A reply (`send_email` with `replyToUid`) carries the quoted original below the new body,
+the way a mail client writes it: an `On <date>, <Name> <address> wrote:` attribution line,
+then the original as `>`-prefixed text, as an HTML `<blockquote>`, or both — matching
+whichever of `text`/`html` the reply itself uses. Pass `quoteOriginal: false` for a bare reply.
+
+The original's HTML is sanitised before it is quoted, through the same allowlist used when
+rendering a message to markdown — quoting it verbatim would re-send a sender's script, style
+and tracking pixels under your own From to everyone on the reply.
+
+Prefixing follows RFC 3676 §4.5, so an already-quoted line gains a level (`> x` → `>> x`)
+rather than an indent and nesting depth survives a long thread. Where the original lacks the
+part being quoted, it is converted — HTML to markdown for a text quote, plain text escaped
+into the HTML one. If the original has no body, or the conversion fails, the reply goes out
+unquoted rather than not at all.
+
 ## Sending attachments
 
 `send_email` takes attachments three ways:

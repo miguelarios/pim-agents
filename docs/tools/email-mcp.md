@@ -124,6 +124,8 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
 | `replyAll` | boolean | | Reply to everyone on the original rather than only its sender. Requires `replyToUid`. See [Reply-all recipients](#reply-all-recipients). Defaults to false. |
+
+| `quoteOriginal` | boolean | | Append the conventional quoted original below the new body when replying. Defaults to **true**. See [Quoting the original](#quoting-the-original). |
 | `saveToDrafts` | boolean | | When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false. |
 | `from` | string | | Optional visible From address. Must be either `SMTP_USER` or listed in `SMTP_ALLOWED_FROM`; anything else is rejected. SMTP envelope delivery still uses the account sender, so the address should share a domain with `SMTP_USER` — see the deliverability note below. |
 | `fromName` | string | | Optional visible display name for the From header. Useful when multiple agents share one allowed sender address. |
@@ -163,6 +165,27 @@ Every address this account owns — `IMAP_USER`, `SMTP_USER`, and anything in `S
 An explicit `to`, `cc` or `bcc` overrides the corresponding derived list, field by field rather than all-or-nothing — "reply to everyone, but send it to Ada" is a real request. The nobody-but-us failure is judged on what is left *after* those overrides, so supplying `to` is always enough.
 
 The original is fetched *before* the send confirmation, so the prompt names the derived recipients. The caller sees who the mail is going to before agreeing to send it.
+
+**Quoting the original**
+
+When `replyToUid` is set, the reply carries the quoted original below the new body, the way a mail client writes it. Set `quoteOriginal: false` for a bare reply.
+
+The attribution line is `On <date>, <Name> <address> wrote:`, falling back to the bare address when the sender has no display name, and dropping the date clause when the original has no `Date` header.
+
+The quote itself matches whichever body the reply uses:
+
+| Reply body | Quote |
+|---|---|
+| `text` | `>`-prefixed original, blank line separating it from the new body. |
+| `html` | `<blockquote type="cite">` containing the original. |
+| both | Both, so the two parts say the same thing. |
+| neither | The text quote alone — an empty reply has nothing else to carry. |
+
+Prefixing follows RFC 3676 §4.5: a line that is already quoted gains a level (`> x` becomes `>> x`) rather than an indent, so nesting depth survives each round through a thread. A blank line becomes a bare `>`, not `"> "`, so the quote carries no trailing whitespace.
+
+**The original's HTML is sanitised before it is quoted**, through the same allowlist `get_email` uses when rendering to markdown: script and style contents, the document wrapper, tracking pixels, hidden elements and any unlisted tag are dropped. Quoting it verbatim would re-send a sender's markup under your own From to everyone on the reply. An original whose HTML sanitises away to nothing falls back to its text body.
+
+Where the original lacks the matching part, it is converted: HTML becomes markdown for a text quote, and plain text is HTML-escaped into a `<pre>` for an HTML quote. If the original has no body at all, or the conversion fails, the reply goes out unquoted rather than not at all — the quote is a courtesy, not the message.
 
 **Deliverability when using `from`**
 
