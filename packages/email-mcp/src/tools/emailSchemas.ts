@@ -60,6 +60,15 @@ export const emailFullSchema = v.object({
   ),
 });
 
+/** One message of a conversation, tagged with the folder it was found in. */
+export const threadResultSchema = v.object({
+  /** The Message-ID the conversation hangs off; null when the anchor has none. */
+  rootMessageId: v.nullable(v.string()),
+  count: v.number(),
+  /** Oldest first — reading order for a conversation. */
+  messages: v.array(v.object({ ...emailSummarySchema.entries, folder: v.string() })),
+});
+
 export const searchResultSchema = v.object({
   emails: v.array(emailSummarySchema),
   count: v.number(),
@@ -99,6 +108,18 @@ export const moveResultSchema = v.object({
   destination: v.string(),
 });
 
+export const copyResultSchema = v.object({
+  status: v.literal("copied"),
+  /** The source UIDs, which still exist in the source folder. */
+  uids: v.array(v.number()),
+  destination: v.string(),
+  /**
+   * Source UID paired with the UID the copy took in the destination. Present
+   * only when the server supports UIDPLUS, which is what reports `COPYUID`.
+   */
+  copied: v.optional(v.array(v.object({ uid: v.number(), destinationUid: v.number() }))),
+});
+
 export const markResultSchema = v.object({
   status: v.literal("updated"),
   uids: v.array(v.number()),
@@ -114,6 +135,23 @@ export const deleteResultSchema = v.object({
 export const createFolderResultSchema = v.object({
   status: v.literal("created"),
   path: v.string(),
+});
+
+/** Both paths as the server reported them, so a normalised target is visible. */
+export const renameFolderResultSchema = v.object({
+  status: v.literal("renamed"),
+  path: v.string(),
+  newPath: v.string(),
+});
+
+export const deleteFolderResultSchema = v.object({
+  status: v.literal("deleted"),
+  path: v.string(),
+  /**
+   * Messages the folder held when it was deleted. Absent when the server would
+   * not report a count — a `\Noselect` hierarchy node has none.
+   */
+  messages: v.optional(v.number()),
 });
 
 /**
