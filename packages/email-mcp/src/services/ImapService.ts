@@ -53,6 +53,22 @@ export interface CalendarPart {
   truncated?: boolean;
 }
 
+/** One message in a thread, tagged with the folder it was found in. */
+export interface ThreadMessage extends EmailSummary {
+  folder: string;
+}
+
+export interface ThreadResult {
+  /**
+   * The Message-ID the conversation hangs off: the first entry of the anchor's
+   * References chain, or the anchor's own id when it starts the thread. Null
+   * when the anchor carries neither.
+   */
+  rootMessageId: string | null;
+  /** Oldest first — reading order for a conversation. */
+  messages: ThreadMessage[];
+}
+
 export interface FolderInfo {
   path: string;
   specialUse?: string;
@@ -265,27 +281,144 @@ export class ImapService {
       },
       { uid: true },
     )) {
-      const envelope = msg.envelope!;
-      summaries.push({
-        uid: msg.uid,
-        messageId: envelope.messageId || "",
-        subject: envelope.subject || "",
-        from: envelope.from?.[0]
-          ? {
-              name: envelope.from[0].name,
-              address: envelope.from[0].address || "",
-            }
-          : { address: "unknown" },
-        to: (envelope.to || []).map((a: any) => ({
-          name: a.name,
-          address: a.address || "",
-        })),
-        date: envelope.date ? formatInTimezone(envelope.date.toISOString(), this.timezone) : "",
-        flags: [...(msg.flags || [])],
-        hasAttachments: hasAttachmentParts(msg.bodyStructure),
-      });
+      summaries.push(this.toSummary(msg));
     }
     return summaries;
+  }
+
+  /** Builds an {@link EmailSummary} from one FETCH response. */
+  private toSummary(msg: any): EmailSummary {
+    const envelope = msg.envelope ?? {};
+    return {
+      uid: msg.uid,
+      messageId: envelope.messageId || "",
+      subject: envelope.subject || "",
+      from: envelope.from?.[0]
+        ? {
+            name: envelope.from[0].name,
+            address: envelope.from[0].address || "",
+          }
+        : { address: "unknown" },
+      to: (envelope.to || []).map((a: any) => ({
+        name: a.name,
+        address: a.address || "",
+      })),
+      date: envelope.date ? formatInTimezone(envelope.date.toISOString(), this.timezone) : "",
+      flags: [...(msg.flags || [])],
+      hasAttachments: hasAttachmentParts(msg.bodyStructure),
+    };
+  }
+
+  /**
+   * Assembles the conversation an anchor message belongs to.
+   *
+   * Two mechanisms, in order of preference. A server advertising OBJECTID or
+   * X-GM-EXT-1 assigns every message a thread id and will answer a SEARCH on
+   * it with the whole conversation — that is authoritative, and it catches
+   * replies whose References chain was mangled in transit. Otherwise the
+   * chain is walked: RFC 5322 §3.6.4 has every reply carry the root's
+   * Message-ID in its References, so one SEARCH for messages that either *are*
+   * the root or *cite* it returns the thread.
+   *
+   * RFC 5256's THREAD command would be the third option, but imapflow exposes
+   * no way to issue it.
+   */
+  async fetchThread(anchorFolder: string, uid: number, folders: string[]): Promise<ThreadResult> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+
+      let rootMessageId: string | null;
+      let threadId: string | undefined;
+      const lock = await client.getMailboxLock(anchorFolder);
+      try {
+        const anchor = await client.fetchOne(
+          String(uid),
+          { envelope: true, threadId: true, headers: ["references", "in-reply-to"], uid: true },
+          { uid: true },
+        );
+        if (!anchor) {
+          throw new EmailError(`Email UID ${uid} not found`, ErrorCode.EMAIL_NOT_FOUND, uid);
+        }
+        threadId = anchor.threadId;
+        // References[0] is the root. Falling back to In-Reply-To matters:
+        // plenty of mailers send a reply with In-Reply-To and no References
+        // at all, and anchoring on one of those would otherwise make the
+        // reply its own root and lose every ancestor.
+        const references = parseMessageIdHeader(anchor.headers, "references");
+        const inReplyTo = parseMessageIdHeader(anchor.headers, "in-reply-to");
+        rootMessageId = references[0] ?? inReplyTo[0] ?? anchor.envelope?.messageId ?? null;
+      } finally {
+        lock.release();
+      }
+
+      const criteria = threadId
+        ? { threadId }
+        : rootMessageId
+          ? {
+              // In-Reply-To as well as References: a reply that cites the root
+              // only through In-Reply-To is still part of the conversation.
+              or: [
+                { header: { "message-id": rootMessageId } },
+                { header: { references: rootMessageId } },
+                { header: { "in-reply-to": rootMessageId } },
+              ],
+            }
+          : undefined;
+
+      const found: ThreadMessage[] = [];
+      if (criteria) {
+        for (const folder of folders) {
+          // Only the SELECT is forgiving. A folder that cannot be opened —
+          // renamed, or never existed — is skipped, since a partial thread is
+          // more use than none and the caller chose the list. A failure in the
+          // search or the fetch is a different thing entirely, and must not be
+          // swallowed into a `count: 0` that reads like an empty thread.
+          let folderLock: { release: () => void };
+          try {
+            folderLock = await client.getMailboxLock(folder);
+          } catch {
+            continue;
+          }
+          try {
+            const uids = (await client.search(criteria as any, { uid: true })) || [];
+            if (uids.length === 0) continue;
+            for await (const msg of client.fetch(
+              uids.join(","),
+              { envelope: true, flags: true, bodyStructure: true, uid: true },
+              { uid: true },
+            )) {
+              found.push({ ...this.toSummary(msg), folder });
+            }
+          } finally {
+            folderLock.release();
+          }
+        }
+      }
+
+      // The same message filed in two folders is one message in a conversation.
+      // Message-ID is the identity; a message without one keeps its own row,
+      // since there is nothing to match it against.
+      const seen = new Set<string>();
+      const messages = found.filter((msg) => {
+        if (!msg.messageId) return true;
+        if (seen.has(msg.messageId)) return false;
+        seen.add(msg.messageId);
+        return true;
+      });
+      messages.sort((a, b) => {
+        const at = new Date(a.date).getTime();
+        const bt = new Date(b.date).getTime();
+        return (Number.isNaN(at) ? 0 : at) - (Number.isNaN(bt) ? 0 : bt);
+      });
+
+      return { rootMessageId, messages };
+    } catch (error) {
+      if (error instanceof EmailError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
   }
 
   async fetchEmail(folder: string, uid: number): Promise<EmailFull> {
@@ -399,6 +532,51 @@ export class ImapService {
     }
   }
 
+  /**
+   * Copies messages, leaving the originals in place.
+   *
+   * imapflow's `messageCopy` does not throw on a server refusal: its command
+   * catches the error, logs a warning, and resolves `false` (and resolves
+   * `undefined` when its own preconditions fail). So a missing destination —
+   * `NO [TRYCREATE]`, the most likely failure here — would otherwise be
+   * indistinguishable from a successful copy on a server without UIDPLUS.
+   * Both falsy results are turned back into a thrown error.
+   *
+   * The UID pairs come from the server's UIDPLUS `COPYUID` response. Without
+   * that extension there is no way to learn the new UIDs short of re-searching
+   * the destination, so the mapping is absent rather than guessed — the copy
+   * did happen.
+   */
+  async copyEmails(
+    folder: string,
+    uids: number[],
+    destination: string,
+  ): Promise<Array<{ uid: number; destinationUid: number }> | undefined> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock(folder);
+      try {
+        const result = await client.messageCopy(uids.join(","), destination, { uid: true });
+        if (!result) {
+          throw new EmailError(
+            `Copy to ${destination} failed — the server refused it. The folder may not exist; create_folder first, or check list_folders for the exact path.`,
+            ErrorCode.OPERATION_FAILED,
+          );
+        }
+        if (!result.uidMap) return undefined;
+        return [...result.uidMap].map(([uid, destinationUid]) => ({ uid, destinationUid }));
+      } finally {
+        lock.release();
+      }
+    } catch (error) {
+      if (error instanceof EmailError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
   async moveEmails(folder: string, uids: number[], destination: string): Promise<void> {
     const client = this.createClient();
     try {
@@ -475,6 +653,51 @@ export class ImapService {
     try {
       await client.connect();
       await client.mailboxCreate(path);
+    } catch (error) {
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
+  /**
+   * Renames a mailbox, returning the paths the server reports rather than the
+   * ones requested — a server is free to normalise the delimiter or to prefix
+   * the personal namespace, and the RENAME response is the authority on where
+   * the folder ended up.
+   */
+  async renameFolder(path: string, newPath: string): Promise<{ path: string; newPath: string }> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const result = await client.mailboxRename(path, newPath);
+      // A rename can move the Sent/Drafts/Trash folder this service resolves
+      // special-use flags to, and the cache lives for the process lifetime, so
+      // every entry is dropped rather than guessing which one was affected —
+      // re-resolving costs one LIST, a stale entry costs a failed append.
+      this.specialUseCache.clear();
+      return {
+        path: result?.path ?? path,
+        newPath: result?.newPath ?? newPath,
+      };
+    } catch (error) {
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
+  async deleteFolder(path: string): Promise<void> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      await client.mailboxDelete(path);
+      // The deleted folder may be the Sent/Drafts/Trash mailbox this service
+      // resolved a special-use flag to, and that cache lives for the process
+      // lifetime. Every entry is dropped rather than guessing which one was
+      // affected — re-resolving costs one LIST, a stale entry costs an append
+      // to a folder that no longer exists.
+      this.specialUseCache.clear();
     } catch (error) {
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     } finally {
@@ -649,6 +872,23 @@ export class ImapService {
       await client.logout().catch(() => {});
     }
   }
+}
+
+/**
+ * Pulls the Message-IDs out of one raw header line, by name.
+ *
+ * imapflow hands back the header lines as bytes, so the block has to be
+ * unfolded first: RFC 5322 §2.2.3 lets a long References run across
+ * continuation lines, and a chain split mid-header would otherwise lose every
+ * id after the first line.
+ */
+function parseMessageIdHeader(headers: Buffer | undefined, name: string): string[] {
+  if (!headers) return [];
+  const unfolded = headers.toString("utf-8").replace(/\r?\n[ \t]+/g, " ");
+  const prefix = `${name.toLowerCase()}:`;
+  const line = unfolded.split(/\r?\n/).find((l) => l.toLowerCase().startsWith(prefix));
+  if (!line) return [];
+  return line.match(/<[^<>]+>/g) ?? [];
 }
 
 function compareSummaries(
