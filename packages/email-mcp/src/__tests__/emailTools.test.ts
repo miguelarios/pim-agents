@@ -12,10 +12,12 @@ import { EMAIL_TOOLS } from "../tools/emailTools.js";
 const AUTO_CONFIRM = {
   mcpReq: {
     inputResponses: Object.fromEntries(
-      ["confirm_send_email", "confirm_send_draft", "confirm_delete_email"].map((key) => [
-        key,
-        { action: "accept", content: { confirm: true } },
-      ]),
+      [
+        "confirm_send_email",
+        "confirm_send_draft",
+        "confirm_delete_email",
+        "confirm_delete_folder",
+      ].map((key) => [key, { action: "accept", content: { confirm: true } }]),
     ),
   },
 } as unknown as ServerContext;
@@ -70,8 +72,8 @@ vi.mock("../htmlToMarkdown.js", () => ({
 }));
 
 describe("EMAIL_TOOLS definitions", () => {
-  it("defines 13 tools", () => {
-    expect(EMAIL_TOOLS).toHaveLength(13);
+  it("defines 16 tools", () => {
+    expect(EMAIL_TOOLS).toHaveLength(16);
   });
 
   it("all tools have name, description, and inputSchema", () => {
@@ -86,14 +88,17 @@ describe("EMAIL_TOOLS definitions", () => {
   it("defines the expected tool names", () => {
     const names = EMAIL_TOOLS.map((t) => t.name);
     expect(names).toContain("search_emails");
-    expect(names).toContain("get_email");
     expect(names).toContain("get_thread");
+    expect(names).toContain("copy_email");
+    expect(names).toContain("get_email");
     expect(names).toContain("send_email");
     expect(names).toContain("move_email");
     expect(names).toContain("mark_email");
     expect(names).toContain("delete_email");
     expect(names).toContain("list_folders");
     expect(names).toContain("create_folder");
+    expect(names).toContain("rename_folder");
+    expect(names).toContain("delete_folder");
     expect(names).toContain("download_attachment");
     expect(names).toContain("get_email_raw");
     expect(names).toContain("get_folder_status");
@@ -167,7 +172,6 @@ describe("EMAIL_TOOLS definitions", () => {
     for (const name of [
       "search_emails",
       "get_email",
-      "get_thread",
       "list_folders",
       "download_attachment",
       "get_email_raw",
@@ -176,6 +180,7 @@ describe("EMAIL_TOOLS definitions", () => {
       expect(byName[name].annotations?.readOnlyHint, name).toBe(true);
     }
     expect(byName.delete_email.annotations?.destructiveHint).toBe(true);
+    expect(byName.delete_folder.annotations?.destructiveHint).toBe(true);
     expect(byName.send_email.annotations?.readOnlyHint).toBe(false);
     expect(byName.send_email.annotations?.idempotentHint).toBe(false);
     expect(byName.send_email.annotations?.openWorldHint).toBe(true);
@@ -952,4 +957,317 @@ describe("uids guards", () => {
       expect(result.content[0].text).toMatch(/uids must be a non-empty array/);
     },
   );
+});
+
+describe("delete_folder", () => {
+  const mockDeleteFolder = vi.fn();
+  const mockGetFolderStatus = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockImapService.deleteFolder = mockDeleteFolder;
+    mockImapService.getFolderStatus = mockGetFolderStatus;
+    mockDeleteFolder.mockResolvedValue(undefined);
+    mockGetFolderStatus.mockResolvedValue({ total: 12, unseen: 3 });
+  });
+
+  it("deletes the folder and reports what went with it", async () => {
+    const result = await handleEmailTool(
+      "delete_folder",
+      { path: "Projects/Work" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockDeleteFolder).toHaveBeenCalledWith("Projects/Work");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      status: "deleted",
+      path: "Projects/Work",
+      messages: 12,
+    });
+  });
+
+  it("asks before deleting, naming the folder and its message count", async () => {
+    const result = await handleEmailTool(
+      "delete_folder",
+      { path: "Projects/Work" },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.resultType).toBe("input_required");
+    expect(result.inputRequests.confirm_delete_folder.params.message).toMatch(/Projects\/Work/);
+    expect(result.inputRequests.confirm_delete_folder.params.message).toMatch(/12 message/);
+    expect(mockDeleteFolder).not.toHaveBeenCalled();
+  });
+
+  it("does not delete when the user declines", async () => {
+    const declined = {
+      mcpReq: { inputResponses: { confirm_delete_folder: { action: "decline" } } },
+    } as unknown as ServerContext;
+
+    const result = await handleEmailTool(
+      "delete_folder",
+      { path: "Projects/Work" },
+      mockImapService,
+      mockSmtpService,
+      declined,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(mockDeleteFolder).not.toHaveBeenCalled();
+  });
+
+  it("still confirms and deletes when the folder cannot be counted", async () => {
+    // A \\Noselect hierarchy node has no message count to report, but it is
+    // still a folder the caller asked to destroy.
+    mockGetFolderStatus.mockRejectedValueOnce(new Error("Mailbox is not selectable"));
+
+    const result = await handleEmailTool(
+      "delete_folder",
+      { path: "Projects" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockDeleteFolder).toHaveBeenCalledWith("Projects");
+    expect(result.structuredContent).toEqual({ status: "deleted", path: "Projects" });
+  });
+
+  it("refuses to delete INBOX, whatever its casing, without asking", async () => {
+    for (const path of ["INBOX", "inbox", " Inbox "]) {
+      const result = await handleEmailTool(
+        "delete_folder",
+        { path },
+        mockImapService,
+        mockSmtpService,
+        NOT_CONFIRMED,
+      );
+
+      expect(result.isError, path).toBe(true);
+      expect(result.content[0].text).toMatch(/INBOX cannot be deleted/);
+    }
+    expect(mockDeleteFolder).not.toHaveBeenCalled();
+    expect(mockGetFolderStatus).not.toHaveBeenCalled();
+  });
+
+  it("rejects a blank path without asking or connecting", async () => {
+    const result = await handleEmailTool(
+      "delete_folder",
+      { path: "   " },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/must be a non-empty folder path/);
+    expect(mockGetFolderStatus).not.toHaveBeenCalled();
+    expect(mockDeleteFolder).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a server rejection as a tool error", async () => {
+    mockDeleteFolder.mockRejectedValueOnce(new Error("Mailbox has inferior hierarchical names"));
+
+    const result = await handleEmailTool(
+      "delete_folder",
+      { path: "Projects" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/inferior hierarchical names/);
+  });
+});
+
+describe("rename_folder", () => {
+  const mockRenameFolder = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockImapService.renameFolder = mockRenameFolder;
+    mockRenameFolder.mockResolvedValue({ path: "Projects/Work", newPath: "Projects/Clients" });
+  });
+
+  it("renames a folder and reports both paths", async () => {
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Projects/Work", newPath: "Projects/Clients" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockRenameFolder).toHaveBeenCalledWith("Projects/Work", "Projects/Clients");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      status: "renamed",
+      path: "Projects/Work",
+      newPath: "Projects/Clients",
+    });
+  });
+
+  it("returns the paths the server reported rather than the requested ones", async () => {
+    mockRenameFolder.mockResolvedValueOnce({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Work", newPath: "Clients" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.structuredContent).toEqual({
+      status: "renamed",
+      path: "INBOX.Work",
+      newPath: "INBOX.Clients",
+    });
+  });
+
+  it.each([
+    ["path", { path: "  ", newPath: "Clients" }],
+    ["newPath", { path: "Work", newPath: "" }],
+  ])("rejects a blank %s without opening a connection", async (_field, args) => {
+    const result = await handleEmailTool("rename_folder", args, mockImapService, mockSmtpService);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/must be a non-empty folder path/);
+    expect(mockRenameFolder).not.toHaveBeenCalled();
+  });
+
+  it("rejects a rename to the same path", async () => {
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Work", newPath: "Work" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/already the folder's path/);
+    expect(mockRenameFolder).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a server rejection as a tool error", async () => {
+    mockRenameFolder.mockRejectedValueOnce(new Error("Mailbox already exists"));
+
+    const result = await handleEmailTool(
+      "rename_folder",
+      { path: "Work", newPath: "Clients" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Mailbox already exists/);
+  });
+});
+
+describe("copy_email", () => {
+  const mockCopyEmails = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockImapService.copyEmails = mockCopyEmails;
+    mockCopyEmails.mockResolvedValue(undefined);
+  });
+
+  it("copies from the default folder to the destination", async () => {
+    const result = await handleEmailTool(
+      "copy_email",
+      { uids: [1, 2], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockCopyEmails).toHaveBeenCalledWith("INBOX", [1, 2], "Archive");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      status: "copied",
+      uids: [1, 2],
+      destination: "Archive",
+    });
+  });
+
+  it("copies from an explicit source folder", async () => {
+    await handleEmailTool(
+      "copy_email",
+      { folder: "Archive/2025", uids: [9], destination: "Receipts" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockCopyEmails).toHaveBeenCalledWith("Archive/2025", [9], "Receipts");
+  });
+
+  it("reports the destination UIDs when the server supplies them", async () => {
+    mockCopyEmails.mockResolvedValueOnce([
+      { uid: 1, destinationUid: 101 },
+      { uid: 2, destinationUid: 102 },
+    ]);
+
+    const result = await handleEmailTool(
+      "copy_email",
+      { uids: [1, 2], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.structuredContent).toEqual({
+      status: "copied",
+      uids: [1, 2],
+      destination: "Archive",
+      copied: [
+        { uid: 1, destinationUid: 101 },
+        { uid: 2, destinationUid: 102 },
+      ],
+    });
+  });
+
+  it("rejects copying a folder onto itself", async () => {
+    const result = await handleEmailTool(
+      "copy_email",
+      { folder: "Archive", uids: [1], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/destination is the source folder/);
+    expect(mockCopyEmails).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a missing destination as a tool error, never as a copy", async () => {
+    mockCopyEmails.mockRejectedValueOnce(new Error("Copy to Nope failed — the server refused it."));
+
+    const result = await handleEmailTool(
+      "copy_email",
+      { uids: [1], destination: "Nope" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Copy to Nope failed/);
+    expect(result.structuredContent).toBeUndefined();
+  });
+
+  it("leaves the source untouched — no move, no flag change", async () => {
+    const mockMoveEmails = vi.fn();
+    const mockMarkEmails = vi.fn();
+    mockImapService.moveEmails = mockMoveEmails;
+    mockImapService.markEmails = mockMarkEmails;
+
+    await handleEmailTool(
+      "copy_email",
+      { uids: [1], destination: "Archive" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(mockMoveEmails).not.toHaveBeenCalled();
+    expect(mockMarkEmails).not.toHaveBeenCalled();
+  });
 });

@@ -6,11 +6,14 @@ const mockFetchOne = vi.fn();
 const mockFetch = vi.fn();
 const mockSearch = vi.fn();
 const mockMessageMove = vi.fn();
+const mockMessageCopy = vi.fn();
 const mockMessageDelete = vi.fn();
 const mockMessageFlagsAdd = vi.fn();
 const mockMessageFlagsRemove = vi.fn();
 const mockList = vi.fn();
 const mockMailboxCreate = vi.fn();
+const mockMailboxDelete = vi.fn();
+const mockMailboxRename = vi.fn();
 const mockDownload = vi.fn();
 const mockStatus = vi.fn();
 const mockGetMailboxLock = vi.fn();
@@ -29,11 +32,14 @@ vi.mock("imapflow", () => ({
     fetch: mockFetch,
     search: mockSearch,
     messageMove: mockMessageMove,
+    messageCopy: mockMessageCopy,
     messageDelete: mockMessageDelete,
     messageFlagsAdd: mockMessageFlagsAdd,
     messageFlagsRemove: mockMessageFlagsRemove,
     list: mockList,
     mailboxCreate: mockMailboxCreate,
+    mailboxDelete: mockMailboxDelete,
+    mailboxRename: mockMailboxRename,
     download: mockDownload,
     status: mockStatus,
     append: mockAppend,
@@ -1375,6 +1381,65 @@ describe("ImapService", () => {
     });
   });
 
+  describe("copyEmails", () => {
+    beforeEach(() => {
+      mockMessageCopy.mockResolvedValue({ path: "INBOX", destination: "Archive" });
+    });
+
+    it("copies a UID range to the destination", async () => {
+      await service.copyEmails("INBOX", [1, 2, 3], "Archive");
+      expect(mockMessageCopy).toHaveBeenCalledWith("1,2,3", "Archive", { uid: true });
+    });
+
+    it("maps source UIDs to destination UIDs when the server has UIDPLUS", async () => {
+      mockMessageCopy.mockResolvedValueOnce({
+        path: "INBOX",
+        destination: "Archive",
+        uidMap: new Map([
+          [1, 101],
+          [2, 102],
+        ]),
+      });
+
+      const result = await service.copyEmails("INBOX", [1, 2], "Archive");
+      expect(result).toEqual([
+        { uid: 1, destinationUid: 101 },
+        { uid: 2, destinationUid: 102 },
+      ]);
+    });
+
+    it("returns no mapping when the server omits UIDPLUS data", async () => {
+      const result = await service.copyEmails("INBOX", [1, 2], "Archive");
+      expect(result).toBeUndefined();
+    });
+
+    it("throws when the server refuses the COPY", async () => {
+      // imapflow's copy command catches a server NO (e.g. [TRYCREATE] for a
+      // missing destination) and resolves `false` rather than throwing, so a
+      // refusal must not be mistaken for a copy with no UIDPLUS data.
+      mockMessageCopy.mockResolvedValueOnce(false);
+      await expect(service.copyEmails("INBOX", [1], "Nope")).rejects.toThrow(/Copy to Nope failed/);
+    });
+
+    it("throws when imapflow answers with undefined", async () => {
+      // The same command returns undefined when its own preconditions fail.
+      mockMessageCopy.mockResolvedValueOnce(undefined as never);
+      await expect(service.copyEmails("INBOX", [1], "Archive")).rejects.toThrow(
+        /Copy to Archive failed/,
+      );
+    });
+
+    it("releases the mailbox lock and logs out when the copy fails", async () => {
+      const release = vi.fn();
+      mockGetMailboxLock.mockResolvedValueOnce({ release });
+      mockMessageCopy.mockRejectedValueOnce(new Error("TRYCREATE"));
+
+      await expect(service.copyEmails("INBOX", [1], "Nope")).rejects.toThrow();
+      expect(release).toHaveBeenCalled();
+      expect(mockLogout).toHaveBeenCalled();
+    });
+  });
+
   describe("fetchThread", () => {
     const envelopeFor = (messageId: string, date: string, subject = "Budget") => ({
       messageId,
@@ -1633,6 +1698,81 @@ describe("ImapService", () => {
     it("creates a new IMAP folder", async () => {
       await service.createFolder("Projects/Work");
       expect(mockMailboxCreate).toHaveBeenCalledWith("Projects/Work");
+    });
+  });
+
+  describe("renameFolder", () => {
+    beforeEach(() => {
+      mockMailboxRename.mockResolvedValue({ path: "Projects/Work", newPath: "Projects/Clients" });
+    });
+
+    it("renames an IMAP folder", async () => {
+      const result = await service.renameFolder("Projects/Work", "Projects/Clients");
+      expect(mockMailboxRename).toHaveBeenCalledWith("Projects/Work", "Projects/Clients");
+      expect(result).toEqual({ path: "Projects/Work", newPath: "Projects/Clients" });
+    });
+
+    it("reports the paths the server echoed, not the ones requested", async () => {
+      // A server may normalise the hierarchy delimiter or the personal-namespace
+      // prefix, so the RENAME response is the authority on where the folder is.
+      mockMailboxRename.mockResolvedValueOnce({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+      const result = await service.renameFolder("Work", "Clients");
+      expect(result).toEqual({ path: "INBOX.Work", newPath: "INBOX.Clients" });
+    });
+
+    it("falls back to the requested paths when the server echoes nothing", async () => {
+      mockMailboxRename.mockResolvedValueOnce(undefined as never);
+      const result = await service.renameFolder("Work", "Clients");
+      expect(result).toEqual({ path: "Work", newPath: "Clients" });
+    });
+
+    it("drops the special-use cache so a renamed Sent folder is re-resolved", async () => {
+      mockList.mockResolvedValue([
+        { path: "Sent", specialUse: "\\Sent", delimiter: "/" },
+        { path: "Archive/Sent", specialUse: "\\Sent", delimiter: "/" },
+      ]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent");
+
+      await service.renameFolder("Sent", "Archive/Sent");
+
+      mockList.mockResolvedValue([{ path: "Archive/Sent", specialUse: "\\Sent", delimiter: "/" }]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Archive/Sent");
+    });
+
+    it("logs out even when the rename fails", async () => {
+      mockMailboxRename.mockRejectedValueOnce(new Error("ALREADYEXISTS"));
+      await expect(service.renameFolder("Work", "Clients")).rejects.toThrow();
+      expect(mockLogout).toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteFolder", () => {
+    beforeEach(() => {
+      mockMailboxDelete.mockResolvedValue({ path: "Projects/Work" });
+    });
+
+    it("deletes an IMAP folder", async () => {
+      await service.deleteFolder("Projects/Work");
+      expect(mockMailboxDelete).toHaveBeenCalledWith("Projects/Work");
+    });
+
+    it("drops the special-use cache so a deleted Sent folder is re-resolved", async () => {
+      mockList.mockResolvedValue([
+        { path: "Sent", specialUse: "\\Sent", delimiter: "/" },
+        { path: "Sent Messages", delimiter: "/" },
+      ]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent");
+
+      await service.deleteFolder("Sent");
+
+      mockList.mockResolvedValue([{ path: "Sent Messages", delimiter: "/" }]);
+      expect(await service.getSpecialUseFolder("\\Sent")).toBe("Sent Messages");
+    });
+
+    it("logs out even when the delete fails", async () => {
+      mockMailboxDelete.mockRejectedValueOnce(new Error("NONEXISTENT"));
+      await expect(service.deleteFolder("Ghost")).rejects.toThrow();
+      expect(mockLogout).toHaveBeenCalled();
     });
   });
 

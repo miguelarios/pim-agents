@@ -17,7 +17,9 @@ import type { ImapService } from "../services/ImapService.js";
 import type { SmtpService } from "../services/SmtpService.js";
 import {
   attachmentSchema,
+  copyResultSchema,
   createFolderResultSchema,
+  deleteFolderResultSchema,
   deleteResultSchema,
   emailFullSchema,
   folderListSchema,
@@ -25,6 +27,7 @@ import {
   markResultSchema,
   moveResultSchema,
   rawEmailSchema,
+  renameFolderResultSchema,
   searchResultSchema,
   sendResultSchema,
   threadResultSchema,
@@ -657,6 +660,55 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       }),
   },
   {
+    name: "copy_email",
+    title: "Copy Email",
+    description:
+      "Copy one or more emails into another IMAP folder, leaving the originals where they are. Use move_email to relocate them instead. When the server supports UIDPLUS, the result pairs each source UID with the UID its copy took in the destination; otherwise only the source UIDs come back, and the copy still happened.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Not idempotent: a second call adds a second copy rather than doing
+      // nothing, since each COPY allocates a fresh UID in the destination.
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder: { type: "string", description: "Source IMAP folder. Defaults to INBOX." },
+        uids: UIDS_PROP("UIDs of emails to copy. They remain in the source folder."),
+        destination: {
+          type: "string",
+          description:
+            "Destination folder path. It must already exist — create_folder first if not.",
+        },
+      },
+      required: ["uids", "destination"],
+    },
+    outputSchema: copyResultSchema,
+    handler: (args: { folder?: string; uids: number[]; destination: string }, { imap }) =>
+      run(async () => {
+        if (!Array.isArray(args.uids) || args.uids.length === 0) {
+          return invalid("uids must be a non-empty array of message UIDs");
+        }
+        const folder = args.folder || "INBOX";
+        // A self-copy is legal IMAP and duplicates every message in place,
+        // which is never what a caller reaching for "copy to a folder" wants.
+        if (folder === args.destination) {
+          return invalid(
+            `destination is the source folder (${folder}) — this would duplicate the messages in place`,
+          );
+        }
+        const copied = await imap.copyEmails(folder, args.uids, args.destination);
+        return structured({
+          status: "copied" as const,
+          uids: args.uids,
+          destination: args.destination,
+          ...(copied ? { copied } : {}),
+        });
+      }),
+  },
+  {
     name: "mark_email",
     title: "Mark Email",
     description:
@@ -791,6 +843,112 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         await imap.createFolder(args.path);
         return structured({ status: "created" as const, path: args.path });
       }),
+  },
+  {
+    name: "rename_folder",
+    title: "Rename Folder",
+    description:
+      "Rename an IMAP folder, or move it in the hierarchy by giving a newPath under a different parent. Child folders move with it. Renaming INBOX is special-cased by IMAP: the server moves INBOX's messages into the new folder and leaves an empty INBOX behind, and INBOX's children do not follow. The server may normalise the path it reports back, so use the returned newPath rather than assuming the requested one.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Not idempotent: the second call finds nothing at the old path and fails.
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Existing folder path to rename (e.g., 'Projects/Work').",
+        },
+        newPath: {
+          type: "string",
+          description:
+            "New folder path. A path under a different parent moves the folder there, creating the parent only if the server does so implicitly — call create_folder first if it does not.",
+        },
+      },
+      required: ["path", "newPath"],
+    },
+    outputSchema: renameFolderResultSchema,
+    handler: (args: { path: string; newPath: string }, { imap }) =>
+      run(async () => {
+        // Checked before connecting: a blank path is a RENAME the server would
+        // answer with a protocol error naming neither argument, and IMAP has no
+        // way to express "rename to nothing".
+        const path = typeof args.path === "string" ? args.path.trim() : "";
+        const newPath = typeof args.newPath === "string" ? args.newPath.trim() : "";
+        if (!path) return invalid("path must be a non-empty folder path");
+        if (!newPath) return invalid("newPath must be a non-empty folder path");
+        if (path === newPath) {
+          return invalid(`newPath is already the folder's path: ${path}`);
+        }
+        const renamed = await imap.renameFolder(path, newPath);
+        return structured({ status: "renamed" as const, ...renamed });
+      }),
+  },
+  {
+    name: "delete_folder",
+    title: "Delete Folder",
+    description:
+      "Delete an IMAP folder and every message in it. This is irreversible — the messages are not moved to Trash — so the tool asks the user to confirm first, naming the folder and how many messages it holds. INBOX cannot be deleted. Whether a folder with sub-folders can be deleted is up to the server; many refuse, so delete or move the children first.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      // A second call finds nothing to delete and fails, but the account ends
+      // up in the same state either way.
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Folder path to delete (e.g., 'Projects/Work')." },
+      },
+      required: ["path"],
+    },
+    outputSchema: deleteFolderResultSchema,
+    handler: async (args: { path: string }, { imap }, ctx) => {
+      const path = typeof args.path === "string" ? args.path.trim() : "";
+      if (!path) return invalid("path must be a non-empty folder path");
+      // RFC 3501 §6.3.4 makes deleting INBOX an error, and a server's reply to
+      // it is a bare NO. Rejecting here spends no confirmation on a request
+      // that was never going to succeed.
+      if (path.toUpperCase() === "INBOX") {
+        return invalid("INBOX cannot be deleted — IMAP reserves it");
+      }
+
+      // STATUS before the gate so the prompt says what is actually at stake:
+      // "delete Projects/Work" and "delete Projects/Work and its 412 messages"
+      // are different decisions. A folder the server will not count is still
+      // worth confirming, so a failure here is not fatal — the delete itself
+      // raises the real error.
+      let messages: number | undefined;
+      try {
+        messages = (await imap.getFolderStatus(path)).total;
+      } catch {
+        messages = undefined;
+      }
+
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_delete_folder",
+        `Delete the folder ${path}${
+          messages === undefined ? "" : ` and the ${messages} message(s) in it`
+        }? This cannot be undone — the messages do not go to Trash.`,
+      );
+      if (gate.status === "interrupt") return gate.result;
+
+      return run(async () => {
+        await imap.deleteFolder(path);
+        return structured({
+          status: "deleted" as const,
+          path,
+          ...(messages === undefined ? {} : { messages }),
+        });
+      });
+    },
   },
   {
     name: "download_attachment",
