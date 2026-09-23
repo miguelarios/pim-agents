@@ -169,6 +169,13 @@ Neither template is enumerable — there is no `resources/list` entry for them, 
 listing every attachment in an account would mean walking every message. Discover
 them through `resources/templates/list`, and find part IDs with `get_email`.
 
+## Replying
+
+`send_email` with a `replyToUid` and no `to` replies to the original's author: its `Reply-To`
+if it has one, otherwise its `From`. A follow-up to your own message in `Sent` goes to that
+message's `To` instead, rather than back to you. Pass `to` to address the reply to someone
+else, or set `replyAll` to include everyone on the original.
+
 ## Replying to everyone
 
 `send_email` with `replyAll: true` (and a `replyToUid`) works out the recipients from the
