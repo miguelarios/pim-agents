@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.0 (2026-09-23)
+
+- A plain reply now addresses itself. `send_email` with `replyToUid` and no `to` goes to the original's `Reply-To`, or its `From` when there is none — the same author `replyAll` starts from. Previously `to` was required, so the caller copied the sender's address by hand even though the tool had already fetched the original to thread it, and the easy mistake was copying `From` when `Reply-To` was set, which answers a mailing-list post privately instead of on the list (PR #120, `claude/repo-review-75x4of`).
+- A follow-up to a message this account sent — read back from `Sent` — goes to that message's `To` rather than back to ourselves, as a mail client does. If that still leaves only this account, the call fails with `INVALID_INPUT` instead of mailing itself (PR #120, `claude/repo-review-75x4of`).
+- Only an absent `to` is filled in. An explicit `to` still wins, and an explicit empty list is still rejected rather than overridden. The send confirmation names the derived recipient, since the original is fetched before the prompt (PR #120, `claude/repo-review-75x4of`).
+- The `send_email` parameter table in `docs/tools/email-mcp.md` is whole again; a stray blank line had split it, leaving `quoteOriginal` and every row after it outside the table (PR #120, `claude/repo-review-75x4of`).
+
 ## 0.15.0 (2026-09-18)
 
 - New `rename_folder` tool. An IMAP mailbox could be created but never renamed, so reorganising a folder tree meant `create_folder`, then `move_email` for every message, then `delete_email` — three tools and a per-message round trip for something IMAP expresses as a single `RENAME`, which also carries child folders along with the parent (PR #110, `claude/email-mcp-issues-ii6e3m-rename-folder`).
