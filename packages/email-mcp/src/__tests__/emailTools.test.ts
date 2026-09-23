@@ -1530,3 +1530,131 @@ describe("send_email replyAll", () => {
     expect(envelope.to).toEqual(["ada@example.com", "bob@example.com", "cara@example.com"]);
   });
 });
+
+describe("send_email reply recipients", () => {
+  /** Ada wrote to us and Bob, copying Cara. */
+  const ORIGINAL = {
+    uid: 42,
+    messageId: "<original@test.com>",
+    subject: "Budget",
+    from: { name: "Ada", address: "ada@example.com" },
+    to: [{ address: "user@test.com" }, { name: "Bob", address: "bob@example.com" }],
+    cc: [{ address: "cara@example.com" }],
+    inReplyTo: null,
+    references: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveFromAddress.mockImplementation((requested?: string) => requested || "user@test.com");
+    mockFormatFromHeader.mockImplementation(
+      (address: string, displayName?: string) => `"${displayName || "Test User"}" <${address}>`,
+    );
+    mockComposeRawMessage.mockResolvedValue(Buffer.from("raw-message"));
+    mockSendRawMessage.mockResolvedValue({
+      messageId: "<sent-1@test.com>",
+      accepted: [],
+      rejected: [],
+    });
+    mockGetSpecialUseFolder.mockResolvedValue("Sent");
+    mockAppendMessage.mockResolvedValue({ uid: 100 });
+    mockSmtpService.ownAddresses = vi.fn(() => ["user@test.com"]);
+    mockFetchEmail.mockResolvedValue(ORIGINAL);
+  });
+
+  const composed = () => mockComposeRawMessage.mock.calls[0][0];
+
+  it("addresses a reply with no to to the original's sender only", async () => {
+    const result = await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, text: "Sounds good" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(composed().to).toEqual(["ada@example.com"]);
+    // Not a reply-all: the original's other recipients are left off.
+    expect(composed().cc).toBeUndefined();
+  });
+
+  it("addresses it to Reply-To rather than From when the original sets it", async () => {
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      replyTo: [{ address: "list@example.com" }],
+    });
+
+    await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, text: "Sounds good" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(composed().to).toEqual(["list@example.com"]);
+  });
+
+  it("addresses a reply to our own sent message to that message's recipients", async () => {
+    // Following up on something we sent: replying to ourselves is never meant.
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      from: { address: "user@test.com" },
+      to: [{ address: "bob@example.com" }, { address: "user@test.com" }],
+    });
+
+    await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, replyToFolder: "Sent", text: "Following up" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(composed().to).toEqual(["bob@example.com"]);
+  });
+
+  it("fails when the only party to reply to is this account", async () => {
+    mockFetchEmail.mockResolvedValue({
+      ...ORIGINAL,
+      from: { address: "user@test.com" },
+      to: [{ address: "user@test.com" }],
+    });
+
+    const result = await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, text: "Note to self" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/no sender other than this account/);
+    expect(mockSendRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("lets an explicit to override the derived sender", async () => {
+    await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, to: ["bob@example.com"], text: "Sounds good" },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    expect(composed().to).toEqual(["bob@example.com"]);
+  });
+
+  it("names the derived sender in the send confirmation", async () => {
+    const result = await handleEmailTool(
+      "send_email",
+      { replyToUid: 42, text: "Sounds good" },
+      mockImapService,
+      mockSmtpService,
+      NOT_CONFIRMED,
+    );
+
+    expect(result.resultType).toBe("input_required");
+    const { message } = result.inputRequests.confirm_send_email.params;
+    expect(message).toContain("ada@example.com");
+    expect(message).not.toContain("bob@example.com");
+    expect(mockSendRawMessage).not.toHaveBeenCalled();
+  });
+});

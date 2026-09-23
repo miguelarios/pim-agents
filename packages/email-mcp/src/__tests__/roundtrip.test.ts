@@ -434,6 +434,31 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     );
   });
 
+  it("accepts a plain reply with no recipients, and addresses it to the sender", async () => {
+    const services = fakeServices();
+    services.imap.fetchEmail = vi.fn().mockResolvedValue({
+      ...SUMMARY,
+      from: { address: "ada@example.com" },
+      to: [{ address: "me@example.com" }, { address: "bob@example.com" }],
+      inReplyTo: null,
+      references: [],
+      attachments: [],
+    });
+
+    const { client, elicitations } = await connect(era, services);
+    const result = await client.callTool({
+      name: "send_email",
+      arguments: { replyToUid: 1, text: "Thanks!" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(elicitations[0]).toContain("ada@example.com");
+    expect(elicitations[0]).not.toContain("bob@example.com");
+    expect(services.smtp.composeRawMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ to: ["ada@example.com"], subject: "Re: Hello" }),
+    );
+  });
+
   it("quotes the original when replying, without being asked to", async () => {
     const services = fakeServices();
     const { client } = await connect(era, services);

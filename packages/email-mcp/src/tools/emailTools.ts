@@ -158,20 +158,18 @@ function addressKey(address: string): string {
 }
 
 /**
- * Works out who a reply-all goes to, from the message being replied to.
+ * Returns a function that turns header address lists into plain addresses,
+ * dropping every address the account owns and any address an earlier call
+ * already emitted.
  *
- * Every address the account owns is dropped, so the sender is not copied back
- * to themselves, and an address that appears twice across the headers is kept
- * once — at the strongest position it held, since To outranks Cc.
+ * Seeding the set with our own addresses drops them and de-duplicates in one
+ * pass: an address already "placed" is never emitted again.
  */
-function deriveReplyAllRecipients(
-  original: EmailFull,
+function addressPicker(
   ownAddresses: string[],
-): { to: string[]; cc: string[]; bcc: string[] } {
-  // Seeding `placed` with our own addresses drops them and de-duplicates in
-  // one pass: an address already "placed" is never emitted again.
+): (addresses: Array<{ address: string }> | undefined) => string[] {
   const placed = new Set(ownAddresses.map(addressKey));
-  const take = (addresses: Array<{ address: string }> | undefined): string[] => {
+  return (addresses) => {
     const out: string[] = [];
     for (const entry of addresses ?? []) {
       const address = entry?.address?.trim();
@@ -183,11 +181,44 @@ function deriveReplyAllRecipients(
     }
     return out;
   };
+}
 
-  // RFC 5322 §3.6.2: Reply-To is precisely the author's statement of where
-  // replies belong, so it replaces From rather than joining it.
-  const authors = original.replyTo?.length ? original.replyTo : [original.from];
-  const to = [...take(authors), ...take(original.to)];
+/**
+ * The original's author, as far as replies are concerned. RFC 5322 §3.6.2:
+ * Reply-To is precisely the author's statement of where replies belong, so it
+ * replaces From rather than joining it.
+ */
+function replyAuthors(original: EmailFull): Array<{ address: string }> {
+  return original.replyTo?.length ? original.replyTo : [original.from];
+}
+
+/**
+ * Works out who a plain reply goes to when the caller names nobody: the
+ * original's author.
+ *
+ * When that author is this account — a follow-up to a message read back out of
+ * Sent — the reply goes to the original's To instead, as a mail client does,
+ * since a reply addressed to ourselves is never what was meant.
+ */
+function deriveReplyRecipients(original: EmailFull, ownAddresses: string[]): string[] {
+  const take = addressPicker(ownAddresses);
+  const authors = take(replyAuthors(original));
+  return authors.length > 0 ? authors : take(original.to);
+}
+
+/**
+ * Works out who a reply-all goes to, from the message being replied to.
+ *
+ * Every address the account owns is dropped, so the sender is not copied back
+ * to themselves, and an address that appears twice across the headers is kept
+ * once — at the strongest position it held, since To outranks Cc.
+ */
+function deriveReplyAllRecipients(
+  original: EmailFull,
+  ownAddresses: string[],
+): { to: string[]; cc: string[]; bcc: string[] } {
+  const take = addressPicker(ownAddresses);
+  const to = [...take(replyAuthors(original)), ...take(original.to)];
   const cc = take(original.cc);
   // A received message never carries Bcc; one read back out of Sent or Drafts
   // does, and dropping it there would quietly narrow the thread.
@@ -647,7 +678,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     name: "send_email",
     title: "Send Email",
     description:
-      "Compose and send an email, or save it as a draft. Supports replies with automatic threading — when replyToUid is provided, the tool fetches the original email and sets correct In-Reply-To/References headers and Re: subject prefix automatically. Set saveToDrafts to true to save to the Drafts folder instead of sending. Sending (but not saving a draft) asks the user to confirm first. Sent emails are automatically copied to the Sent folder.",
+      "Compose and send an email, or save it as a draft. Supports replies with automatic threading — when replyToUid is provided, the tool fetches the original email, sets correct In-Reply-To/References headers and Re: subject prefix automatically, and addresses the reply to the original's sender unless to is given. Set saveToDrafts to true to save to the Drafts folder instead of sending. Sending (but not saving a draft) asks the user to confirm first. Sent emails are automatically copied to the Sent folder.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -661,7 +692,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           type: "array",
           items: { type: "string" },
           description:
-            "Recipient email addresses. Required unless replyAll is set, which derives them from the message being replied to. Giving it explicitly overrides the derived list.",
+            "Recipient email addresses. Required for a new email. When replying (replyToUid set) and omitted, defaults to the original's Reply-To (or its From) — or, with replyAll, to everyone on the original. Giving it explicitly overrides the derived list.",
         },
         cc: {
           type: "array",
@@ -835,11 +866,20 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
             "replyAll found no recipients other than this account — reply to the original's sender explicitly instead",
           );
         }
+      } else if (original && to === undefined) {
+        // A plain reply goes back to whoever wrote the original. Only an absent
+        // `to` is filled in: an explicit empty list is the caller's own word.
+        to = deriveReplyRecipients(original, smtp.ownAddresses());
+        if (to.length === 0) {
+          return invalid(
+            "the original has no sender other than this account to reply to — pass to explicitly",
+          );
+        }
       }
 
       if (!to || to.length === 0) {
         return invalid(
-          "to is required — pass recipient addresses, or set replyAll with replyToUid to derive them",
+          "to is required — pass recipient addresses, or set replyToUid to reply to the original's sender",
         );
       }
 

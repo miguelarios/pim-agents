@@ -114,7 +114,7 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `to` | string[] | unless `replyAll` | Recipient email addresses. Required unless `replyAll` is set, which derives them from the message being replied to. Giving it explicitly overrides the derived list. |
+| `to` | string[] | unless replying | Recipient email addresses. Required for a new email. When `replyToUid` is set and this is omitted, defaults to the original's sender — see [Reply recipients](#reply-recipients) — or, with `replyAll`, to everyone on the original. Giving it explicitly overrides the derived list. |
 | `cc` | string[] | | CC email addresses. Under `replyAll`, omitting this derives the CC list from the original; giving it overrides that list. |
 | `bcc` | string[] | | BCC email addresses. Under `replyAll`, omitting this carries over the original's BCC when there is one to carry. |
 | `subject` | string | | Email subject line. Required for new emails. When `replyToUid` is set and subject is omitted, automatically uses `Re: <original subject>`. When provided explicitly, used as-is. |
@@ -124,7 +124,6 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
 | `replyAll` | boolean | | Reply to everyone on the original rather than only its sender. Requires `replyToUid`. See [Reply-all recipients](#reply-all-recipients). Defaults to false. |
-
 | `quoteOriginal` | boolean | | Append the conventional quoted original below the new body when replying. Defaults to **true**. See [Quoting the original](#quoting-the-original). |
 | `saveToDrafts` | boolean | | When true, saves the composed email to the Drafts folder instead of sending it. The draft will appear in any email client and can be edited there. Defaults to false. |
 | `from` | string | | Optional visible From address. Must be either `SMTP_USER` or listed in `SMTP_ALLOWED_FROM`; anything else is rejected. SMTP envelope delivery still uses the account sender, so the address should share a domain with `SMTP_USER` — see the deliverability note below. |
@@ -144,7 +143,11 @@ When sending (default):
 
 Errors with `subject is required when not replying to an existing email` if no subject and no `replyToUid`.
 
-Errors with `to is required` when neither `to` nor `replyAll` is given, and with `replyAll requires replyToUid` when `replyAll` is set without one.
+Errors with `to is required` when neither `to` nor `replyToUid` is given, and with `replyAll requires replyToUid` when `replyAll` is set without one.
+
+**Reply recipients**
+
+A reply (`replyToUid` set) with no `to` goes to the original's `Reply-To` if it has one, otherwise its `From` — the same author `replyAll` starts from, without the other recipients. When that author is this account — a follow-up to a message in Sent — the reply goes to the original's `To` instead, as a mail client does. If that leaves nobody but this account, the call fails rather than mailing itself; pass `to` explicitly.
 
 **Reply-all recipients**
 
