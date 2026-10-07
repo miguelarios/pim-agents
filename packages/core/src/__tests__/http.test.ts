@@ -4,6 +4,7 @@
  * design — on the 2025 era it needs a sessionful transport, because the
  * client's answer to `elicitation/create` arrives as a separate POST.
  */
+import { connect as connectSocket } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -55,13 +56,22 @@ afterEach(async () => {
   await Promise.all(handles.splice(0).map((h) => h.close()));
 });
 
-async function start(service = { remove: vi.fn() }, allowedOrigins: string[] = []) {
+async function start(
+  service = { remove: vi.fn() },
+  allowedOrigins: string[] = [],
+  sessionIdleMs?: number,
+) {
   const factory = vi.fn(() => {
     const server = new McpServer({ name: "http-test", version: "0.0.0" });
     registerTools(server, TOOLS, service);
     return server;
   });
-  const handle = await serveHttp(factory, { host: "127.0.0.1", port: 0, allowedOrigins });
+  const handle = await serveHttp(factory, {
+    host: "127.0.0.1",
+    port: 0,
+    allowedOrigins,
+    sessionIdleMs,
+  });
   handles.push(handle);
   return { handle, service, factory };
 }
@@ -83,6 +93,62 @@ async function connect(url: URL, era: Era, answer?: { confirm: boolean }) {
   await client.connect(new StreamableHTTPClientTransport(url));
   clients.push(client);
   return client;
+}
+
+const MCP_HEADERS = {
+  "content-type": "application/json",
+  accept: "application/json, text/event-stream",
+};
+
+/** Opens a 2025-era session by hand and returns its id. */
+async function openSession(url: URL): Promise<string> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: MCP_HEADERS,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "raw", version: "0" },
+      },
+    }),
+  });
+  await response.body?.cancel();
+  const id = response.headers.get("mcp-session-id");
+  if (!id) throw new Error("no session id");
+  return id;
+}
+
+/** A request on an existing session; resolves with the HTTP status. */
+async function inSession(url: URL, sessionId: string, method = "POST"): Promise<number> {
+  const response = await fetch(url, {
+    method,
+    headers: {
+      ...MCP_HEADERS,
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": "2025-06-18",
+    },
+    body: method === "POST" ? JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }) : undefined,
+  });
+  await response.body?.cancel();
+  return response.status;
+}
+
+/** Sends raw bytes, for request lines `fetch` will not produce; resolves with the status line. */
+function rawRequest(url: URL, head: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connectSocket(Number(url.port), url.hostname);
+    let data = "";
+    socket.on("data", (chunk) => {
+      data += chunk.toString();
+    });
+    socket.on("end", () => resolve(data.split("\r\n")[0]));
+    socket.on("error", reject);
+    socket.end(`${head}\r\nConnection: close\r\n\r\n`);
+  });
 }
 
 describe.each<Era>(["legacy", "modern"])("serveHttp (%s era)", (era) => {
@@ -139,6 +205,53 @@ describe("serveHttp endpoint", () => {
     await client.callTool({ name: "echo", arguments: { text: "b" } });
 
     expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("ends a session on DELETE", async () => {
+    const { handle } = await start();
+    const sessionId = await openSession(handle.url);
+
+    expect(await inSession(handle.url, sessionId)).toBe(200);
+    expect(await inSession(handle.url, sessionId, "DELETE")).toBe(200);
+    expect(await inSession(handle.url, sessionId)).toBe(404);
+  });
+
+  it("closes a session left idle", async () => {
+    const { handle } = await start(undefined, [], 50);
+    const sessionId = await openSession(handle.url);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(await inSession(handle.url, sessionId)).toBe(404);
+  });
+
+  it("keeps a session that is in use", async () => {
+    const { handle } = await start(undefined, [], 200);
+    const sessionId = await openSession(handle.url);
+
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(await inSession(handle.url, sessionId)).toBe(200);
+    }
+  });
+
+  it.each([
+    [
+      "an absolute-form target",
+      (port: string) => `GET http://x/mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}`,
+    ],
+    [
+      "an unparseable target",
+      (port: string) => `GET http://[x/mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}`,
+    ],
+  ])("survives %s", async (_name, head) => {
+    const { handle } = await start();
+
+    const status = await rawRequest(handle.url, head(handle.url.port));
+
+    expect(status).toMatch(/^HTTP\/1\.1 4\d\d /);
+    const health = await fetch(new URL("/healthz", handle.url));
+    expect(health.status).toBe(200);
   });
 
   it("answers the health probe", async () => {

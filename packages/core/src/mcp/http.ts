@@ -222,8 +222,13 @@ function toWebRequest(req: IncomingMessage, res: ServerResponse): Request {
   const controller = new AbortController();
   res.on("close", () => controller.abort());
 
+  // Resolved against a fixed base rather than glued onto the Host header: a
+  // request line may carry an absolute URL, and a client controls both parts.
+  // Only the path is routed on.
+  const url = new URL(req.url ?? "/", "http://localhost");
+
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
-  return new Request(`http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`, {
+  return new Request(url, {
     method: req.method,
     headers,
     body: hasBody ? (Readable.toWeb(req) as ReadableStream<Uint8Array>) : undefined,
@@ -260,8 +265,17 @@ export async function serveHttp(
   const handler = createHttpHandler(factory, options);
 
   const server = createServer((req, res) => {
+    let request: Request;
+    try {
+      request = toWebRequest(req, res);
+    } catch {
+      // A request target that is not a URL at all. Thrown here, outside the
+      // promise chain, it would be an uncaught exception that ends the process.
+      res.writeHead(400).end();
+      return;
+    }
     handler
-      .fetch(toWebRequest(req, res))
+      .fetch(request)
       .then((response) => writeWebResponse(response, res))
       .catch((error) => {
         options.onerror?.(error as Error);
