@@ -2,11 +2,12 @@
  * End-to-end wire conformance: a real MCP client talking to the real server
  * over an in-memory transport pair, on both protocol eras.
  */
-import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
-import { Client } from "@modelcontextprotocol/client";
+import { TOOL_LIST_CACHE_HINT, registerTools, serveHttp } from "@miguelarios/pim-core/mcp";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "../main.js";
 import { registerImapResources } from "../resources/imapResources.js";
 import type { ImapService } from "../services/ImapService.js";
 import { EMAIL_TOOLS, type EmailServices } from "../tools/emailTools.js";
@@ -524,5 +525,39 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
 
     await client.callTool({ name: "delete_email", arguments: { uids: [1], permanent: true } });
     expect(elicitations).toHaveLength(1);
+  });
+});
+
+describe.each<Era>(["legacy", "modern"])("email-mcp over Streamable HTTP (%s era)", (era) => {
+  // Drives the shipped `createServer` factory, which over HTTP runs once per
+  // request (2026-07-28) or once per session (2025) around one shared service.
+  it("serves the shipped factory", async () => {
+    const service = fakeServices();
+    const http = await serveHttp(() => createServer(service as unknown as EmailServices), {
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const client = new Client(
+      { name: "roundtrip-test", version: "0.0.0" },
+      {
+        capabilities: { elicitation: {} },
+        versionNegotiation: { mode: era === "modern" ? { pin: "2026-07-28" } : "legacy" },
+      },
+    );
+    client.setRequestHandler("elicitation/create", async () => ({
+      action: "accept",
+      content: { confirm: true },
+    }));
+    try {
+      await client.connect(new StreamableHTTPClientTransport(http.url));
+      expect(client.getProtocolEra()).toBe(era);
+      expect(client.getServerVersion()?.name).toBe("@miguelarios/email-mcp");
+      const result = await client.callTool({ name: "search_emails", arguments: {} });
+      expect(result.isError).toBeFalsy();
+      expect(service.imap.searchEmails).toHaveBeenCalled();
+    } finally {
+      await client.close();
+      await http.close();
+    }
   });
 });

@@ -25,7 +25,8 @@ Monorepo with 4 packages:
 
 ## Architecture
 
-- MCP-first: each server uses `@modelcontextprotocol/server` v2 (`McpServer` + `serveStdio`) and speaks protocol revision `2026-07-28`, while still serving 2025-era clients from the same tool definitions
+- MCP-first: each server uses `@modelcontextprotocol/server` v2 (`McpServer`, served by `serve` from `@miguelarios/pim-core/mcp`) and speaks protocol revision `2026-07-28`, while still serving 2025-era clients from the same tool definitions
+- Transport is chosen at startup by `PIM_MCP_TRANSPORT`: stdio (default) or Streamable HTTP. `createServer` in each `main.ts` is a factory that the HTTP transport calls once per request (2026-07-28) or once per session (2025-era), so it only builds an `McpServer` around services created once in `startServer`. It must not open connections or install process handlers
 - Tools are declared as `ToolDef[]` arrays and registered via `registerTools` from `@miguelarios/pim-core/mcp` — that subpath is the shared MCP facade (schemas, result helpers, error mapping, confirmation gate)
 - Input schemas are hand-written JSON Schema wrapped with `fromJsonSchema`; output schemas are valibot, converted with `@valibot/to-json-schema`
 - Irreversible operations gate on `confirmDestructive`, which uses the spec's multi round-trip request pattern (`PIM_MCP_CONFIRM=off` bypasses it)
@@ -50,7 +51,7 @@ Monorepo with 4 packages:
 - `vi.mock("imapflow")` and `vi.mock("mailparser")` for email IMAP tests
 - `vi.mock("nodemailer")` with `vi.hoisted()` for SMTP tests
 - Tool handlers are invoked directly via `dispatchTool` from `@miguelarios/pim-core/mcp`
-- Each server has a `src/__tests__/roundtrip.test.ts` that drives a real `@modelcontextprotocol/client` over `InMemoryTransport` on both protocol eras — that's what proves wire conformance (schemas advertised, arguments validated, confirmation round trips)
+- Each server has a `src/__tests__/roundtrip.test.ts` that drives a real `@modelcontextprotocol/client` over `InMemoryTransport` on both protocol eras — that's what proves wire conformance (schemas advertised, arguments validated, confirmation round trips). It also serves the shipped `createServer` over real Streamable HTTP; `packages/core/src/__tests__/http.test.ts` covers the HTTP transport itself
 
 ## Pull Requests
 

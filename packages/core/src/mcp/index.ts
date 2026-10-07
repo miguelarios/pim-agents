@@ -311,3 +311,16 @@ export function confirmDestructive(
  * 2026-07-28 connections; 2025-era responses are unaffected.
  */
 export const TOOL_LIST_CACHE_HINT = { ttlMs: 3_600_000, cacheScope: "public" } as const;
+
+export {
+  type HttpHandlerOptions,
+  type HttpServerHandle,
+  type PimHttpHandler,
+  type TransportConfig,
+  HEALTH_PATH,
+  MCP_HTTP_PATH,
+  createHttpHandler,
+  loadTransportConfig,
+  serve,
+  serveHttp,
+} from "./http.js";

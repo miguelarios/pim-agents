@@ -4,7 +4,7 @@ AI agent tooling for email (IMAP/SMTP), calendar (CalDAV), and contacts (CardDAV
 
 ## Protocol support
 
-All three servers speak MCP revision **2026-07-28** over stdio, and continue to serve 2025-era clients from the same tool definitions — no configuration needed either way.
+All three servers speak MCP revision **2026-07-28** over stdio or Streamable HTTP, and continue to serve 2025-era clients from the same tool definitions — no configuration needed either way.
 
 Every tool declares a `title`, a full set of behaviour annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), and an `outputSchema`; results carry validated `structuredContent` alongside the serialized JSON.
 
@@ -214,6 +214,28 @@ Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_N
   }
 }
 ```
+
+### Over Streamable HTTP
+
+Every server runs over stdio by default. Set `PIM_MCP_TRANSPORT=http` to serve Streamable HTTP instead, for a client that connects by URL, such as a remote connector or a server in a container:
+
+```bash
+PIM_MCP_TRANSPORT=http PIM_MCP_HTTP_PORT=3000 \
+CARDDAV_URL=https://dav.example.com/carddav/ CARDDAV_USER=user@example.com CARDDAV_PASS=app-password \
+npx -y @miguelarios/card-mcp
+# [card-mcp] Server started on http://127.0.0.1:3000/mcp
+```
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PIM_MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
+| `PIM_MCP_HTTP_HOST` | `127.0.0.1` | Bind address. Use `0.0.0.0` inside a container |
+| `PIM_MCP_HTTP_PORT` | `3000` | Listen port. Give each server its own when running more than one |
+| `PIM_MCP_HTTP_ALLOWED_ORIGINS` | *(none)* | Comma-separated browser origins to admit. Requests carrying any other `Origin` header get `403`; requests with none (every non-browser client) are unaffected |
+
+The endpoint is `/mcp`, and `GET /healthz` answers `ok` for container health checks without touching the mail or DAV server. Both protocol eras are served: 2026-07-28 requests statelessly, 2025-era clients in a session, so the confirmation prompt reaches them as it does over stdio.
+
+**The HTTP server does no authentication.** Anyone who can reach the port can read and send your mail. Keep it on loopback or a private network, and put an OAuth proxy in front of it before exposing it any further. The server logs a warning when it is bound beyond loopback.
 
 ## License
 

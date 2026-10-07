@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0 (2026-10-07)
+
+- Runs over Streamable HTTP as well as stdio: set `PIM_MCP_TRANSPORT=http` (see the README's "Over Streamable HTTP"). stdio stays the default and is unchanged on the wire.
+- The IMAP and SMTP services are created once at startup and shared by every server instance, since over HTTP an instance is built per request or per session. Previously each instance built its own, each adding its own signal handlers — and over stdio a client that probes for 2026-07-28 before falling back to the 2025 handshake already got two. A configuration error now stops the process at startup instead of surfacing on the first connection.
+- Bumped `@miguelarios/pim-core` dependency to `^0.15.0` for `serve`. The previous `^0.10.0` excluded every later core release, so the package was still built and tested against core 0.10.0 from npm.
+
 ## 0.16.0 (2026-09-23)
 
 - A plain reply now addresses itself. `send_email` with `replyToUid` and no `to` goes to the original's `Reply-To`, or its `From` when there is none — the same author `replyAll` starts from. Previously `to` was required, so the caller copied the sender's address by hand even though the tool had already fetched the original to thread it, and the easy mistake was copying `From` when `Reply-To` was set, which answers a mailing-list post privately instead of on the list (PR #120, `claude/repo-review-75x4of`).
