@@ -4,7 +4,7 @@ MCP server for email via IMAP/SMTP — search, read, send, and manage emails and
 
 ## Protocol support
 
-Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
+Speaks MCP revision **2026-07-28** over stdio or Streamable HTTP, and still serves 2025-era clients from the same tool definitions.
 Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
 
 `send_email` and `forward_email` (when sending, not when saving a draft), `send_draft`, `delete_email` with `permanent: true`, and `delete_folder` ask the user to confirm first. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
@@ -49,6 +49,7 @@ Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMT
   top, and most clients put a tool result straight into the model's context, so raise it
   deliberately.
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. Path-based attachments (`attachments[].path`) are rejected unless this is set, and only files resolving inside it are allowed. Use `attachments[].content` for inline content without setting this.
+- `URL_RESOLVE_TIMEOUT` — milliseconds allowed for each link-resolution fetch. Default `10000`.
 - `URL_RESOLVE_DISABLE` — set to `1`/`true` to skip network link-resolution when rendering email to markdown; links are left unresolved in the output.
 - `URL_RESOLVE_PROXY` — route link resolution through an HTTP proxy, so the machine running
   the server does not hand its IP address to every host an email links to. Takes an
@@ -77,6 +78,20 @@ server trust you.
 
 `SMTP_FROM_NAME` and the per-call `fromName` change only the display name, never the address, so they carry no
 deliverability risk. Prefer them when you just want a distinct agent identity on a shared mailbox.
+
+## Over HTTP and in Docker
+
+Set `PIM_MCP_TRANSPORT=http` to serve Streamable HTTP at `/mcp` instead of stdio — for a client that connects by URL, or a server in a container. `PIM_MCP_HTTP_HOST` (default `127.0.0.1`) and `PIM_MCP_HTTP_PORT` (default `3000`) set where it listens, and `GET /healthz` answers `ok` for health checks. **The HTTP server does no authentication**: keep it on loopback or a private network, and put an OAuth proxy in front before exposing it further.
+
+```bash
+docker run -d --name email-mcp --restart unless-stopped --user node \
+  --env-file email.env \
+  -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 \
+  -p 127.0.0.1:3001:3000 -v email-mcp-home:/home/node \
+  node:22-alpine npx -y @miguelarios/email-mcp@0.17.0
+```
+
+See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.
 
 ## Tools (17)
 

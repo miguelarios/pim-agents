@@ -2,7 +2,7 @@
 
 `@miguelarios/cal-mcp` — CalDAV calendar server with 16 tools.
 
-> Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts` (events) and `packages/cal-mcp/src/tools/calendarManagementTools.ts` (calendar collections). Output shapes from `packages/cal-mcp/src/services/CalDavService.ts`.
+> Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts` (events) and `packages/cal-mcp/src/tools/calendarManagementTools.ts` (calendar collections). Output shapes from `packages/cal-mcp/src/tools/calendarSchemas.ts` and `packages/cal-mcp/src/services/CalDavService.ts`.
 
 > All results carry validated `structuredContent` matching the tool's advertised `outputSchema`, with the same JSON serialized into a text block for clients that do not read structured output. Errors are returned as `isError: true` with a `{ error, message, retryable }` body.
 
@@ -199,7 +199,7 @@ Delete a calendar event by UID.
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
 | `uid` | string | yes | Event UID to delete. |
-| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to delete. **Required** when `span` is `"this"` or `"future"` on a recurring event. |
+| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to delete. **Required** when `span` is `"this"` or `"future"` on a recurring event. Get this value from `list_events` results. |
 | `span` | `"this"` \| `"all"` \| `"future"` | | `this` deletes only this occurrence (adds EXDATE), `future` deletes this occurrence and every later one, `all` (default) deletes the entire series. |
 
 `span: "future"` sets `UNTIL` on the master `RRULE` to just before the occurrence (one second before for a timed series, the previous day for an all-day one), replacing any `COUNT`; overrides, `RDATE`s and `EXDATE`s at or after the cut are removed, earlier ones are kept. When the occurrence is the first one, nothing would remain, so the whole object is deleted instead. `validation_error` on a non-recurring event.
@@ -227,6 +227,8 @@ Create multiple events at once. Returns created event count.
 { created: number; events: EventFull[] }
 ```
 
+Events are created one at a time, in order. An invalid `recurrence_rule` returns `validation_error` and stops the batch, but events already created before it stay created.
+
 ## import_ics
 
 Import events from iCalendar (.ics) content into a calendar.
@@ -241,10 +243,14 @@ Import events from iCalendar (.ics) content into a calendar.
 **Output**
 
 ```ts
-{ imported: number; events: EventFull[] }
+{
+  imported: number;
+  failed?: Array<{ uid: string; message: string }>;   // omitted when every event was written
+  events: Array<EventFull | { uid: string }>;         // { uid } alone when the write succeeded but the read-back did not
+}
 ```
 
-Errors with `validation_error` if no events parse from the ICS content.
+The content is split by UID (a recurring series and its overrides stay one calendar object) and each object is written separately, so one rejected event does not stop the rest: it is reported under `failed` with the server's reason. Errors with `validation_error` if no events parse from the ICS content.
 
 ## get_free_busy
 
@@ -322,11 +328,11 @@ Issues `MKCALENDAR` (RFC 4791 §5.3.1). The request is atomic — name, descript
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `display_name` | string | yes | Display name for the new calendar. Becomes the second half of its `calendar_id`. |
-| `provider` | string | | Account to create on — the prefix half of a calendar ID (`mailbox` in `mailbox/Work`). Optional when a single account is configured; required otherwise. |
+| `provider` | string | | Provider/account to create on — the prefix half of a calendar ID (`mailbox` in `mailbox/Work`). Optional when only one account is configured; required otherwise. Call `list_calendars` to see the configured providers. |
 | `color` | string | | Colour as `#RRGGBB` or `#RRGGBBAA` (e.g. `#3B82F6`). |
 | `description` | string | | Calendar description. |
 | `timezone` | string | | Default timezone as an IANA zone name (e.g. `America/Chicago`). Written as RFC 4791 `calendar-timezone` (a `VTIMEZONE`); not every provider keeps it. |
-| `order` | integer | | Sort position among the account's calendars, `0` first. Apple `calendar-order`; honoured by Apple, SabreDAV and Radicale-based servers, ignored by others. |
+| `order` | integer (≥ 0) | | Sort position among the account's calendars, `0` first. Apple `calendar-order`; honoured by Apple, SabreDAV and Radicale-based servers, ignored by others. |
 | `slug` | string | | URL path segment (lowercase letters, digits, hyphens). Derived from `display_name` when omitted. |
 
 **Output**
@@ -348,7 +354,7 @@ Update a calendar's display name, colour, description, default timezone and/or d
 | `color` | string | | New colour as `#RRGGBB` or `#RRGGBBAA`. |
 | `description` | string | | New description. |
 | `timezone` | string | | New default timezone as an IANA zone name. Written as RFC 4791 `calendar-timezone` only: RFC 7809's `calendar-timezone-id` is not implemented by SabreDAV-based servers, and a `PROPPATCH` is all-or-nothing, so including it would fail the whole update there. Both forms are read by `list_calendars`. |
-| `order` | integer | | New sort position, `0` first (Apple `calendar-order`). |
+| `order` | integer (≥ 0) | | New sort position, `0` first (Apple `calendar-order`). |
 
 **Output**
 
@@ -356,9 +362,9 @@ See [Collection results](#collection-results) — `status: "updated"`, and `cale
 
 ## delete_calendar
 
-Delete a calendar and every event in it. Irreversible, so it asks the user to confirm first via the same `confirmDestructive` gate as `delete_event` (`PIM_MCP_CONFIRM=off` bypasses it).
+Delete a calendar and every event in it. This cannot be undone.
 
-The calendar is resolved and its objects counted before the prompt is built, so the confirmation names what is being destroyed — *"Permanently delete calendar "Work" on provider "mailbox" (<url>) and all 214 events in it? This cannot be undone."* The count is read when the prompt is built, so it describes the calendar at that moment rather than guaranteeing what the delete will remove. It counts calendar objects, so a whole recurring series counts once.
+> **Asks for confirmation.** The calendar is resolved and its objects counted before the prompt is built, so the confirmation names what is being destroyed — *"Permanently delete calendar "Work" on provider "mailbox" (<url>) and all 214 events in it? This cannot be undone."* The count is read when the prompt is built, so it describes the calendar at that moment rather than guaranteeing what the delete will remove. It counts calendar objects, so a whole recurring series counts once. Declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
@@ -404,7 +410,7 @@ interface EventSummary {
 }
 ```
 
-`EventFull` (returned by `get_event`, `create_event`, `update_event`, and when `detail_level: "full"`):
+`EventFull` (returned by `get_event`, `create_event`, `update_event`, `move_event`, `create_events_batch`, `import_ics`, and by the list/search tools when `detail_level: "full"`). The advertised `outputSchema` is the summary shape with every full-only field optional, since one schema covers both detail levels:
 
 ```ts
 interface EventFull extends EventSummary {
@@ -416,7 +422,7 @@ interface EventFull extends EventSummary {
     email: string;
     status: string | null;           // NEEDS-ACTION | ACCEPTED | DECLINED | TENTATIVE
     role: string | null;             // CHAIR | REQ-PARTICIPANT | OPT-PARTICIPANT
-    type: string;
+    type: string;                    // CUTYPE: "person" | "room" | "resource" | "group" (or the raw value)
   }>;
   organizer: { name: string | null; email: string } | null;
   recurrence_rule: string | null;    // RRULE string
@@ -424,8 +430,8 @@ interface EventFull extends EventSummary {
   last_modified: string | null;      // ISO 8601
   alarms: Array<{
     type: "relative" | "absolute";
-    trigger: number | string;
-    description?: string;
+    trigger: number | string;        // seconds offset (relative) or ISO 8601 (absolute)
+    trigger_human: string;           // readable form, e.g. "15 minutes before"; ISO 8601 for absolute
   }>;
   categories: string[];
   geo: { latitude: number; longitude: number } | null;
@@ -434,4 +440,6 @@ interface EventFull extends EventSummary {
 
 ## Errors
 
-All tools wrap errors as `{ error: <code>, message: <text> }` with `isError: true`. Codes: `validation_error`, `not_found`, `backend_error`.
+All tools wrap errors as `{ error: <code>, message: <text>, retryable: <boolean> }` with `isError: true`. Codes: `validation_error`, `not_found`, `backend_error`.
+
+With `CAL_MCP_DEBUG=1`, event-tool results also carry CalDAV request timings in `_meta["com.miguelarios.cal-mcp/debug"]`, outside the validated payload.

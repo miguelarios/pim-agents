@@ -4,10 +4,10 @@ MCP server for calendars via CalDAV — query, create, and manage events across 
 
 ## Protocol support
 
-Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
+Speaks MCP revision **2026-07-28** over stdio or Streamable HTTP, and still serves 2025-era clients from the same tool definitions.
 Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
 
-`delete_event` asks the user to confirm whenever it removes the calendar object — `span: "all"`, and `span: "this"` on a non-recurring event. Excluding one occurrence of a recurring event is recoverable and is not gated. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
+`delete_event` asks the user to confirm whenever it removes the calendar object — `span: "all"`, and `span: "this"` on a non-recurring event. Excluding one occurrence of a recurring event is recoverable and is not gated. `delete_calendar` always asks, and so does an `update_event` with `span: "future"` that would drop per-occurrence changes. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
 
 ## Usage
 
@@ -37,7 +37,24 @@ Add the server to your MCP client config (Claude Desktop, Claude Code, etc.). Cr
 
 Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_NEXTCLOUD_USER`, `CALDAV_NEXTCLOUD_PASS`, etc.
 
-Optional env vars: `PIM_TIMEZONE`.
+Optional env vars:
+
+- `PIM_TIMEZONE` — IANA timezone used for "today", free-slot searches and local times. Defaults to the host timezone, which in a container is usually UTC.
+- `CAL_MCP_DEBUG` — set to `1` to attach per-step CalDAV timings to tool results under `_meta`.
+
+## Over HTTP and in Docker
+
+Set `PIM_MCP_TRANSPORT=http` to serve Streamable HTTP at `/mcp` instead of stdio — for a client that connects by URL, or a server in a container. `PIM_MCP_HTTP_HOST` (default `127.0.0.1`) and `PIM_MCP_HTTP_PORT` (default `3000`) set where it listens, and `GET /healthz` answers `ok` for health checks. **The HTTP server does no authentication**: keep it on loopback or a private network, and put an OAuth proxy in front before exposing it further.
+
+```bash
+docker run -d --name cal-mcp --restart unless-stopped --user node \
+  --env-file cal.env \
+  -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 \
+  -p 127.0.0.1:3002:3000 -v cal-mcp-home:/home/node \
+  node:22-alpine npx -y @miguelarios/cal-mcp@0.20.0
+```
+
+See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.
 
 ## Tools (16)
 

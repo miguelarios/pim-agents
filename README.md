@@ -8,7 +8,7 @@ All three servers speak MCP revision **2026-07-28** over stdio or Streamable HTT
 
 Every tool declares a `title`, a full set of behaviour annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), and an `outputSchema`; results carry validated `structuredContent` alongside the serialized JSON.
 
-Irreversible operations — `send_email`, `send_draft`, a permanent `delete_email`, `delete_contact`, `delete_address_book`, and any `delete_event` that removes the calendar object — ask the user to confirm before they run, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
+Irreversible operations ask the user to confirm before they run — `send_email`, `send_draft`, `forward_email`, a permanent `delete_email`, `delete_folder`; any `delete_event` that removes the calendar object, `delete_calendar`, and an `update_event` with `span: "future"` that would drop per-occurrence changes; `delete_contact`, `delete_group` and `delete_address_book`. They ask, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
 
 A client that does not support elicitation cannot answer the prompt, so those tools fail fast with `CONFIRMATION_UNSUPPORTED` and point at `PIM_MCP_CONFIRM=off` — rather than returning a question that never reaches anyone.
 
@@ -60,17 +60,18 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `create_events_batch` | Create multiple events at once |
 | `import_ics` | Import events from .ics content |
 | `find_free_slots` | Find available time slots across calendars |
+| `get_free_busy` | Busy periods in a range, typed as busy/tentative/unavailable, without event details |
 | `create_calendar` | Create a calendar on a provider, with colour and description |
 | `update_calendar` | Rename a calendar or change its colour/description |
 | `delete_calendar` | Delete a calendar and every event in it (confirms first) |
 
-### [Contacts (12 tools)](docs/tools/card-mcp.md)
+### [Contacts (17 tools)](docs/tools/card-mcp.md)
 
-Every `addressBook` parameter takes a display name (e.g. `Work`) as well as a URL.
+Every `addressBook` parameter takes a display name (e.g. `Work`) as well as a URL. When it is omitted, reads and lookups by UID cover every address book in the account.
 
 | Tool | Description |
 |------|-------------|
-| `list_contacts` | List and search contacts by name, email, phone, org |
+| `list_contacts` | List and search contacts by name, email, phone, org (groups hidden unless `include_groups`) |
 | `get_contact` | Get full contact details by UID |
 | `create_contact` | Create a new contact with typed fields |
 | `update_contact` | Update an existing contact (merge-based) |
@@ -78,6 +79,11 @@ Every `addressBook` parameter takes a display name (e.g. `Work`) as well as a UR
 | `resolve_contact` | Given a name, return email address |
 | `move_contacts` | Move contacts to another address book (keeps each UID) |
 | `copy_contacts` | Copy contacts into another address book (each copy gets a new UID) |
+| `list_groups` | List contact groups with member counts |
+| `get_group` | Get a group with its members resolved to contacts |
+| `create_group` | Create a contact group from member UIDs |
+| `update_group` | Rename a group, add and remove members |
+| `delete_group` | Delete a group, keeping its members (confirms first) |
 | `list_address_books` | List address books with metadata and opt-in contact counts |
 | `create_address_book` | Create an address book (extended MKCOL) |
 | `rename_address_book` | Rename an address book or update its description |
@@ -112,8 +118,11 @@ Optional email env vars:
 
 - `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`.
 - `PIM_TIMEZONE` — IANA timezone (e.g. `America/Chicago`) for rendering email dates. Defaults to the host timezone.
+- `EMAIL_MAX_INLINE_BYTES` — bytes above which `download_attachment` and `get_email_raw` return a resource link instead of embedding the payload. Defaults to `262144` (256 KB); `0` links everything.
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. **Path-based attachments (`attachments[].path`) are rejected unless this is set**, and only files resolving inside it are allowed (a guard against exfiltrating arbitrary files via prompt injection). Use `attachments[].content` for inline content without setting this.
 - `URL_RESOLVE_DISABLE` — set to `1` or `true` to skip all network link-resolution when rendering email to markdown (avoids outbound requests to links in a message). Link/tracker URLs are left unresolved in the output.
+- `URL_RESOLVE_PROXY` — route link resolution through an `http://` or `https://` proxy, so the machine running the server does not hand its IP address to every host an email links to. See [Link resolution and your IP address](packages/email-mcp/README.md#link-resolution-and-your-ip-address).
+- `URL_RESOLVE_TIMEOUT` — milliseconds allowed for each link-resolution fetch. Default `10000`.
 - `SMTP_AUTO_SENT` — set to `true` if your provider auto-files sent mail into the Sent folder, so the server skips the extra IMAP append.
 - `SMTP_ALLOWED_FROM` — comma-separated allowlist of additional visible `From` addresses that `send_email` may use. The SMTP envelope sender is always the authenticated account; only the visible header changes. **Keep allowlisted addresses on a domain your SMTP account can authenticate for** — see [Deliverability: SPF, DKIM and DMARC](#deliverability-spf-dkim-and-dmarc).
 
@@ -156,7 +165,12 @@ deliverability risk.
 }
 ```
 
-Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_NEXTCLOUD_USER`, `CALDAV_NEXTCLOUD_PASS`, etc.
+Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_NEXTCLOUD_USER`, `CALDAV_NEXTCLOUD_PASS`, etc. The ID prefixes that account's calendar IDs (`nextcloud/Work`).
+
+Optional calendar env vars:
+
+- `PIM_TIMEZONE` — IANA timezone used for "today", free-slot searches and local times. Defaults to the host timezone, which in a container is usually UTC.
+- `CAL_MCP_DEBUG` — set to `1` to attach per-step CalDAV timings to tool results under `_meta`, for diagnosing a slow provider.
 
 ### Contacts
 
@@ -175,6 +189,16 @@ Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_N
   }
 }
 ```
+
+Optional contacts env var: `CARDDAV_SERVER_SEARCH` — set to `off` to never search with a filtered `addressbook-query` REPORT and always fetch the whole book instead. A server that rejects the REPORT is fallen back from automatically; this is for one whose filter matching is wrong.
+
+### Settings shared by all three
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PIM_MCP_CONFIRM` | *(on)* | Set to `off` to run irreversible operations without asking. For headless use |
+| `PIM_TIMEZONE` | host zone | IANA timezone for dates and "today" |
+| `PIM_MCP_TRANSPORT` | `stdio` | `stdio` or `http` — see [Over Streamable HTTP](#over-streamable-http) |
 
 ### All three together
 
@@ -236,6 +260,55 @@ npx -y @miguelarios/card-mcp
 The endpoint is `/mcp`, and `GET /healthz` answers `ok` for container health checks without touching the mail or DAV server. Both protocol eras are served: 2026-07-28 requests statelessly, 2025-era clients in a session, so the confirmation prompt reaches them as it does over stdio.
 
 **The HTTP server does no authentication.** Anyone who can reach the port can read and send your mail. Keep it on loopback or a private network, and put an OAuth proxy in front of it before exposing it any further. The server logs a warning when it is bound beyond loopback.
+
+### Running in Docker
+
+There is no dedicated image: run each server from `node:22-alpine` with `npx`, pinned to a version. For example, all three over HTTP, reachable from this machine only:
+
+```yaml
+x-mcp: &mcp
+  image: node:22-alpine
+  user: node
+  restart: unless-stopped
+  environment: &http
+    PIM_MCP_TRANSPORT: http
+    PIM_MCP_HTTP_HOST: 0.0.0.0
+    PIM_MCP_HTTP_PORT: "3000"
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+    interval: 30s
+    start_period: 60s
+
+services:
+  email-mcp:
+    <<: *mcp
+    command: ["npx", "-y", "@miguelarios/email-mcp@0.17.0"]
+    env_file: email.env
+    ports: ["127.0.0.1:3001:3000"]
+    volumes: [email-mcp-home:/home/node]
+  cal-mcp:
+    <<: *mcp
+    command: ["npx", "-y", "@miguelarios/cal-mcp@0.20.0"]
+    env_file: cal.env
+    environment:
+      <<: *http
+      PIM_TIMEZONE: America/Chicago
+    ports: ["127.0.0.1:3002:3000"]
+    volumes: [cal-mcp-home:/home/node]
+  card-mcp:
+    <<: *mcp
+    command: ["npx", "-y", "@miguelarios/card-mcp@0.12.0"]
+    env_file: card.env
+    ports: ["127.0.0.1:3003:3000"]
+    volumes: [card-mcp-home:/home/node]
+
+volumes:
+  email-mcp-home:
+  cal-mcp-home:
+  card-mcp-home:
+```
+
+**[docs/docker.md](docs/docker.md)** has the complete guide: an env file and `docker run` (stdio and HTTP) and Compose examples for each server on its own, connecting clients, attachments from disk, exposing a server safely, upgrading, and troubleshooting.
 
 ## License
 

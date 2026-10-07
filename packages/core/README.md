@@ -10,7 +10,7 @@ This is an internal library used by [@miguelarios/email-mcp](https://www.npmjs.c
 |--------|----------|
 | `@miguelarios/pim-core` | Config loading, `PimError` hierarchy and `ErrorCode`, vCard parse/build, timezone helpers |
 | `@miguelarios/pim-core/ics` | iCalendar parsing, generation, and component mutation |
-| `@miguelarios/pim-core/mcp` | MCP plumbing for revision 2026-07-28 — `ToolDef`, `registerTools`, `dispatchTool`, result helpers (`structured`, `fail`, `toolError`), and `confirmDestructive` |
+| `@miguelarios/pim-core/mcp` | MCP plumbing for revision 2026-07-28 — `ToolDef`, `registerTools`, `dispatchTool`, result helpers (`structured`, `fail`, `toolError`), `confirmDestructive`, and transport selection — `serve` (stdio or Streamable HTTP from `PIM_MCP_TRANSPORT`), `serveHttp`, `createHttpHandler`, `loadTransportConfig` |
 
 Only the `/mcp` subpath pulls in `@modelcontextprotocol/server`; the other two are protocol-agnostic.
 

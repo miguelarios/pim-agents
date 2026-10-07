@@ -5,6 +5,7 @@
 - Runs over Streamable HTTP as well as stdio: set `PIM_MCP_TRANSPORT=http` (see the README's "Over Streamable HTTP"). stdio stays the default and is unchanged on the wire.
 - The CalDAV service is created once at startup and shared by every server instance, since over HTTP an instance is built per request or per session. A configuration error now stops the process at startup instead of surfacing on the first connection.
 - Bumped `@miguelarios/pim-core` dependency to `^0.15.0` for `serve`.
+- Documentation: a Docker guide (`docs/docker.md`), including why a container needs `PIM_TIMEZONE`; this README gains an "Over HTTP and in Docker" section and `CAL_MCP_DEBUG`; `docs/tools/cal-mcp.md` was re-checked against the tool definitions (`import_ics` partial failures, alarm `trigger_human`, the `delete_calendar` confirmation).
 
 ## 0.19.0 (2026-09-14)
 
