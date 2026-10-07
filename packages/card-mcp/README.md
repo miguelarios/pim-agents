@@ -4,7 +4,7 @@ MCP server for contacts via CardDAV — CRUD contacts, contact groups, search, r
 
 ## Protocol support
 
-Speaks MCP revision **2026-07-28** over stdio, and still serves 2025-era clients from the same tool definitions.
+Speaks MCP revision **2026-07-28** over stdio or Streamable HTTP, and still serves 2025-era clients from the same tool definitions.
 Every tool declares a `title`, all four behaviour annotations, and an `outputSchema`, and returns validated `structuredContent`.
 
 `delete_contact`, `delete_group` and `delete_address_book` ask the user to confirm before deleting. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
@@ -24,7 +24,23 @@ npx @miguelarios/card-mcp
 | `CARDDAV_PASS` | Yes | CardDAV password |
 | `CARDDAV_SERVER_SEARCH` | No | Set to `off` to never search or look up contacts with a filtered `addressbook-query` REPORT and always fetch the whole book instead. A server that rejects the REPORT is fallen back from automatically; this is for one whose filter matching is wrong. |
 
-## Tools
+## Over HTTP and in Docker
+
+Set `PIM_MCP_TRANSPORT=http` to serve Streamable HTTP at `/mcp` instead of stdio — for a client that connects by URL, or a server in a container. `PIM_MCP_HTTP_HOST` (default `127.0.0.1`) and `PIM_MCP_HTTP_PORT` (default `3000`) set where it listens, and `GET /healthz` answers `ok` for health checks. **The HTTP server does no authentication**: keep it on loopback or a private network, and put an OAuth proxy in front before exposing it further.
+
+```bash
+docker run -d --name card-mcp --restart unless-stopped --user node \
+  --env-file card.env \
+  -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 \
+  -p 127.0.0.1:3003:3000 -v card-mcp-home:/home/node \
+  node:22-alpine npx -y @miguelarios/card-mcp@0.12.0
+```
+
+See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.
+
+## Tools (17)
+
+See [docs/tools/card-mcp.md](https://github.com/miguelarios/pim-agents/blob/main/docs/tools/card-mcp.md) for full parameter and output details.
 
 | Tool | Description |
 |------|-------------|

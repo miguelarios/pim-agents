@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0 (2026-10-07)
+
+- Streamable HTTP serving next to stdio, on the `./mcp` subpath. `serve(factory, { name })` picks the transport from `PIM_MCP_TRANSPORT` (`stdio`, the default, or `http`) and logs where it started; `serveHttp` binds the endpoint to a Node HTTP server, `createHttpHandler` is the same endpoint as a web-standard `fetch` handler, and `loadTransportConfig` reads `PIM_MCP_HTTP_HOST` (default `127.0.0.1`), `PIM_MCP_HTTP_PORT` (default `3000`) and `PIM_MCP_HTTP_ALLOWED_ORIGINS`, failing with `ConfigurationError` on an unknown transport or a bad port.
+- 2026-07-28 requests are served statelessly by the SDK's `createMcpHandler`. 2025-era clients get a **sessionful** transport, one server instance per `Mcp-Session-Id`, closed after 30 minutes idle. The SDK's own legacy fallback is stateless, and that breaks `confirmDestructive`: the client's answer to `elicitation/create` arrives as a separate POST, which a stateless fallback hands to a fresh instance with no record of the question, so the confirmed operation fails.
+- The endpoint is `/mcp`; `GET /healthz` answers `ok` for container health checks. A request with an `Origin` header not listed in `PIM_MCP_HTTP_ALLOWED_ORIGINS` is refused with `403`, the DNS-rebinding check the transport spec requires; requests without one are unaffected. There is no authentication — beyond loopback the endpoint belongs behind an OAuth proxy, and `serve` logs a warning when bound anywhere else.
+
 ## 0.14.0 (2026-09-14)
 
 - `generateVTimezoneIcs(tzid)` — the bundled `VTIMEZONE` for an IANA zone wrapped in a `VCALENDAR`, the shape CalDAV's `calendar-timezone` property carries; `null` for an unknown zone (cal-mcp #46).

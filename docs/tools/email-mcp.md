@@ -2,7 +2,7 @@
 
 `@miguelarios/email-mcp` — IMAP/SMTP email server with 17 tools.
 
-> Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/services/ImapService.ts`.
+> Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/tools/emailSchemas.ts` and `packages/email-mcp/src/services/ImapService.ts`; resources from `packages/email-mcp/src/resources/imapResources.ts`.
 
 > All results carry validated `structuredContent` matching the tool's advertised `outputSchema`, with the same JSON serialized into a text block for clients that do not read structured output. Errors are returned as `isError: true` with a `{ error, message, retryable }` body.
 
@@ -28,9 +28,9 @@ Server-side ordering is not byte-identical to the client-side fallback, because 
 | `hasWords` | string | | Search all message content (headers + body, IMAP TEXT). Multiple words are ANDed. Use quotes for exact phrase. Use `-term` for exclusion. Examples: `budget`, `report -draft`, `"quarterly report"`. |
 | `since` | string | | Emails on or after this date (YYYY-MM-DD). |
 | `before` | string | | Emails before this date (YYYY-MM-DD). |
-| `unread` | boolean | | Filter by unread status. |
-| `flagged` | boolean | | Filter by flagged/starred status. |
-| `hasAttachment` | boolean | | Filter for emails with attachments. |
+| `unread` | boolean | | Filter by unread status. `true` matches unread only, `false` matches read only. Omit to match both — do not send `false` to mean "any". |
+| `flagged` | boolean | | Filter by flagged/starred status. `true` matches flagged only, `false` matches unflagged only. Omit to match both — do not send `false` to mean "any". |
+| `hasAttachment` | boolean | | `true` matches emails with attachments. `false` is not a filter (IMAP cannot express it) and matches both. Omit to match both. |
 | `tags` | string[] | | Filter by IMAP keyword flags. |
 | `limit` | number | | Max results to return. Defaults to 50. |
 | `offset` | number | | Number of results to skip for pagination. Defaults to 0. |
@@ -80,8 +80,8 @@ Returns summaries, not bodies; use [`get_email`](#get_email) for the text of any
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `folder` | string | | IMAP folder holding the message to start from. Defaults to `INBOX`. |
-| `uid` | number | yes | UID of any message in the thread. |
-| `folders` | string[] | | Folders to search for thread members. Defaults to the message's folder **plus the account's Sent folder**. |
+| `uid` | number | yes | UID of any message in the thread — the root or any reply. |
+| `folders` | string[] | | Folders to search for thread members. Defaults to the message's folder **plus the account's Sent folder**. Pass this to search an archive as well. An empty array is rejected with `INVALID_INPUT`. |
 
 **How the thread is assembled**
 
@@ -120,7 +120,7 @@ Compose and send an email, or save it as a draft. Supports replies with automati
 | `subject` | string | | Email subject line. Required for new emails. When `replyToUid` is set and subject is omitted, automatically uses `Re: <original subject>`. When provided explicitly, used as-is. |
 | `text` | string | | Plain text body. |
 | `html` | string | | HTML body. |
-| `attachments` | `{ filename: string, path?: string, content?: string }[]` | | File attachments. Use `content` for inline string content. `path` (attach a file from disk) is **disabled unless the `EMAIL_ATTACHMENT_DIR` env var is set**, and only files resolving inside that directory are allowed. |
+| `attachments` | `{ filename: string, path?: string, content?: string, encoding?: "base64" \| "utf8", contentType?: string }[]` | | File attachments. Use `content` for inline content. `path` (attach a file from disk) is **disabled unless the `EMAIL_ATTACHMENT_DIR` env var is set**, and only files resolving inside that directory are allowed. See [Attachments](#attachments). |
 | `replyToUid` | number | | UID of the email to reply to. When set, the tool automatically fetches the original email's `Message-ID` and `References` chain, sets `In-Reply-To` and `References` headers, and prepends `Re:` to the subject if not already present. The reply will appear threaded in all email clients. |
 | `replyToFolder` | string | | IMAP folder containing the email referenced by `replyToUid`. Defaults to `INBOX`. |
 | `replyAll` | boolean | | Reply to everyone on the original rather than only its sender. Requires `replyToUid`. See [Reply-all recipients](#reply-all-recipients). Defaults to false. |
@@ -144,6 +144,20 @@ When sending (default):
 Errors with `subject is required when not replying to an existing email` if no subject and no `replyToUid`.
 
 Errors with `to is required` when neither `to` nor `replyToUid` is given, and with `replyAll requires replyToUid` when `replyAll` is set without one.
+
+**Attachments**
+
+Each entry in `attachments`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `filename` | string | yes | Attachment filename. |
+| `path` | string | | File path to attach. Disabled unless the server has `EMAIL_ATTACHMENT_DIR` set to an allowed directory; the resolved path must be inside it. Use `content` instead if unavailable. |
+| `content` | string | | Content to attach, as a string. |
+| `encoding` | `"base64"` \| `"utf8"` | | How to read `content`. Use `base64` to attach binary — a PDF or image, or an attachment fetched with `download_attachment`. Omitted or `utf8` attaches `content` as text, which corrupts binary. Cannot be combined with `path`. |
+| `contentType` | string | | MIME type, e.g. `application/pdf`. Defaults to a guess from `filename`, so set it when the filename has no extension or the guess would be wrong. |
+
+`base64` content is checked strictly (line wrapping is tolerated): content that is not valid base64, or `encoding` set with no `content` or alongside `path`, is rejected with `INVALID_INPUT` — before the send confirmation, so no confirmation is spent on a send that cannot happen.
 
 **Reply recipients**
 
@@ -205,7 +219,7 @@ without touching the address, and carries no deliverability risk.
 
 Send an existing email draft from the Drafts folder. Fetches the draft's raw RFC 822 source, sends it via SMTP, copies it to the Sent folder, and removes it from Drafts. The draft must already exist — use `send_email` with `saveToDrafts: true` to create one.
 
-> **Asks for confirmation.** Sending a draft cannot be recalled. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
+> **Asks for confirmation.** Sending a draft cannot be recalled. The prompt names the draft by UID. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
@@ -220,13 +234,13 @@ Send an existing email draft from the Drafts folder. Fetches the draft's raw RFC
 { "status": "sent", "messageId": "<rfc-822-message-id>", "folder": "<sent-folder-path>" }
 ```
 
-Errors with `Draft has no recipients — cannot send` if the draft is missing `To`/`Cc`/`Bcc`.
+Errors with `Draft has no recipients — cannot send` if the draft is missing `To`/`Cc`/`Bcc`. The `Bcc` header is stripped from the transmitted copy (its recipients still receive it) but kept in the copy filed in Sent. The draft is then deleted permanently from its folder, not moved to Trash.
 
 ## forward_email
 
 Forward an existing message to new recipients, with an optional note above it.
 
-> **Asks for confirmation.** Only when actually sending — `saveToDrafts: true` is not gated. Set `PIM_MCP_CONFIRM=off` to skip.
+> **Asks for confirmation.** Only when actually sending — `saveToDrafts: true` is not gated. The prompt names the original's subject and every recipient. Declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
@@ -234,12 +248,12 @@ Forward an existing message to new recipients, with an optional note above it.
 |-----------|------|----------|-------------|
 | `folder` | string | | IMAP folder containing the message to forward. Defaults to `INBOX`. |
 | `uid` | number | yes | UID of the message to forward. |
-| `to` | string[] | yes | Recipient addresses. |
+| `to` | string[] | yes | Recipient addresses. Must be non-empty. |
 | `cc` | string[] | | CC addresses. |
 | `bcc` | string[] | | BCC addresses. |
-| `note` | string | | Text placed above the forwarded message, where a covering note goes. Line breaks are preserved in both the text and HTML parts. |
-| `subject` | string | | Defaults to `Fwd: <original subject>`, and is not prefixed again when the original is already a forward. |
-| `includeAttachments` | boolean | | Re-attach the original's attachments. Defaults to **true**. |
+| `note` | string | | Optional text placed above the forwarded message, where a covering note goes. Line breaks are preserved in both the text and HTML parts. |
+| `subject` | string | | Subject line. Defaults to `Fwd: <original subject>`, and is not prefixed again when the original is already a forward. |
+| `includeAttachments` | boolean | | Re-attach the original's attachments. Defaults to **true**. Set `false` to forward the text alone — worth doing for a message with large attachments, since the bytes are pulled from IMAP and pushed back out over SMTP. |
 | `saveToDrafts` | boolean | | Save to Drafts instead of sending, so it can be edited in a mail client first. Defaults to false. |
 | `from` | string | | Visible From address. Must be `SMTP_USER` or in `SMTP_ALLOWED_FROM`. |
 | `fromName` | string | | Visible display name for the From header. |
@@ -278,6 +292,8 @@ Move one or more emails to a different IMAP folder.
 | `folder` | string | | Source IMAP folder. Defaults to `INBOX`. |
 | `uids` | number[] | yes | UIDs of emails to move. |
 | `destination` | string | yes | Destination folder path. |
+
+An empty `uids` is rejected with `INVALID_INPUT`.
 
 **Output**
 
@@ -325,6 +341,8 @@ Set or unset flags on one or more emails. Common flags: `\Seen` (read), `\Flagge
 | `flags` | string[] | yes | Flags to set/unset (e.g., `\Seen`, `\Flagged`). |
 | `action` | `"add"` \| `"remove"` | | Whether to add or remove the flags. Defaults to `add`. |
 
+An empty `uids` is rejected with `INVALID_INPUT`.
+
 **Output**
 
 ```json
@@ -335,7 +353,7 @@ Set or unset flags on one or more emails. Common flags: `\Seen` (read), `\Flagge
 
 Delete one or more emails. Moves to Trash by default, or permanently deletes if specified.
 
-> **Asks for confirmation.** Only when `permanent` is `true` — a move to Trash is not gated. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
+> **Asks for confirmation.** Only when `permanent` is `true` — a move to Trash is not gated. The prompt names the message count and folder. The client prompts the user before the operation runs; declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 **Parameters**
 
@@ -344,6 +362,8 @@ Delete one or more emails. Moves to Trash by default, or permanently deletes if 
 | `folder` | string | | IMAP folder. Defaults to `INBOX`. |
 | `uids` | number[] | yes | UIDs of emails to delete. |
 | `permanent` | boolean | | If true, permanently delete instead of moving to Trash. Defaults to false. |
+
+An empty `uids` is rejected with `INVALID_INPUT` before anything is asked.
 
 **Output**
 
@@ -410,7 +430,9 @@ A blank `path` or `newPath`, or a `newPath` equal to `path`, is rejected with `I
 
 ## delete_folder
 
-Delete an IMAP folder and every message in it. **Irreversible** — the messages are not moved to Trash — so the tool asks the user to confirm first, naming the folder and how many messages it holds.
+Delete an IMAP folder and every message in it. **Irreversible** — the messages are not moved to Trash.
+
+> **Asks for confirmation.** The prompt names the folder and how many messages it holds (read via `STATUS` when the prompt is built; omitted if the server will not report a count). Declining returns an error and changes nothing. Set `PIM_MCP_CONFIRM=off` to skip.
 
 `INBOX` cannot be deleted (RFC 3501 §6.3.4 reserves it); the request is rejected with `INVALID_INPUT` before anything is asked or connected. Whether a folder with sub-folders can be deleted is up to the server — many refuse, so delete or move the children first.
 
@@ -430,7 +452,7 @@ Delete an IMAP folder and every message in it. **Irreversible** — the messages
 
 ## download_attachment
 
-Download a specific attachment from an email. Returns the attachment content as base64.
+Download a specific attachment from an email. Returns the bytes as an embedded binary resource; structured output carries the filename, content type and size.
 
 **Parameters**
 
@@ -455,6 +477,8 @@ The bytes are returned as an embedded binary resource in `content`:
 }
 ```
 
+An attachment larger than the inline ceiling (`EMAIL_MAX_INLINE_BYTES`, default 256 KiB; `0` links everything) is **not embedded**. `content` instead carries a text note and a `resource_link` to the same `imap://` URI, which the client fetches with `resources/read` — see [Resources](#resources).
+
 `structuredContent` carries the metadata only — repeating the base64 there would double the response for large attachments:
 
 ```ts
@@ -462,12 +486,14 @@ The bytes are returned as an embedded binary resource in `content`:
   filename: string;
   contentType: string;
   size: number;       // bytes
+  uri: string;        // the imap:// URI the bytes are addressable at
+  embedded: boolean;  // false when only the link was returned
 }
 ```
 
 ## get_email_raw
 
-Export an email as raw .eml (RFC 822 source). Useful for archival or forwarding.
+Export an email as raw .eml (RFC 822 source). Useful for archival or forwarding. The source is returned as an embedded `message/rfc822` resource.
 
 **Parameters**
 
@@ -491,10 +517,12 @@ The source is returned as an embedded `message/rfc822` resource in `content`, so
 }
 ```
 
+As with `download_attachment`, a source larger than `EMAIL_MAX_INLINE_BYTES` comes back as a text note plus a `resource_link` instead of being embedded.
+
 `structuredContent` carries the metadata only:
 
 ```ts
-{ uid: number; folder: string; size: number }
+{ uid: number; folder: string; size: number; uri: string; embedded: boolean }
 ```
 
 ## get_folder_status
@@ -566,6 +594,17 @@ interface EmailFull extends EmailSummary {
 }
 ```
 
+## Resources
+
+The `imap://` URIs that `download_attachment` and `get_email_raw` return are registered resource templates, so a client can fetch the bytes itself with `resources/read` — which is how an oversized payload returned as a `resource_link` is retrieved.
+
+| Name | URI template | Contents |
+|------|--------------|----------|
+| `email-attachment` | `imap://{folder}/{uid}/{partId}` | One attachment's bytes, base64 `blob` under the attachment's own MIME type. Part IDs come from `get_email`'s attachment metadata. |
+| `email-source` | `imap://{folder}/{uid}.eml` | A message's raw RFC 822 source, as `message/rfc822` `text`. |
+
+The folder sits in the authority and is percent-encoded whole (`imap://Archive%2F2024/4471/2`), so a hierarchy delimiter in it is not read as a path separator; mailbox case is preserved. These are this server's own URIs, not RFC 5092 IMAP URLs. Neither template has a `list` callback — enumerating every attachment in an account would mean walking every message — so they are discovered through `resources/templates/list`, and entry points are `search_emails` / `get_email`. A malformed URI is rejected with `INVALID_INPUT`. Reading a resource is not subject to the inline ceiling.
+
 ## Errors
 
-All tools wrap errors as a string text content with `isError: true`. The format is `<message>` plus ` (retryable)` for transient failures (network/IMAP-disconnect class). Underlying type is `PimError` from `@miguelarios/pim-core`.
+Errors are returned as a tool result with `isError: true` and a single text block holding `{ "error": <code>, "message": <text>, "retryable": <boolean> }`. `error` is the `PimError` code from `@miguelarios/pim-core` (e.g. `INVALID_INPUT`, `OPERATION_FAILED`); `retryable` is `true` for transient failures (network/IMAP-disconnect class).

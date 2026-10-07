@@ -1,6 +1,6 @@
 {
   "name": "@miguelarios/pim-core",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Shared config, validation, errors, and utilities for PIM agent MCP servers",
   "keywords": [
     "pim",
@@ -47,6 +47,7 @@
     "valibot": "^1.4.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

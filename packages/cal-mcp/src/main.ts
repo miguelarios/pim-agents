@@ -1,8 +1,7 @@
 import { createRequire } from "node:module";
 import { loadCalDavConfig } from "@miguelarios/pim-core";
-import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
+import { TOOL_LIST_CACHE_HINT, registerTools, serve } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
-import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { CalDavService } from "./services/CalDavService.js";
 import { CALENDAR_MANAGEMENT_TOOLS } from "./tools/calendarManagementTools.js";
 import { CALENDAR_TOOLS } from "./tools/calendarTools.js";
@@ -10,10 +9,12 @@ import { CALENDAR_TOOLS } from "./tools/calendarTools.js";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
 
-export async function createServer(): Promise<McpServer> {
-  const config = loadCalDavConfig();
-  const service = new CalDavService(config);
-
+/**
+ * Builds one server instance around a shared service. Called per connection on
+ * stdio and per request over HTTP, so it must not open connections or install
+ * process handlers of its own.
+ */
+export function createServer(service: CalDavService): McpServer {
   const server = new McpServer(
     { name: "@miguelarios/cal-mcp", title: "CalDAV Calendars", version },
     {
@@ -26,20 +27,20 @@ export async function createServer(): Promise<McpServer> {
 
   registerTools(server, [...CALENDAR_TOOLS, ...CALENDAR_MANAGEMENT_TOOLS], service);
 
-  const handleShutdown = async () => {
-    process.exit(0);
-  };
-  process.on("SIGINT", handleShutdown);
-  process.on("SIGTERM", handleShutdown);
-
   return server;
 }
 
 export async function startServer(): Promise<void> {
-  // `serveStdio` owns the era decision: a 2026-07-28 client gets the new
-  // protocol, and a 2025-era client is still served from the same factory.
-  serveStdio(() => createServer(), {
-    onerror: (error) => console.error("[cal-mcp] Server error:", error.message),
-  });
-  console.error("[cal-mcp] Server started on stdio");
+  const service = new CalDavService(loadCalDavConfig());
+
+  // PIM_MCP_TRANSPORT picks stdio or Streamable HTTP; either way the entry
+  // serves 2026-07-28 and 2025-era clients from the same factory.
+  const handle = await serve(() => createServer(service), { name: "cal-mcp" });
+
+  const handleShutdown = async () => {
+    await handle.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", handleShutdown);
+  process.on("SIGTERM", handleShutdown);
 }

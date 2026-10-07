@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0 (2026-10-07)
+
+- Runs over Streamable HTTP as well as stdio: set `PIM_MCP_TRANSPORT=http` (see the README's "Over Streamable HTTP"). stdio stays the default and is unchanged on the wire.
+- The CardDAV service is created once at startup and shared by every server instance, since over HTTP an instance is built per request or per session. Previously each instance built its own, with its own signal handlers — and over stdio a client that probes for 2026-07-28 before falling back to the 2025 handshake already got two. A configuration error now stops the process at startup instead of surfacing on the first connection.
+- Bumped `@miguelarios/pim-core` dependency to `^0.15.0` for `serve`. The previous `^0.10.0` excluded every later core release, so the package was still built and tested against core 0.10.0 from npm.
+- Documentation: a Docker guide (`docs/docker.md`); this README gains an "Over HTTP and in Docker" section; `docs/tools/card-mcp.md` now documents the five group tools, which it was missing, and says what an omitted `addressBook` really does — reads cover every book, not the first.
+
 ## 0.11.0 (2026-09-14)
 
 - **Search and UID lookup run on the server** (#52). `list_contacts` with a query,

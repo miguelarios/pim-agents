@@ -1,22 +1,19 @@
 import { createRequire } from "node:module";
 import { loadCardDavConfig } from "@miguelarios/pim-core";
-import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
+import { TOOL_LIST_CACHE_HINT, registerTools, serve } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
-import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { CardDavService } from "./services/CardDavService.js";
 import { CARD_TOOLS } from "./tools/index.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
 
-export async function createServer(): Promise<McpServer> {
-  const config = loadCardDavConfig();
-  // CARDDAV_SERVER_SEARCH=off is the escape hatch for a server whose
-  // addressbook-query filtering answers wrongly rather than not at all.
-  const service = new CardDavService(config, {
-    serverSearch: process.env.CARDDAV_SERVER_SEARCH?.toLowerCase() !== "off",
-  });
-
+/**
+ * Builds one server instance around a shared service. Called per connection on
+ * stdio and per request over HTTP, so it must not open connections or install
+ * process handlers of its own.
+ */
+export function createServer(service: CardDavService): McpServer {
   const server = new McpServer(
     { name: "@miguelarios/card-mcp", title: "CardDAV Contacts", version },
     {
@@ -29,21 +26,25 @@ export async function createServer(): Promise<McpServer> {
 
   registerTools(server, CARD_TOOLS, service);
 
+  return server;
+}
+
+export async function startServer(): Promise<void> {
+  // CARDDAV_SERVER_SEARCH=off is the escape hatch for a server whose
+  // addressbook-query filtering answers wrongly rather than not at all.
+  const service = new CardDavService(loadCardDavConfig(), {
+    serverSearch: process.env.CARDDAV_SERVER_SEARCH?.toLowerCase() !== "off",
+  });
+
+  // PIM_MCP_TRANSPORT picks stdio or Streamable HTTP; either way the entry
+  // serves 2026-07-28 and 2025-era clients from the same factory.
+  const handle = await serve(() => createServer(service), { name: "card-mcp" });
+
   const handleShutdown = async () => {
+    await handle.close();
     await service.disconnect();
     process.exit(0);
   };
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
-
-  return server;
-}
-
-export async function startServer(): Promise<void> {
-  // `serveStdio` owns the era decision: a 2026-07-28 client gets the new
-  // protocol, and a 2025-era client is still served from the same factory.
-  serveStdio(() => createServer(), {
-    onerror: (error) => console.error("[card-mcp] Server error:", error.message),
-  });
-  console.error("[card-mcp] Server started on stdio");
 }

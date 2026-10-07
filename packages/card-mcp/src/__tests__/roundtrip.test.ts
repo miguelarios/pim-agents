@@ -6,11 +6,12 @@ import type { Contact } from "@miguelarios/pim-core";
  * Everything else in this package tests handlers directly, which cannot catch
  * schema advertisement, argument validation, or the multi round-trip flow.
  */
-import { TOOL_LIST_CACHE_HINT, registerTools } from "@miguelarios/pim-core/mcp";
-import { Client } from "@modelcontextprotocol/client";
+import { TOOL_LIST_CACHE_HINT, registerTools, serveHttp } from "@miguelarios/pim-core/mcp";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "../main.js";
 import type { CardDavService } from "../services/CardDavService.js";
 import { CARD_TOOLS } from "../tools/index.js";
 
@@ -451,5 +452,39 @@ describe("card-mcp cache hints", () => {
     const result = await client.listTools();
     expect(result.ttlMs).toBeUndefined();
     expect(result.cacheScope).toBeUndefined();
+  });
+});
+
+describe.each<Era>(["legacy", "modern"])("card-mcp over Streamable HTTP (%s era)", (era) => {
+  // Drives the shipped `createServer` factory, which over HTTP runs once per
+  // request (2026-07-28) or once per session (2025) around one shared service.
+  it("serves the shipped factory", async () => {
+    const service = fakeService();
+    const http = await serveHttp(() => createServer(service as unknown as CardDavService), {
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const client = new Client(
+      { name: "roundtrip-test", version: "0.0.0" },
+      {
+        capabilities: { elicitation: {} },
+        versionNegotiation: { mode: era === "modern" ? { pin: "2026-07-28" } : "legacy" },
+      },
+    );
+    client.setRequestHandler("elicitation/create", async () => ({
+      action: "accept",
+      content: { confirm: true },
+    }));
+    try {
+      await client.connect(new StreamableHTTPClientTransport(http.url));
+      expect(client.getProtocolEra()).toBe(era);
+      expect(client.getServerVersion()?.name).toBe("@miguelarios/card-mcp");
+      const result = await client.callTool({ name: "delete_contact", arguments: { uid: "u1" } });
+      expect(result.isError).toBeFalsy();
+      expect(service.deleteContact).toHaveBeenCalledOnce();
+    } finally {
+      await client.close();
+      await http.close();
+    }
   });
 });
