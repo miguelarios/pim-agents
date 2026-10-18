@@ -20,6 +20,8 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | [@miguelarios/cal-mcp](packages/cal-mcp) | Calendars via CalDAV | `npx @miguelarios/cal-mcp` |
 | [@miguelarios/card-mcp](packages/card-mcp) | Contacts via CardDAV | `npx @miguelarios/card-mcp` |
 
+Each package is versioned independently with semver. [docs/versioning.md](docs/versioning.md) says which changes to tools, schemas, error codes and configuration count as breaking.
+
 ## Tools
 
 ### [Email (17 tools)](docs/tools/email-mcp.md)
