@@ -82,4 +82,48 @@ describe("PimError hierarchy", () => {
     const genericErr = toPimError(new Error("something broke"));
     expect(genericErr.code).toBe(ErrorCode.INTERNAL_ERROR);
   });
+
+  describe("Node fetch's 'fetch failed', whose reason is only in cause", () => {
+    const fetchFailed = (code: string) =>
+      Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error(`connect ${code} 192.0.2.1:443`), { code }),
+      });
+
+    it.each([
+      "EHOSTUNREACH",
+      "ENETUNREACH",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "ENOTFOUND",
+      "EAI_AGAIN",
+    ])("classifies %s as a retryable connection failure and names it", (code) => {
+      const err = toPimError(fetchFailed(code));
+      expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.isRetryable).toBe(true);
+      expect(err.message).toBe(`fetch failed (${code})`);
+    });
+
+    it("classifies a socket timeout as CONNECTION_TIMEOUT", () => {
+      const err = toPimError(fetchFailed("UND_ERR_CONNECT_TIMEOUT"));
+      expect(err.code).toBe(ErrorCode.CONNECTION_TIMEOUT);
+      expect(err.message).toBe("fetch failed (UND_ERR_CONNECT_TIMEOUT)");
+    });
+
+    it("finds the code on a nested cause", () => {
+      const inner = Object.assign(new Error("x"), { code: "ECONNREFUSED" });
+      const err = toPimError(
+        Object.assign(new TypeError("fetch failed"), {
+          cause: new Error("outer", { cause: inner }),
+        }),
+      );
+      expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.message).toBe("fetch failed (ECONNREFUSED)");
+    });
+
+    it("leaves a fetch failure with no recognisable cause as an internal error", () => {
+      const err = toPimError(new TypeError("fetch failed"));
+      expect(err.code).toBe(ErrorCode.INTERNAL_ERROR);
+      expect(err.message).toBe("fetch failed");
+    });
+  });
 });

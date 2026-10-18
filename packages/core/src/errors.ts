@@ -110,8 +110,47 @@ export function isRetryableError(error: Error): boolean {
   return msg.includes("ECONNRESET") || msg.includes("ENOTFOUND") || msg.includes("ETIMEDOUT");
 }
 
+/** Socket-level error codes that mean "could not reach the server". */
+const UNREACHABLE_CODES = new Set([
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+]);
+const TIMEOUT_CODES = new Set([
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+]);
+
+/** The first `code` found walking an error's `cause` chain (bounded). */
+function causeCode(error: Error): string | undefined {
+  let current: unknown = error.cause;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+    current = current.cause;
+  }
+  return undefined;
+}
+
 export function toPimError(error: Error): PimError {
   if (error instanceof PimError) return error;
+  // Node's fetch (undici, under tsdav) reports every network failure as a bare
+  // "fetch failed" and puts the reason in `cause`. Without this an
+  // unreachable host surfaced as a non-retryable internal error with no hint why.
+  const code = causeCode(error);
+  if (code && UNREACHABLE_CODES.has(code)) {
+    return new ConnectionError(`${error.message} (${code})`);
+  }
+  if (code && TIMEOUT_CODES.has(code)) {
+    return new ConnectionError(`${error.message} (${code})`, ErrorCode.CONNECTION_TIMEOUT);
+  }
   const msg = error.message.toLowerCase();
   if (msg.includes("auth") || msg.includes("login") || msg.includes("credential")) {
     return new AuthenticationError(error.message);
