@@ -74,7 +74,7 @@ The client starts the container itself. Note `-i` (stdio needs an open stdin) an
         "--env-file", "/absolute/path/to/email.env",
         "-v", "email-mcp-home:/home/node",
         "node:22-alpine",
-        "npx", "-y", "@miguelarios/email-mcp@0.18.0"
+        "npx", "-y", "@miguelarios/email-mcp@1.0.0"
       ]
     }
   }
@@ -98,7 +98,7 @@ docker run -d --name email-mcp --restart unless-stopped \
   --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
   --health-interval 30s --health-start-period 60s \
   node:22-alpine \
-  npx -y @miguelarios/email-mcp@0.18.0
+  npx -y @miguelarios/email-mcp@1.0.0
 ```
 
 The endpoint is `http://127.0.0.1:3001/mcp`.
@@ -109,7 +109,7 @@ The endpoint is `http://127.0.0.1:3001/mcp`.
 services:
   email-mcp:
     image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/email-mcp@0.18.0"]
+    command: ["npx", "-y", "@miguelarios/email-mcp@1.0.0"]
     user: node
     restart: unless-stopped
     env_file: email.env
@@ -183,7 +183,7 @@ container that is UTC, so `get_today_events` and `find_free_slots` would work in
         "--env-file", "/absolute/path/to/cal.env",
         "-v", "cal-mcp-home:/home/node",
         "node:22-alpine",
-        "npx", "-y", "@miguelarios/cal-mcp@0.21.0"
+        "npx", "-y", "@miguelarios/cal-mcp@1.0.0"
       ]
     }
   }
@@ -204,7 +204,7 @@ docker run -d --name cal-mcp --restart unless-stopped \
   --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
   --health-interval 30s --health-start-period 60s \
   node:22-alpine \
-  npx -y @miguelarios/cal-mcp@0.21.0
+  npx -y @miguelarios/cal-mcp@1.0.0
 ```
 
 The endpoint is `http://127.0.0.1:3002/mcp`.
@@ -215,7 +215,7 @@ The endpoint is `http://127.0.0.1:3002/mcp`.
 services:
   cal-mcp:
     image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/cal-mcp@0.21.0"]
+    command: ["npx", "-y", "@miguelarios/cal-mcp@1.0.0"]
     user: node
     restart: unless-stopped
     env_file: cal.env
@@ -263,7 +263,7 @@ CARDDAV_PASS=your-app-password
         "--env-file", "/absolute/path/to/card.env",
         "-v", "card-mcp-home:/home/node",
         "node:22-alpine",
-        "npx", "-y", "@miguelarios/card-mcp@0.13.0"
+        "npx", "-y", "@miguelarios/card-mcp@1.0.0"
       ]
     }
   }
@@ -284,7 +284,7 @@ docker run -d --name card-mcp --restart unless-stopped \
   --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
   --health-interval 30s --health-start-period 60s \
   node:22-alpine \
-  npx -y @miguelarios/card-mcp@0.13.0
+  npx -y @miguelarios/card-mcp@1.0.0
 ```
 
 The endpoint is `http://127.0.0.1:3003/mcp`.
@@ -295,7 +295,7 @@ The endpoint is `http://127.0.0.1:3003/mcp`.
 services:
   card-mcp:
     image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/card-mcp@0.13.0"]
+    command: ["npx", "-y", "@miguelarios/card-mcp@1.0.0"]
     user: node
     restart: unless-stopped
     env_file: card.env
@@ -340,14 +340,14 @@ x-mcp: &mcp
 services:
   email-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/email-mcp@0.18.0"]
+    command: ["npx", "-y", "@miguelarios/email-mcp@1.0.0"]
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
     volumes: [email-mcp-home:/home/node]
 
   cal-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/cal-mcp@0.21.0"]
+    command: ["npx", "-y", "@miguelarios/cal-mcp@1.0.0"]
     env_file: cal.env
     environment:
       <<: *http
@@ -357,7 +357,7 @@ services:
 
   card-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/card-mcp@0.13.0"]
+    command: ["npx", "-y", "@miguelarios/card-mcp@1.0.0"]
     env_file: card.env
     ports: ["127.0.0.1:3003:3000"]
     volumes: [card-mcp-home:/home/node]

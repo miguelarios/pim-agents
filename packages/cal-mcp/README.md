@@ -53,14 +53,14 @@ docker run -d --name cal-mcp --restart unless-stopped --user node \
   --env-file cal.env \
   -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 \
   -p 127.0.0.1:3002:3000 -v cal-mcp-home:/home/node \
-  node:22-alpine npx -y @miguelarios/cal-mcp@0.20.0
+  node:22-alpine npx -y @miguelarios/cal-mcp@1.0.0
 ```
 
 See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.
 
-## Tools (16)
+## Tools (19)
 
-See [docs/tools/cal-mcp.md](../../docs/tools/cal-mcp.md) for full parameter and output details.
+See [docs/tools/cal-mcp.md](https://github.com/miguelarios/pim-agents/blob/main/docs/tools/cal-mcp.md) for full parameter and output details.
 
 | Tool | Description |
 |------|-------------|
@@ -80,6 +80,9 @@ See [docs/tools/cal-mcp.md](../../docs/tools/cal-mcp.md) for full parameter and 
 | `create_calendar` | Create a calendar collection |
 | `update_calendar` | Rename or recolour a calendar |
 | `delete_calendar` | Delete a calendar and every event in it |
+| `get_calendar_sharing` | Who a calendar is shared with, at what access, and whether they accepted |
+| `share_calendar` | Share a calendar with a person or group, read or read-write |
+| `unshare_calendar` | Stop sharing a calendar with someone |
 
 ## License
 

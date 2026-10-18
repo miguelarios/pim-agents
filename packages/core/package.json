@@ -1,6 +1,6 @@
 {
   "name": "@miguelarios/pim-core",
-  "version": "0.16.0",
+  "version": "1.0.0",
   "description": "Shared config, validation, errors, and utilities for PIM agent MCP servers",
   "keywords": [
     "pim",
@@ -25,16 +25,16 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./ics": {
-      "import": "./dist/ics/index.js",
-      "types": "./dist/ics/index.d.ts"
+      "types": "./dist/ics/index.d.ts",
+      "import": "./dist/ics/index.js"
     },
     "./mcp": {
-      "import": "./dist/mcp/index.js",
-      "types": "./dist/mcp/index.d.ts"
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js"
     }
   },
   "scripts": {
