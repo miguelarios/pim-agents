@@ -60,7 +60,7 @@ function buildBaseEvent(component: ICAL.Component): Omit<ParsedEvent, "start" | 
     rdates: rdates.length > 0 ? rdates : null,
     created: created instanceof ICAL.Time ? created.toJSDate().toISOString() : null,
     last_modified: lastModified instanceof ICAL.Time ? lastModified.toJSDate().toISOString() : null,
-    is_recurring: !!rrule,
+    is_recurring: !!rrule || rdates.length > 0,
     alarms: parseAlarms(component),
     occurrence_date: null,
   };
@@ -120,10 +120,20 @@ function timeToEventIsoWithTz(time: ICAL.Time, timezone?: string): string {
   return time.toJSDate().toISOString();
 }
 
+/**
+ * What is known about the series an instance with a RECURRENCE-ID belongs to:
+ * the master, when it is in the payload; "expanded" when the instance came
+ * out of a ranged listing with no master (a server that honours <expand>);
+ * null when there is no series to speak of (an override stored on its own,
+ * as an invitation to a single occurrence is).
+ */
+type SeriesContext = Pick<ParsedEvent, "recurrence_rule" | "rdates"> | "expanded" | null;
+
 function emitNonExpanded(
   component: ICAL.Component,
   isException: boolean,
   timezone?: string,
+  series: SeriesContext = null,
 ): ParsedEvent[] {
   const base = buildBaseEvent(component);
   const dtstart = component.getFirstPropertyValue("dtstart");
@@ -149,8 +159,14 @@ function emitNonExpanded(
       // A RECURRENCE-ID makes this an occurrence of a series even without an
       // RRULE of its own: a detached override never carries one, and a server
       // that honours calendar-query <expand> (SabreDAV/Nextcloud) returns
-      // every instance that way, with no master in the payload (#99).
-      is_recurring: base.is_recurring || occDate !== null,
+      // every instance that way, with no master in the payload (#99). It does
+      // not when there is no series behind it: an override stored on its own
+      // has no master to edit, and calling it recurring would send writes
+      // down the per-occurrence paths that assume one.
+      is_recurring: base.is_recurring || (occDate !== null && series !== null),
+      ...(series && series !== "expanded"
+        ? { recurrence_rule: series.recurrence_rule, rdates: series.rdates }
+        : {}),
     },
   ];
 }
@@ -237,7 +253,7 @@ export function parseIcsEvents(
     if (!group.master) {
       // Orphan exception VEVENTs (master not in this ICS) — emit each as standalone.
       for (const ex of group.exceptions) {
-        out.push(...emitNonExpanded(ex, true, timezone));
+        out.push(...emitNonExpanded(ex, true, timezone, range ? "expanded" : null));
       }
       continue;
     }
@@ -257,8 +273,9 @@ export function parseIcsEvents(
       out.push(...emitOccurrences(event, range, timezone));
     } else {
       out.push(...emitNonExpanded(group.master, false, timezone));
+      const series = event.isRecurring() ? buildBaseEvent(group.master) : null;
       for (const ex of group.exceptions) {
-        out.push(...emitNonExpanded(ex, true, timezone));
+        out.push(...emitNonExpanded(ex, true, timezone, series));
       }
     }
   }

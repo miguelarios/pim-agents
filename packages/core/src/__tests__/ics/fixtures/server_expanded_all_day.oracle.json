@@ -1,4 +1,8 @@
 {
+  "range": {
+    "start": "2026-10-18T00:00:00Z",
+    "end": "2026-10-25T00:00:00Z"
+  },
   "expected": [
     {
       "uid": "smoke-allday-1@example.com",

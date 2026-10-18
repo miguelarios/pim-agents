@@ -49,7 +49,12 @@ export interface ParsedEvent {
   rdates: string[] | null;
   created: string | null;
   last_modified: string | null;
-  /** True for a master with an RRULE and for any occurrence of a series (anything with a RECURRENCE-ID). */
+  /**
+   * True for a master with an RRULE or RDATE, and for an occurrence of a series:
+   * an instance with a RECURRENCE-ID that came from a ranged listing or sits
+   * beside its master. An override stored without its master (an invitation
+   * to one occurrence) is false: there is no series here to edit.
+   */
   is_recurring: boolean;
   alarms: ParsedAlarm[];
   /** The occurrence's RECURRENCE-ID as an ISO instant (UTC midnight when date-only); null for a master or a one-off. */
