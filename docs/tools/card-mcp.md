@@ -60,10 +60,10 @@ Create a new contact with the specified details.
 | `middleName` | string | | Middle name(s). |
 | `namePrefix` | string | | Honorific prefix (e.g., `"Dr."`). |
 | `nameSuffix` | string | | Honorific suffix (e.g., `"Jr."`). |
-| `emails` | `{ type?: string, value: string }[]` | | Email addresses with optional type. |
-| `phones` | `{ type?: string, value: string }[]` | | Phone numbers with optional type. |
+| `emails` | `{ type?: string, value: string, pref?: boolean }[]` | | Email addresses with optional type. |
+| `phones` | `{ type?: string, value: string, pref?: boolean }[]` | | Phone numbers with optional type. |
 | `addresses` | `{ type?, street?, city?, state?, postalCode?, country? }[]` | | Postal addresses. |
-| `urls` | `{ type?: string, value: string }[]` | | URLs with optional type. |
+| `urls` | `{ type?: string, value: string, pref?: boolean }[]` | | URLs with optional type. |
 | `organization` | string | | Company/organization name. |
 | `orgUnits` | string[] | | Organizational units within the organization (e.g., `["Engineering"]`). |
 | `title` | string | | Job title. |
@@ -98,10 +98,10 @@ Every field except `uid` and `fullName` accepts `null` (FN is required on every 
 | `middleName` | string \| null | | New middle name(s). |
 | `namePrefix` | string \| null | | New honorific prefix. |
 | `nameSuffix` | string \| null | | New honorific suffix. |
-| `emails` | `{ type?: string, value: string }[]` \| null | | New email addresses with optional type (replaces existing). |
-| `phones` | `{ type?: string, value: string }[]` \| null | | New phone numbers with optional type (replaces existing). |
+| `emails` | `{ type?: string, value: string, pref?: boolean }[]` \| null | | New email addresses with optional type (replaces existing). |
+| `phones` | `{ type?: string, value: string, pref?: boolean }[]` \| null | | New phone numbers with optional type (replaces existing). |
 | `addresses` | `{ type?, street?, city?, state?, postalCode?, country? }[]` \| null | | New postal addresses (replaces existing). |
-| `urls` | `{ type?: string, value: string }[]` \| null | | New URLs with optional type (replaces existing). |
+| `urls` | `{ type?: string, value: string, pref?: boolean }[]` \| null | | New URLs with optional type (replaces existing). |
 | `organization` | string \| null | | New organization. |
 | `orgUnits` | string[] \| null | | New organizational units (replaces existing). |
 | `title` | string \| null | | New job title. |
@@ -423,6 +423,8 @@ Delete an address book **and every contact in it**.
 
 `list_contacts` and `get_contact` return contacts in the following shape (`packages/core/src/vcard.ts`, plus the `addressBook` label added by the tool):
 
+`pref` marks the preferred email, phone, address or URL (vCard `TYPE=pref`, or `PREF=1` in vCard 4), which Apple clients and Nextcloud use as the default. It is read from the stored card and written back on every update, so an edit that leaves a list alone keeps its preferred entry.
+
 ```ts
 interface Contact {
   uid: string;
@@ -433,17 +435,18 @@ interface Contact {
   middleName?: string;
   namePrefix?: string;
   nameSuffix?: string;
-  emails: { type?: string; value: string }[];
-  phones: { type?: string; value: string }[];
+  emails: { type?: string; value: string; pref?: boolean }[];
+  phones: { type?: string; value: string; pref?: boolean }[];
   addresses: {
     type?: string;
+    pref?: boolean;
     street?: string;
     city?: string;
     state?: string;
     postalCode?: string;
     country?: string;
   }[];
-  urls: { type?: string; value: string }[];
+  urls: { type?: string; value: string; pref?: boolean }[];
   organization?: string;
   orgUnits?: string[];
   title?: string;
