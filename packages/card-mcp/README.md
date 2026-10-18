@@ -35,7 +35,7 @@ docker run -d --name card-mcp --restart unless-stopped --user node \
   --env-file card.env \
   -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 \
   -p 127.0.0.1:3003:3000 -v card-mcp-home:/home/node \
-  node:22-alpine npx -y @miguelarios/card-mcp@0.12.0
+  node:22-alpine npx -y @miguelarios/card-mcp@1.0.0
 ```
 
 See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.

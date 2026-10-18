@@ -88,7 +88,7 @@ docker run -d --name email-mcp --restart unless-stopped --user node \
   --env-file email.env \
   -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 \
   -p 127.0.0.1:3001:3000 -v email-mcp-home:/home/node \
-  node:22-alpine npx -y @miguelarios/email-mcp@0.17.0
+  node:22-alpine npx -y @miguelarios/email-mcp@1.0.0
 ```
 
 See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.
