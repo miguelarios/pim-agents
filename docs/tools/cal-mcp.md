@@ -28,8 +28,20 @@ List all calendars across all configured CalDAV providers. Returns provider-pref
     url: string;             // CalDAV URL
     ctag?: string;
   }>;
+  // Only when some configured provider could not be listed — see below.
+  unavailable_providers?: Array<{ provider: string; error: string }>;
 }
 ```
+
+**When a provider is unreachable.** With several providers configured, one that cannot be
+reached (a LAN server seen from off that network, say) is skipped rather than failing the
+call: the reachable providers' calendars come back, and `unavailable_providers` names each
+skipped one with its error. The field is absent when every provider answered. If no
+provider answers, the call fails as before. The same applies to `list_events`,
+`get_today_events` and `search_events` when they query all calendars. A calendar you name
+explicitly still fails the call if it cannot be read, and `get_free_busy` and
+`find_free_slots` across all calendars fail rather than skip a provider, because skipping
+it would report its busy time as free. Pass `calendars` to check the reachable ones only.
 
 ## list_events
 
@@ -50,6 +62,8 @@ Query events in a date range. Recurring events are expanded into individual inst
 ```ts
 { events: EventSummary[] }            // when detail_level = "summary" (default)
 { events: EventFull[]    }            // when detail_level = "full"
+// plus unavailable_providers?: Array<{ provider, error }> when querying all calendars
+// skipped an unreachable provider — see list_calendars.
 ```
 
 See [Event shapes](#event-shapes) below.
@@ -68,7 +82,7 @@ Get all events for today. Convenience wrapper over `list_events`.
 
 **Output**
 
-Same as `list_events` — `{ events: EventSummary[] | EventFull[] }`.
+Same as `list_events` — `{ events: EventSummary[] | EventFull[] }`. Plus `unavailable_providers` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
 
 ## search_events
 
@@ -87,7 +101,7 @@ Keyword search across event title, description, and location.
 
 **Output**
 
-`{ events: EventSummary[] | EventFull[] }` — matches whose title, location, or (when `full`) description contains the query (case-insensitive substring).
+`{ events: EventSummary[] | EventFull[] }` — matches whose title, location, or (when `full`) description contains the query (case-insensitive substring). Plus `unavailable_providers` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
 
 ## get_event
 
@@ -256,6 +270,8 @@ The content is split by UID (a recurring series and its overrides stay one calen
 
 When is a calendar busy? Returns the busy periods in a date range — merged, typed as `busy`, `tentative` or `unavailable` — without event details, so availability questions cost one call and expose nothing else. Uses the server's own `free-busy-query` REPORT (RFC 4791 §7.10) where it answers one, otherwise computes from the expanded events the same way `find_free_slots` does. Use `find_free_slots` to get the free windows of a given length instead.
 
+> **An unreachable provider fails the call** when no `calendars` are given, with an error naming the provider (`Calendar provider "nextcloud": …`), rather than skipping it: a skipped provider's busy time would read as free. Pass `calendars` without that provider's calendars to check the rest.
+
 **Parameters**
 
 | Parameter | Type | Required | Description |
@@ -287,6 +303,8 @@ Overlapping periods of the same type are merged; a `busy` and a `tentative` peri
 ## find_free_slots
 
 Find available time slots across specified calendars. Returns free windows matching the requested duration.
+
+> **An unreachable provider fails the call** when no `calendars` are given, with an error naming the provider (`Calendar provider "nextcloud": …`), rather than skipping it: a skipped provider's busy time would read as free. Pass `calendars` without that provider's calendars to check the rest. `exclude_calendars` does not avoid the failure, since the provider is listed before exclusions apply.
 
 **Parameters**
 

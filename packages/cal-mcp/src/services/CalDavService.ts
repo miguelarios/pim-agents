@@ -4,6 +4,7 @@ import {
   type CalDavConfig,
   CalendarError,
   ErrorCode,
+  PimError,
   ValidationError,
   checkDavCollectionResponse,
   formatInTimezone,
@@ -43,6 +44,42 @@ export interface CalendarInfo {
   read_only: boolean;
   url: string;
   ctag?: string;
+}
+
+/** A configured provider that could not be listed, and the error it gave. */
+export interface UnavailableProvider {
+  provider: string;
+  error: string;
+}
+
+export interface ReachableCalendars {
+  calendars: CalendarInfo[];
+  unavailable: UnavailableProvider[];
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/** A provider's error, named, with the original's code and retryability. */
+class ProviderError extends PimError {
+  constructor(providerId: string, original: PimError) {
+    super(
+      `Calendar provider "${providerId}": ${original.message}`,
+      original.code,
+      original.isRetryable,
+    );
+    this.cause = original;
+  }
+}
+
+/**
+ * The provider's error as a new PimError naming which provider failed. A new
+ * object rather than an edited message, so the caller's error and its stack
+ * are left alone and naming it twice cannot stack prefixes.
+ */
+function providerError(providerId: string, error: unknown): Error {
+  return new ProviderError(providerId, toPimError(asError(error)));
 }
 
 /** A calendar collection as the management tools name it. */
@@ -580,44 +617,81 @@ export class CalDavService {
     return account.username;
   }
 
+  /**
+   * Every calendar on every provider, or an error naming the first provider
+   * that could not be listed. For callers that must not act on a partial
+   * view — free/busy and free slots, where a missing provider's busy time
+   * would read as free.
+   */
   async listCalendars(): Promise<CalendarInfo[]> {
     const allCalendars: CalendarInfo[] = [];
-
     for (const [providerId, account] of this.accounts) {
       try {
-        const client = await this.getClient(account);
-        const calendars = await client.fetchCalendars({
-          props: CALENDAR_LIST_PROPS,
-          projectedProps: CALENDAR_LIST_PROJECTION,
-        });
-        this.calendarsCache.set(providerId, calendars);
-        for (const cal of calendars) {
-          const displayName = displayNameOf(cal);
-          const canWrite = await this.fetchPrivileges(client, cal.url);
-          allCalendars.push({
-            calendar_id: `${providerId}/${displayName}`,
-            display_name: displayName,
-            color: (cal as any).calendarColor ?? null,
-            description: descriptionOf(cal),
-            timezone: timezoneOf(cal),
-            order: orderOf(cal),
-            source: providerId,
-            read_only: !canWrite,
-            url: cal.url,
-            // tsdav parses a bare-integer <getctag> (Nextcloud) as a number. It
-            // is still a valid change marker, so keep it, as the string it is typed as.
-            // Anything else (xml2js yields {} for an empty <getctag/>) is dropped.
-            ...(typeof cal.ctag === "string" || typeof cal.ctag === "number"
-              ? { ctag: String(cal.ctag) }
-              : {}),
-          });
-        }
+        allCalendars.push(...(await this.listProviderCalendars(providerId, account)));
       } catch (error) {
-        throw toPimError(error instanceof Error ? error : new Error(String(error)));
+        throw providerError(providerId, error);
       }
     }
-
     return allCalendars;
+  }
+
+  /**
+   * The calendars of every provider that answers, plus which ones did not and
+   * why (#127). One unreachable provider — a LAN server seen from off that
+   * network — no longer hides the others. Only when none answers does this
+   * throw, so a single-provider setup fails exactly as before.
+   */
+  async listReachableCalendars(): Promise<ReachableCalendars> {
+    const calendars: CalendarInfo[] = [];
+    const unavailable: UnavailableProvider[] = [];
+    let firstError: unknown;
+    for (const [providerId, account] of this.accounts) {
+      try {
+        calendars.push(...(await this.listProviderCalendars(providerId, account)));
+      } catch (error) {
+        firstError ??= error;
+        unavailable.push({ provider: providerId, error: toPimError(asError(error)).message });
+      }
+    }
+    if (unavailable.length > 0 && unavailable.length === this.accounts.size) {
+      throw providerError(unavailable[0].provider, firstError);
+    }
+    return { calendars, unavailable };
+  }
+
+  private async listProviderCalendars(
+    providerId: string,
+    account: CalDavAccount,
+  ): Promise<CalendarInfo[]> {
+    const client = await this.getClient(account);
+    const calendars = await client.fetchCalendars({
+      props: CALENDAR_LIST_PROPS,
+      projectedProps: CALENDAR_LIST_PROJECTION,
+    });
+    this.calendarsCache.set(providerId, calendars);
+    const out: CalendarInfo[] = [];
+    for (const cal of calendars) {
+      const displayName = displayNameOf(cal);
+      const canWrite = await this.fetchPrivileges(client, cal.url);
+      out.push({
+        calendar_id: `${providerId}/${displayName}`,
+        display_name: displayName,
+        color: (cal as any).calendarColor ?? null,
+        description: descriptionOf(cal),
+        timezone: timezoneOf(cal),
+        order: orderOf(cal),
+        source: providerId,
+        read_only: !canWrite,
+        url: cal.url,
+        // tsdav parses a bare-integer <getctag> (Nextcloud) as a number. It
+        // is still a valid change marker, so keep it, as the string it is typed as.
+        // Anything else (xml2js yields {} for an empty <getctag/>) is dropped.
+        ...(typeof cal.ctag === "string" || typeof cal.ctag === "number"
+          ? { ctag: String(cal.ctag) }
+          : {}),
+      });
+    }
+    return out;
   }
 
   /** The configured provider IDs — the prefix half of every `calendar_id`. */

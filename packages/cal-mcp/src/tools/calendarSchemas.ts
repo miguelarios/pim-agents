@@ -64,12 +64,22 @@ export const eventSchema = v.object({
   geo: v.optional(v.nullable(v.object({ latitude: v.number(), longitude: v.number() }))),
 });
 
+/**
+ * Present only when a listing spanning every provider skipped some, so a
+ * caller can tell "no events" from "could not ask" (#127).
+ */
+const unavailableProvidersSchema = v.optional(
+  v.array(v.object({ provider: v.string(), error: v.string() })),
+);
+
 export const calendarListSchema = v.object({
   calendars: v.array(calendarSchema),
+  unavailable_providers: unavailableProvidersSchema,
 });
 
 export const eventListSchema = v.object({
   events: v.array(eventSchema),
+  unavailable_providers: unavailableProvidersSchema,
 });
 
 export const singleEventSchema = v.object({

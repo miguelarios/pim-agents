@@ -44,7 +44,7 @@ const RECURRING_ICS = [
 ].join("\r\n");
 
 function fakeService() {
-  return {
+  const service = {
     listCalendars: vi.fn().mockResolvedValue([
       {
         calendar_id: "mailbox/Work",
@@ -101,6 +101,14 @@ function fakeService() {
       url: "https://example.test/work",
       provider: "mailbox",
     }),
+  };
+  // Every provider reachable: the listing tools see what listCalendars returns.
+  return {
+    ...service,
+    listReachableCalendars: vi.fn(async () => ({
+      calendars: await service.listCalendars(),
+      unavailable: [] as Array<{ provider: string; error: string }>,
+    })),
   };
 }
 
@@ -206,6 +214,30 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect(result.structuredContent).toMatchObject({
       calendars: [{ calendar_id: "mailbox/Work", timezone: "America/Chicago", order: 0 }],
     });
+  });
+
+  it("lists the reachable providers and reports the unreachable one over the wire (#127)", async () => {
+    const service = fakeService();
+    const down = [{ provider: "nextcloud", error: "fetch failed (EHOSTUNREACH)" }];
+    service.listReachableCalendars.mockImplementation(async () => ({
+      calendars: await service.listCalendars(),
+      unavailable: down,
+    }));
+    const { client } = await connect(era, service);
+    // Listing first makes the client validate structuredContent against the
+    // advertised (converted) outputSchema, not only the valibot one.
+    await client.listTools();
+
+    const calendars = await client.callTool({ name: "list_calendars", arguments: {} });
+    expect(calendars.isError).toBeFalsy();
+    expect(calendars.structuredContent).toMatchObject({ unavailable_providers: down });
+
+    const events = await client.callTool({
+      name: "list_events",
+      arguments: { start: "2026-08-01T00:00:00Z", end: "2026-08-02T00:00:00Z" },
+    });
+    expect(events.isError).toBeFalsy();
+    expect(events.structuredContent).toMatchObject({ unavailable_providers: down });
   });
 
   it("expands events into structuredContent", async () => {
