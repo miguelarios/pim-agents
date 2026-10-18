@@ -135,9 +135,24 @@ function emitNonExpanded(
   let occDate: string | null = null;
   if (isException) {
     const recurId = component.getFirstPropertyValue("recurrence-id");
-    if (recurId instanceof ICAL.Time) occDate = recurId.toJSDate().toISOString();
+    // Same conversion as start/end and as emitOccurrences, so a date-only
+    // RECURRENCE-ID is UTC midnight here too rather than host-local midnight.
+    if (recurId instanceof ICAL.Time) occDate = timeToEventIsoWithTz(recurId, timezone);
   }
-  return [{ ...base, all_day: allDay, start: startIso, end: endIso, occurrence_date: occDate }];
+  return [
+    {
+      ...base,
+      all_day: allDay,
+      start: startIso,
+      end: endIso,
+      occurrence_date: occDate,
+      // A RECURRENCE-ID makes this an occurrence of a series even without an
+      // RRULE of its own: a detached override never carries one, and a server
+      // that honours calendar-query <expand> (SabreDAV/Nextcloud) returns
+      // every instance that way, with no master in the payload (#99).
+      is_recurring: base.is_recurring || occDate !== null,
+    },
+  ];
 }
 
 function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string): ParsedEvent[] {

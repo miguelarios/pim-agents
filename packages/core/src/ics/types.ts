@@ -39,12 +39,20 @@ export interface ParsedEvent {
   categories: string[];
   geo: ParsedGeo | null;
   organizer: ParsedOrganizer | null;
+  /**
+   * The series' RRULE, when the parsed component carries one. A detached
+   * override or a server-expanded instance has none of its own, so this is
+   * null there even though `is_recurring` is true: the rule lives only on a
+   * master that is not in the payload.
+   */
   recurrence_rule: string | null;
   rdates: string[] | null;
   created: string | null;
   last_modified: string | null;
+  /** True for a master with an RRULE and for any occurrence of a series (anything with a RECURRENCE-ID). */
   is_recurring: boolean;
   alarms: ParsedAlarm[];
+  /** The occurrence's RECURRENCE-ID as an ISO instant (UTC midnight when date-only); null for a master or a one-off. */
   occurrence_date: string | null;
 }
 
