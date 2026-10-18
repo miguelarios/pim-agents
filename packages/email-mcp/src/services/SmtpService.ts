@@ -13,7 +13,7 @@ function headerMessageId(raw: Buffer): string | undefined {
   const end = text.search(/\r?\n\r?\n/);
   const headers = (end === -1 ? text : text.slice(0, end)).replace(/\r?\n[ \t]+/g, " ");
   const match = /^message-id:[ \t]*(.+?)[ \t]*$/im.exec(headers);
-  return match?.[1] || undefined;
+  return match?.[1]?.trim() || undefined;
 }
 
 /**

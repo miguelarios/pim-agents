@@ -322,3 +322,11 @@ describe("ensureMessageId (#130)", () => {
     expect(out.endsWith(raw.toString("latin1"))).toBe(true);
   });
 });
+
+describe("a blank Message-ID header (#130 review)", () => {
+  it("counts as missing, so ensureMessageId adds a real one", () => {
+    const raw = Buffer.from("Message-ID: \r\nSubject: Hi\r\n\r\nBody");
+    const out = ensureMessageId(raw, "user@example.org").toString("latin1");
+    expect(out).toMatch(/^Message-ID: <[0-9a-f-]{36}@example\.org>\r\n/);
+  });
+});
