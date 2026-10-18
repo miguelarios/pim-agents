@@ -128,9 +128,13 @@ const TIMEOUT_CODES = new Set([
   "UND_ERR_BODY_TIMEOUT",
 ]);
 
-/** The first `code` found walking an error's `cause` chain (bounded). */
-function causeCode(error: Error): string | undefined {
-  let current: unknown = error.cause;
+/**
+ * The first `code` on the error itself or down its `cause` chain (bounded).
+ * imapflow and nodemailer set it on the error they throw; undici's "fetch
+ * failed" only on its cause.
+ */
+function errorCode(error: Error): string | undefined {
+  let current: unknown = error;
   for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
     const code = (current as { code?: unknown }).code;
     if (typeof code === "string") return code;
@@ -144,16 +148,21 @@ export function toPimError(error: Error): PimError {
   // Node's fetch (undici, under tsdav) reports every network failure as a bare
   // "fetch failed" and puts the reason in `cause`. Without this an
   // unreachable host surfaced as a non-retryable internal error with no hint why.
-  const code = causeCode(error);
+  const code = errorCode(error);
+  // Name the code whenever there is one and the message does not already,
+  // including codes outside the tables below (a TLS failure such as
+  // DEPTH_ZERO_SELF_SIGNED_CERT), which keep the message-based class.
+  const message =
+    code && !error.message.includes(code) ? `${error.message} (${code})` : error.message;
   if (code && UNREACHABLE_CODES.has(code)) {
-    return new ConnectionError(`${error.message} (${code})`);
+    return new ConnectionError(message);
   }
   if (code && TIMEOUT_CODES.has(code)) {
-    return new ConnectionError(`${error.message} (${code})`, ErrorCode.CONNECTION_TIMEOUT);
+    return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
   }
   const msg = error.message.toLowerCase();
   if (msg.includes("auth") || msg.includes("login") || msg.includes("credential")) {
-    return new AuthenticationError(error.message);
+    return new AuthenticationError(message);
   }
   if (
     msg.includes("econnrefused") ||
@@ -161,14 +170,14 @@ export function toPimError(error: Error): PimError {
     msg.includes("enotfound") ||
     msg.includes("connection")
   ) {
-    return new ConnectionError(error.message);
+    return new ConnectionError(message);
   }
   if (msg.includes("timeout") || msg.includes("etimedout")) {
-    return new ConnectionError(error.message, ErrorCode.CONNECTION_TIMEOUT);
+    return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
   }
   const wrapped = new (class InternalError extends PimError {
     constructor() {
-      super(error.message, ErrorCode.INTERNAL_ERROR, false);
+      super(message, ErrorCode.INTERNAL_ERROR, false);
       this.stack = error.stack;
     }
   })();

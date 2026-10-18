@@ -125,5 +125,27 @@ describe("PimError hierarchy", () => {
       expect(err.code).toBe(ErrorCode.INTERNAL_ERROR);
       expect(err.message).toBe("fetch failed");
     });
+
+    it("reads a code set on the error itself, as imapflow and nodemailer throw it", () => {
+      const err = toPimError(
+        Object.assign(new Error("connect EHOSTUNREACH 192.0.2.1:993"), { code: "EHOSTUNREACH" }),
+      );
+      expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.isRetryable).toBe(true);
+      // The code is already in the message, so it is not repeated.
+      expect(err.message).toBe("connect EHOSTUNREACH 192.0.2.1:993");
+    });
+
+    it("names a code outside the tables without changing the classification", () => {
+      const err = toPimError(
+        Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("self-signed certificate"), {
+            code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+          }),
+        }),
+      );
+      expect(err.code).toBe(ErrorCode.INTERNAL_ERROR);
+      expect(err.message).toBe("fetch failed (DEPTH_ZERO_SELF_SIGNED_CERT)");
+    });
   });
 });
