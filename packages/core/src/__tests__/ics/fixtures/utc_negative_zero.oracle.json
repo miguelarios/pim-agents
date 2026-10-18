@@ -5,7 +5,7 @@
       "title": "And another",
       "start": "2012-08-21T21:00:00.000Z",
       "end": "2012-08-21T21:30:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": "confirmed",
@@ -15,13 +15,13 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "alice@example.com", "name": "Sahaja Lal" },
-      "recurrence_rule": null,
+      "recurrenceRule": null,
       "rdates": null,
       "created": null,
-      "last_modified": null,
-      "is_recurring": false,
+      "lastModified": null,
+      "isRecurring": false,
       "alarms": [],
-      "occurrence_date": null
+      "occurrenceDate": null
     }
   ]
 }

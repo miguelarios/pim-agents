@@ -16,8 +16,8 @@ List or search contacts. Returns all contacts if no query provided, or filters b
 |-----------|------|----------|-------------|
 | `query` | string | | Optional search query to filter contacts by name, email, phone, or organization. |
 | `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, every address book in the account is searched. |
-| `detail_level` | `"summary"` \| `"full"` | | Level of detail. `summary` (default) omits photo binary and raw `otherProperties`. `full` returns the complete parsed vCard shape. |
-| `include_groups` | boolean | | Include contact groups (`kind: "group"`) in the results. Default `false`: groups are listed by `list_groups`. |
+| `detailLevel` | `"summary"` \| `"full"` | | Level of detail. `summary` (default) omits photo binary and raw `otherProperties`. `full` returns the complete parsed vCard shape. |
+| `includeGroups` | boolean | | Include contact groups (`kind: "group"`) in the results. Default `false`: groups are listed by `list_groups`. |
 
 **Output**
 
@@ -40,7 +40,7 @@ Get full details of a single contact by UID.
 |-----------|------|----------|-------------|
 | `uid` | string | yes | The unique identifier (UID) of the contact. |
 | `addressBook` | string | | Address book URL or display name (e.g. `Work`). If omitted, every address book in the account is searched. |
-| `detail_level` | `"summary"` \| `"full"` | | Level of detail. `summary` (default) omits photo binary and raw `otherProperties`. `full` returns the complete parsed vCard shape. |
+| `detailLevel` | `"summary"` \| `"full"` | | Level of detail. `summary` (default) omits photo binary and raw `otherProperties`. `full` returns the complete parsed vCard shape. |
 
 **Output**
 
@@ -345,7 +345,7 @@ List the account's address books — name, URL, and metadata. Pass the returned 
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `include_counts` | boolean | | Also count the contacts in each book (one extra request per book). Default `false`. |
+| `includeCounts` | boolean | | Also count the contacts in each book (one extra request per book). Default `false`. |
 
 **Output**
 
@@ -357,7 +357,7 @@ List the account's address books — name, URL, and metadata. Pass the returned 
     description?: string;
     ctag?: string;
     syncToken?: string;
-    contactCount?: number; // only with include_counts: true
+    contactCount?: number; // only with includeCounts: true
   }>;
   count: number;
 }
@@ -456,9 +456,9 @@ interface Contact {
   categories?: string[];
   note?: string;
   socialProfiles?: { type: string; handle?: string; url?: string }[];
-  photo?: string;          // omitted at detail_level: "summary"
-  kind?: "group";          // set only on groups (list_contacts with include_groups: true)
+  photo?: string;          // omitted at detailLevel: "summary"
+  kind?: "group";          // set only on groups (list_contacts with includeGroups: true)
   members?: string[];      // a group's member UIDs
-  otherProperties: string[]; // raw vCard lines, only populated when detail_level: "full"
+  otherProperties: string[]; // raw vCard lines, only populated when detailLevel: "full"
 }
 ```

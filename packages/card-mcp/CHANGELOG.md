@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
+- **Breaking: the last three snake_case parameters are camelCase** (#150): `detail_level` → `detailLevel` (`list_contacts`, `get_contact`), `include_counts` → `includeCounts` (`list_address_books`) and `include_groups` → `includeGroups` (`list_contacts`). Every parameter and output field across the three servers is now camelCase.
 
 ## 0.13.0 (2026-10-18)
 

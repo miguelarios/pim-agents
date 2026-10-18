@@ -108,8 +108,8 @@ const NO_SHARING = `<?xml version="1.0"?>
 describe("parseSharing (#47)", () => {
   it("reads CalendarServer sharees, with addresses, names, access and status", () => {
     expect(parseSharing(OX_SHARED)).toEqual({
-      can_be_shared: true,
-      can_be_published: true,
+      canBeShared: true,
+      canBePublished: true,
       protocol: "calendarserver",
       shares: [
         {
@@ -137,8 +137,8 @@ describe("parseSharing (#47)", () => {
 
   it("reports an unshared calendar as shareable with no shares", () => {
     expect(parseSharing(OX_NOT_SHARED)).toEqual({
-      can_be_shared: true,
-      can_be_published: true,
+      canBeShared: true,
+      canBePublished: true,
       protocol: "calendarserver",
       shares: [],
     });
@@ -191,8 +191,8 @@ describe("parseSharing (#47)", () => {
 
   it("reports a server without sharing as not shareable", () => {
     expect(parseSharing(NO_SHARING)).toEqual({
-      can_be_shared: false,
-      can_be_published: false,
+      canBeShared: false,
+      canBePublished: false,
       protocol: null,
       shares: [],
     });

@@ -6,7 +6,7 @@
       "title": "",
       "start": "2024-06-09T03:00:00.000Z",
       "end": "2024-06-09T03:00:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": null,
@@ -16,20 +16,20 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": "FREQ=DAILY;COUNT=4",
+      "recurrenceRule": "FREQ=DAILY;COUNT=4",
       "rdates": null,
       "created": null,
-      "last_modified": null,
-      "is_recurring": true,
+      "lastModified": null,
+      "isRecurring": true,
       "alarms": [],
-      "occurrence_date": "2024-06-09T03:00:00.000Z"
+      "occurrenceDate": "2024-06-09T03:00:00.000Z"
     },
     {
       "uid": "123",
       "title": "",
       "start": "2024-06-10T03:00:00.000Z",
       "end": "2024-06-10T03:00:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": null,
@@ -39,20 +39,20 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": "FREQ=DAILY;COUNT=4",
+      "recurrenceRule": "FREQ=DAILY;COUNT=4",
       "rdates": null,
       "created": null,
-      "last_modified": null,
-      "is_recurring": true,
+      "lastModified": null,
+      "isRecurring": true,
       "alarms": [],
-      "occurrence_date": "2024-06-10T03:00:00.000Z"
+      "occurrenceDate": "2024-06-10T03:00:00.000Z"
     },
     {
       "uid": "123",
       "title": "",
       "start": "2024-06-12T03:00:00.000Z",
       "end": "2024-06-12T03:00:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": null,
@@ -62,13 +62,13 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": "FREQ=DAILY;COUNT=4",
+      "recurrenceRule": "FREQ=DAILY;COUNT=4",
       "rdates": null,
       "created": null,
-      "last_modified": null,
-      "is_recurring": true,
+      "lastModified": null,
+      "isRecurring": true,
       "alarms": [],
-      "occurrence_date": "2024-06-12T03:00:00.000Z"
+      "occurrenceDate": "2024-06-12T03:00:00.000Z"
     }
   ]
 }

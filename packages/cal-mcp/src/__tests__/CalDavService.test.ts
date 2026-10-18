@@ -131,7 +131,7 @@ describe("CalDavService", () => {
 
       const { calendars, unavailable } = await service.listReachableCalendars();
 
-      expect(calendars.map((c) => c.calendar_id)).toEqual(["mailbox/Work", "mailbox/Personal"]);
+      expect(calendars.map((c) => c.calendarId)).toEqual(["mailbox/Work", "mailbox/Personal"]);
       expect(unavailable).toHaveLength(1);
       expect(unavailable[0].provider).toBe("nextcloud");
       expect(unavailable[0].error).toContain("fetch failed");
@@ -181,15 +181,15 @@ describe("CalDavService", () => {
       const calendars = await service.listCalendars();
       expect(calendars).toHaveLength(4);
 
-      const mailboxCals = calendars.filter((c) => c.calendar_id.startsWith("mailbox/"));
+      const mailboxCals = calendars.filter((c) => c.calendarId.startsWith("mailbox/"));
       expect(mailboxCals).toHaveLength(2);
-      expect(mailboxCals[0].calendar_id).toBe("mailbox/Work");
-      expect(mailboxCals[0].display_name).toBe("Work");
+      expect(mailboxCals[0].calendarId).toBe("mailbox/Work");
+      expect(mailboxCals[0].displayName).toBe("Work");
       expect(mailboxCals[0].source).toBe("mailbox");
       expect(mailboxCals[0].color).toBeNull();
-      expect(mailboxCals[0].read_only).toBe(false);
+      expect(mailboxCals[0].readOnly).toBe(false);
 
-      const ncCals = calendars.filter((c) => c.calendar_id.startsWith("nextcloud/"));
+      const ncCals = calendars.filter((c) => c.calendarId.startsWith("nextcloud/"));
       expect(ncCals).toHaveLength(2);
     });
 
@@ -233,7 +233,7 @@ describe("CalDavService", () => {
       );
     });
 
-    it("returns read_only: false when privilege set includes write", async () => {
+    it("returns readOnly: false when privilege set includes write", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.propfind.mockResolvedValue([
         {
@@ -246,11 +246,11 @@ describe("CalDavService", () => {
       ]);
 
       const calendars = await service.listCalendars();
-      const workCal = calendars.find((c) => c.display_name === "Work");
-      expect(workCal?.read_only).toBe(false);
+      const workCal = calendars.find((c) => c.displayName === "Work");
+      expect(workCal?.readOnly).toBe(false);
     });
 
-    it("returns read_only: true when privilege set lacks write", async () => {
+    it("returns readOnly: true when privilege set lacks write", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.propfind.mockResolvedValue([
         {
@@ -263,8 +263,8 @@ describe("CalDavService", () => {
       ]);
 
       const calendars = await service.listCalendars();
-      // All calendars from this provider should be read_only
-      expect(calendars.every((c) => c.read_only)).toBe(true);
+      // All calendars from this provider should be readOnly
+      expect(calendars.every((c) => c.readOnly)).toBe(true);
     });
 
     it("asks tsdav for the timezone-id and order properties too (#46)", async () => {
@@ -311,7 +311,7 @@ describe("CalDavService", () => {
 
       const calendars = await service.listCalendars();
       const byName = Object.fromEntries(
-        calendars.filter((c) => c.source === "mailbox").map((c) => [c.display_name, c]),
+        calendars.filter((c) => c.source === "mailbox").map((c) => [c.displayName, c]),
       );
       expect(byName.Work).toMatchObject({
         description: "Team calendar",
@@ -326,12 +326,12 @@ describe("CalDavService", () => {
       expect(byName.Bare).toMatchObject({ description: null, timezone: null, order: null });
     });
 
-    it("defaults read_only: false when propfind returns no privilege info", async () => {
+    it("defaults readOnly: false when propfind returns no privilege info", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
       __mockClient.propfind.mockResolvedValue([]);
 
       const calendars = await service.listCalendars();
-      expect(calendars[0].read_only).toBe(false);
+      expect(calendars[0].readOnly).toBe(false);
     });
   });
 
@@ -345,11 +345,11 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: "Office",
           status: "confirmed",
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
         },
       ]);
       __mockClient.fetchCalendarObjects.mockResolvedValue([
@@ -364,10 +364,10 @@ describe("CalDavService", () => {
 
       expect(events).toHaveLength(1);
       expect(events[0].uid).toBe("evt-1");
-      expect(events[0].calendar_id).toBe("mailbox/Work");
+      expect(events[0].calendarId).toBe("mailbox/Work");
       expect(events[0].title).toBe("Team Meeting");
-      expect(events[0].is_recurring).toBe(false);
-      expect(events[0].all_day).toBe(false);
+      expect(events[0].isRecurring).toBe(false);
+      expect(events[0].allDay).toBe(false);
       expect(events[0].location).toBe("Office");
     });
 
@@ -388,7 +388,7 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: "Office",
           description: "Weekly sync",
           status: "confirmed",
@@ -396,14 +396,14 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
-          occurrence_date: null,
+          occurrenceDate: null,
         },
       ]);
       __mockClient.fetchCalendarObjects.mockResolvedValue([
@@ -420,7 +420,7 @@ describe("CalDavService", () => {
       expect(events).toHaveLength(1);
       expect(events[0].uid).toBe("evt-1");
       expect(events[0].description).toBe("Weekly sync");
-      expect(events[0].calendar_id).toBe("mailbox/Work");
+      expect(events[0].calendarId).toBe("mailbox/Work");
     });
   });
 
@@ -434,7 +434,7 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: "Office",
           description: "Weekly standup",
           status: "confirmed",
@@ -444,10 +444,10 @@ describe("CalDavService", () => {
             { email: "bob@example.com", name: "Bob", status: null, role: null, type: "unknown" },
           ],
           organizer: { email: "miguel@example.com", name: "Miguel" },
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -460,17 +460,17 @@ describe("CalDavService", () => {
       const event = await service.getEvent("mailbox/Work", "evt-1");
 
       expect(event.uid).toBe("evt-1");
-      expect(event.calendar_id).toBe("mailbox/Work");
+      expect(event.calendarId).toBe("mailbox/Work");
       expect(event.title).toBe("Team Meeting");
       expect(event.description).toBe("Weekly standup");
       expect(event.availability).toBe("busy");
       expect(event.attendees).toHaveLength(1);
       expect(event.organizer?.email).toBe("miguel@example.com");
-      expect(event.recurrence_rule).toBeNull();
+      expect(event.recurrenceRule).toBeNull();
       expect(event.url).toBeNull();
     });
 
-    describe("with occurrence_date (#39)", () => {
+    describe("with occurrenceDate (#39)", () => {
       const SERIES = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -513,8 +513,8 @@ describe("CalDavService", () => {
         expect(event.title).toBe("Standup (moved to 10am)");
         expect(event.start).toBe("2026-03-09T16:00:00.000Z");
         expect(event.end).toBe("2026-03-09T16:30:00.000Z");
-        expect(event.occurrence_date).toBe("2026-03-09T15:00:00.000Z");
-        expect(event.calendar_id).toBe("mailbox/Work");
+        expect(event.occurrenceDate).toBe("2026-03-09T15:00:00.000Z");
+        expect(event.calendarId).toBe("mailbox/Work");
       });
 
       it("returns a rule-generated occurrence at its own time, with the master's fields", async () => {
@@ -523,15 +523,15 @@ describe("CalDavService", () => {
         expect(event.location).toBe("Room A");
         expect(event.start).toBe("2026-03-16T15:00:00.000Z");
         expect(event.end).toBe("2026-03-16T15:30:00.000Z");
-        expect(event.occurrence_date).toBe("2026-03-16T15:00:00.000Z");
+        expect(event.occurrenceDate).toBe("2026-03-16T15:00:00.000Z");
       });
 
-      it("still returns the master when occurrence_date is omitted", async () => {
+      it("still returns the master when occurrenceDate is omitted", async () => {
         const event = await service.getEvent("mailbox/Work", "standup");
         expect(event.title).toBe("Standup");
         expect(event.start).toBe("2026-03-02T15:00:00.000Z");
-        expect(event.is_recurring).toBe(true);
-        expect(event.occurrence_date).toBeNull();
+        expect(event.isRecurring).toBe(true);
+        expect(event.occurrenceDate).toBeNull();
       });
 
       it("reports not-found for a date the rule never generates", async () => {
@@ -540,7 +540,7 @@ describe("CalDavService", () => {
         ).rejects.toMatchObject({ code: "EVENT_NOT_FOUND" });
       });
 
-      it("rejects occurrence_date on a non-recurring event", async () => {
+      it("rejects occurrenceDate on a non-recurring event", async () => {
         const { __mockClient } = (await import("tsdav")) as any;
         __mockClient.fetchCalendarObjects.mockResolvedValue([
           {
@@ -554,7 +554,7 @@ describe("CalDavService", () => {
         ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
       });
 
-      it("rejects an unparseable occurrence_date", async () => {
+      it("rejects an unparseable occurrenceDate", async () => {
         await expect(
           service.getEvent("mailbox/Work", "standup", "next monday"),
         ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
@@ -581,7 +581,7 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: "confirmed",
@@ -589,10 +589,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -621,7 +621,7 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: "confirmed",
@@ -629,10 +629,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -668,7 +668,7 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: "confirmed",
@@ -676,10 +676,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -716,7 +716,7 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: "confirmed",
@@ -724,10 +724,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -767,7 +767,7 @@ describe("CalDavService", () => {
             title: "Team Meeting",
             start: "2026-03-10T14:00:00.000Z",
             end: "2026-03-10T15:00:00.000Z",
-            all_day: false,
+            allDay: false,
             location: null,
             description: null,
             status: "confirmed",
@@ -775,10 +775,10 @@ describe("CalDavService", () => {
             url: null,
             attendees: [],
             organizer: null,
-            recurrence_rule: null,
-            is_recurring: false,
+            recurrenceRule: null,
+            isRecurring: false,
             created: null,
-            last_modified: null,
+            lastModified: null,
             alarms: [],
             categories: [],
             geo: null,
@@ -811,7 +811,7 @@ describe("CalDavService", () => {
           title: "Full Event",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: "Office",
           description: "Test",
           status: "confirmed",
@@ -828,11 +828,11 @@ describe("CalDavService", () => {
             { email: "rooma@example.com", name: "Room A", status: null, role: null, type: "room" },
           ],
           organizer: { email: "miguel@example.com", name: "Miguel" },
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
-          alarms: [{ type: "relative", trigger: -900, trigger_human: "15 minutes before" }],
+          lastModified: null,
+          alarms: [{ type: "relative", trigger: -900, triggerHuman: "15 minutes before" }],
           categories: ["Meeting", "Project-X"],
           geo: { latitude: 37.386, longitude: -122.083 },
         },
@@ -866,7 +866,7 @@ describe("CalDavService", () => {
           title: "New Event",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: null,
@@ -874,10 +874,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -892,7 +892,7 @@ describe("CalDavService", () => {
 
       expect(result.uid).toBe("new-evt");
       expect(result.title).toBe("New Event");
-      expect(result.calendar_id).toBe("mailbox/Work");
+      expect(result.calendarId).toBe("mailbox/Work");
       expect(__mockClient.createCalendarObject).toHaveBeenCalled();
       // Should NOT call fetchCalendarObjects (no post-write re-fetch)
       expect(__mockClient.fetchCalendarObjects).not.toHaveBeenCalled();
@@ -931,7 +931,7 @@ describe("CalDavService", () => {
         title: "Updated Meeting",
         start: "2026-03-10T14:00:00.000Z",
         end: "2026-03-10T15:00:00.000Z",
-        all_day: false,
+        allDay: false,
         location: null,
         description: null,
         status: null,
@@ -939,10 +939,10 @@ describe("CalDavService", () => {
         url: null,
         attendees: [],
         organizer: null,
-        recurrence_rule: null,
-        is_recurring: false,
+        recurrenceRule: null,
+        isRecurring: false,
         created: null,
-        last_modified: null,
+        lastModified: null,
         alarms: [],
         categories: [],
         geo: null,
@@ -1025,7 +1025,7 @@ describe("CalDavService", () => {
         title: "Updated Meeting",
         start: "2026-03-10T14:00:00.000Z",
         end: "2026-03-10T15:00:00.000Z",
-        all_day: false,
+        allDay: false,
         location: null,
         description: null,
         status: null,
@@ -1033,10 +1033,10 @@ describe("CalDavService", () => {
         url: null,
         attendees: [],
         organizer: null,
-        recurrence_rule: null,
-        is_recurring: false,
+        recurrenceRule: null,
+        isRecurring: false,
         created: null,
-        last_modified: null,
+        lastModified: null,
         alarms: [],
         categories: [],
         geo: null,
@@ -1089,7 +1089,7 @@ describe("CalDavService", () => {
         title: "Updated Meeting",
         start: "2026-03-10T14:00:00.000Z",
         end: "2026-03-10T15:00:00.000Z",
-        all_day: false,
+        allDay: false,
         location: null,
         description: null,
         status: null,
@@ -1097,10 +1097,10 @@ describe("CalDavService", () => {
         url: null,
         attendees: [],
         organizer: null,
-        recurrence_rule: null,
-        is_recurring: false,
+        recurrenceRule: null,
+        isRecurring: false,
         created: null,
-        last_modified: null,
+        lastModified: null,
         alarms: [],
         categories: [],
         geo: null,
@@ -1155,7 +1155,7 @@ describe("CalDavService", () => {
         title: "Updated Meeting",
         start: "2026-03-10T14:00:00.000Z",
         end: "2026-03-10T15:00:00.000Z",
-        all_day: false,
+        allDay: false,
         location: null,
         description: null,
         status: null,
@@ -1163,10 +1163,10 @@ describe("CalDavService", () => {
         url: null,
         attendees: [],
         organizer: null,
-        recurrence_rule: null,
-        is_recurring: false,
+        recurrenceRule: null,
+        isRecurring: false,
         created: null,
-        last_modified: null,
+        lastModified: null,
         alarms: [],
         categories: [],
         geo: null,
@@ -1212,7 +1212,7 @@ describe("CalDavService", () => {
             title: "Moved Meeting",
             start: "2026-03-10T14:00:00.000Z",
             end: "2026-03-10T15:00:00.000Z",
-            all_day: false,
+            allDay: false,
             location: null,
             description: null,
             status: null,
@@ -1220,10 +1220,10 @@ describe("CalDavService", () => {
             url: null,
             attendees: [],
             organizer: null,
-            recurrence_rule: null,
-            is_recurring: false,
+            recurrenceRule: null,
+            isRecurring: false,
             created: null,
-            last_modified: null,
+            lastModified: null,
             alarms: [],
             categories: [],
             geo: null,
@@ -1280,7 +1280,7 @@ describe("CalDavService", () => {
             title: "Moved Meeting",
             start: "2026-03-10T14:00:00.000Z",
             end: "2026-03-10T15:00:00.000Z",
-            all_day: false,
+            allDay: false,
             location: null,
             description: null,
             status: null,
@@ -1288,10 +1288,10 @@ describe("CalDavService", () => {
             url: null,
             attendees: [],
             organizer: null,
-            recurrence_rule: null,
-            is_recurring: false,
+            recurrenceRule: null,
+            isRecurring: false,
             created: null,
-            last_modified: null,
+            lastModified: null,
             alarms: [],
             categories: [],
             geo: null,
@@ -1550,7 +1550,7 @@ describe("CalDavService", () => {
           uid: "a",
           start: "2026-03-10T09:00:00.000Z",
           end: "2026-03-10T10:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "confirmed",
           availability: "busy",
         },
@@ -1558,7 +1558,7 @@ describe("CalDavService", () => {
           uid: "b",
           start: "2026-03-10T09:30:00.000Z",
           end: "2026-03-10T11:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "tentative",
           availability: "busy",
         },
@@ -1566,7 +1566,7 @@ describe("CalDavService", () => {
           uid: "c",
           start: "2026-03-10T12:00:00.000Z",
           end: "2026-03-10T13:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "confirmed",
           availability: "free",
         },
@@ -1574,7 +1574,7 @@ describe("CalDavService", () => {
           uid: "d",
           start: "2026-03-10T00:00:00.000Z",
           end: "2026-03-11T00:00:00.000Z",
-          all_day: true,
+          allDay: true,
           status: "confirmed",
           availability: "busy",
         },
@@ -1606,7 +1606,7 @@ describe("CalDavService", () => {
           uid: "d",
           start: "2026-03-10T00:00:00.000Z",
           end: "2026-03-11T00:00:00.000Z",
-          all_day: true,
+          allDay: true,
           status: "confirmed",
           availability: "busy",
         },
@@ -1686,7 +1686,7 @@ describe("CalDavService", () => {
             title: "Morning",
             start: "2026-03-10T09:00:00.000Z",
             end: "2026-03-10T10:00:00.000Z",
-            all_day: false,
+            allDay: false,
             status: "confirmed",
             availability: "busy",
           },
@@ -1697,7 +1697,7 @@ describe("CalDavService", () => {
             title: "Afternoon",
             start: "2026-03-10T14:00:00.000Z",
             end: "2026-03-10T15:00:00.000Z",
-            all_day: false,
+            allDay: false,
             status: "confirmed",
             availability: "busy",
           },
@@ -1728,7 +1728,7 @@ describe("CalDavService", () => {
           title: "All Day Free",
           start: "2026-03-10T08:00:00.000Z",
           end: "2026-03-10T17:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "confirmed",
           availability: "free",
         },
@@ -1759,7 +1759,7 @@ describe("CalDavService", () => {
           title: "Maybe Meeting",
           start: "2026-03-10T09:00:00.000Z",
           end: "2026-03-10T17:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "tentative",
           availability: "busy",
         },
@@ -1790,7 +1790,7 @@ describe("CalDavService", () => {
           title: "Maybe Meeting",
           start: "2026-03-10T09:00:00.000Z",
           end: "2026-03-10T17:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "tentative",
           availability: "busy",
         },
@@ -1822,10 +1822,10 @@ describe("CalDavService", () => {
           title: "Blocked",
           start: "2026-03-10T09:00:00.000Z",
           end: "2026-03-10T17:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "confirmed",
           availability: "busy",
-          calendar_id: "mailbox/Work",
+          calendarId: "mailbox/Work",
         },
       ]);
 
@@ -1855,7 +1855,7 @@ describe("CalDavService", () => {
           title: "Holiday",
           start: "2026-03-10T00:00:00.000Z",
           end: "2026-03-11T00:00:00.000Z",
-          all_day: true,
+          allDay: true,
           status: "confirmed",
           availability: "busy",
         },
@@ -1886,7 +1886,7 @@ describe("CalDavService", () => {
           title: "Holiday",
           start: "2026-03-10T00:00:00.000Z",
           end: "2026-03-11T00:00:00.000Z",
-          all_day: true,
+          allDay: true,
           status: "confirmed",
           availability: "busy",
         },
@@ -1917,7 +1917,7 @@ describe("CalDavService", () => {
           title: "Odd Time Event",
           start: "2026-03-15T14:50:00.000Z",
           end: "2026-03-15T16:00:00.000Z",
-          all_day: false,
+          allDay: false,
           status: "confirmed",
           availability: "busy",
         },
@@ -1998,7 +1998,7 @@ describe("CalDavService", () => {
           title: "Event",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: null,
@@ -2006,10 +2006,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -2037,7 +2037,7 @@ describe("CalDavService", () => {
           title: "Event",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: null,
@@ -2045,10 +2045,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -2078,7 +2078,7 @@ describe("CalDavService", () => {
           title: "Event",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           status: null,
@@ -2086,10 +2086,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -2126,7 +2126,7 @@ describe("CalDavService", () => {
           title: "Team Meeting",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: "Office",
           description: "Weekly standup",
           status: "confirmed",
@@ -2134,10 +2134,10 @@ describe("CalDavService", () => {
           url: null,
           attendees: [],
           organizer: null,
-          recurrence_rule: null,
-          is_recurring: false,
+          recurrenceRule: null,
+          isRecurring: false,
           created: null,
-          last_modified: null,
+          lastModified: null,
           alarms: [],
           categories: [],
           geo: null,
@@ -2151,7 +2151,7 @@ describe("CalDavService", () => {
 
       expect(event.uid).toBe("evt-1");
       expect(event.title).toBe("Team Meeting");
-      expect(event.calendar_id).toBe("mailbox/Work");
+      expect(event.calendarId).toBe("mailbox/Work");
       expect(meta.url).toBe("/cal/evt-1.ics");
       expect(meta.etag).toBe('"e1"');
     });
@@ -2172,10 +2172,10 @@ describe("CalDavService", () => {
           title: "Event",
           start: "2026-03-10T14:00:00.000Z",
           end: "2026-03-10T15:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: null,
           status: null,
-          is_recurring: false,
+          isRecurring: false,
         },
       ]);
 
@@ -2333,8 +2333,8 @@ describe("CalDavService", () => {
         await mockClient();
         const created = await service.createCalendar({ provider: "mailbox", displayName: "Team" });
         expect(created).toEqual({
-          calendar_id: "mailbox/Team",
-          display_name: "Team",
+          calendarId: "mailbox/Team",
+          displayName: "Team",
           url: "https://dav.mailbox.org/caldav/team/",
           provider: "mailbox",
         });
@@ -2362,7 +2362,7 @@ describe("CalDavService", () => {
         const client = await mockClient();
         await expect(
           service.createCalendar({ provider: "mailbox", displayName: "   " }),
-        ).rejects.toThrow(/display_name cannot be empty/);
+        ).rejects.toThrow(/displayName cannot be empty/);
         expect(client.davRequest).not.toHaveBeenCalled();
       });
 
@@ -2421,7 +2421,7 @@ describe("CalDavService", () => {
         await mockClient();
         const single = new CalDavService(SINGLE_ACCOUNT);
         const created = await single.createCalendar({ displayName: "Team" });
-        expect(created.calendar_id).toBe("mailbox/Team");
+        expect(created.calendarId).toBe("mailbox/Team");
       });
 
       it("refuses to guess a provider when several are configured", async () => {
@@ -2473,7 +2473,7 @@ describe("CalDavService", () => {
         ]);
         // Would throw CALENDAR_NOT_FOUND if the stale listing were still cached.
         await expect(service.findCalendarEntry("mailbox/Team")).resolves.toMatchObject({
-          display_name: "Team",
+          displayName: "Team",
         });
       });
     });
@@ -2537,12 +2537,12 @@ describe("CalDavService", () => {
         });
       });
 
-      it("returns the new calendar_id after a rename — the old one stops resolving", async () => {
+      it("returns the new calendarId after a rename — the old one stops resolving", async () => {
         const client = await mockClient();
         client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
         const updated = await service.updateCalendarMeta("mailbox/Work", { displayName: "Team" });
-        expect(updated.calendar_id).toBe("mailbox/Team");
-        expect(updated.display_name).toBe("Team");
+        expect(updated.calendarId).toBe("mailbox/Team");
+        expect(updated.displayName).toBe("Team");
         // The collection itself does not move.
         expect(updated.url).toBe("/caldav/work/");
       });
@@ -2551,7 +2551,7 @@ describe("CalDavService", () => {
         const client = await mockClient();
         client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
         const updated = await service.updateCalendarMeta("mailbox/Work", { color: "#FF0000" });
-        expect(updated.calendar_id).toBe("mailbox/Work");
+        expect(updated.calendarId).toBe("mailbox/Work");
       });
 
       it("rekeys the UID cache onto the new ID rather than stranding it", async () => {
@@ -2581,7 +2581,7 @@ describe("CalDavService", () => {
         const client = await mockClient();
         await expect(
           service.updateCalendarMeta("mailbox/Work", { displayName: "  " }),
-        ).rejects.toThrow(/display_name cannot be empty/);
+        ).rejects.toThrow(/displayName cannot be empty/);
         expect(client.davRequest).not.toHaveBeenCalled();
       });
 
@@ -2598,7 +2598,7 @@ describe("CalDavService", () => {
         client.davRequest.mockResolvedValue([{ status: 200, statusText: "OK" }]);
         await expect(
           service.updateCalendarMeta("mailbox/Work", { displayName: "Work" }),
-        ).resolves.toMatchObject({ calendar_id: "mailbox/Work" });
+        ).resolves.toMatchObject({ calendarId: "mailbox/Work" });
       });
 
       it("catches a refused PROPPATCH that tsdav reports as a 2xx multistatus", async () => {
@@ -2642,8 +2642,8 @@ describe("CalDavService", () => {
         const deleted = await service.deleteCalendar("mailbox/Work");
         expect(client.deleteObject).toHaveBeenCalledWith({ url: "/caldav/work/" });
         expect(deleted).toEqual({
-          calendar_id: "mailbox/Work",
-          display_name: "Work",
+          calendarId: "mailbox/Work",
+          displayName: "Work",
           url: "/caldav/work/",
           provider: "mailbox",
         });
@@ -2715,11 +2715,11 @@ describe("CalDavService", () => {
     });
 
     describe("findCalendarEntry", () => {
-      it("resolves a calendar_id to the entry it names", async () => {
+      it("resolves a calendarId to the entry it names", async () => {
         await mockClient();
         expect(await service.findCalendarEntry("mailbox/Work")).toEqual({
-          calendar_id: "mailbox/Work",
-          display_name: "Work",
+          calendarId: "mailbox/Work",
+          displayName: "Work",
           url: "/caldav/work/",
           provider: "mailbox",
         });

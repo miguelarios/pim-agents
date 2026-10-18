@@ -46,7 +46,7 @@ describe("generateEventIcs — basic round-trip", () => {
       start: "2026-05-01T13:00:00.000Z",
       end: "2026-05-01T13:30:00.000Z",
       uid: "rrule-test@pim-core",
-      recurrence_rule: "FREQ=WEEKLY;BYDAY=FR",
+      recurrenceRule: "FREQ=WEEKLY;BYDAY=FR",
     });
     expect(ics).toContain("RRULE:FREQ=WEEKLY;BYDAY=FR");
   });
@@ -57,7 +57,7 @@ describe("generateEventIcs — basic round-trip", () => {
         title: "Bad",
         start: "2026-05-01T13:00:00.000Z",
         end: "2026-05-01T13:30:00.000Z",
-        recurrence_rule: "BAD-RULE",
+        recurrenceRule: "BAD-RULE",
       }),
     ).toThrow(IcsGenerateError);
   });

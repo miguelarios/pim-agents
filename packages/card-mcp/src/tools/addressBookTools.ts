@@ -12,7 +12,7 @@ const TARGET_BOOK_PROP = {
   description: "Address book URL or display name (e.g. 'Work').",
 } as const;
 
-type ListArgs = { include_counts?: boolean };
+type ListArgs = { includeCounts?: boolean };
 type CreateArgs = { displayName: string; description?: string; slug?: string };
 type RenameArgs = { addressBook: string; displayName?: string; description?: string };
 type DeleteArgs = { addressBook: string };
@@ -32,7 +32,7 @@ export const ADDRESS_BOOK_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
     inputSchema: {
       type: "object",
       properties: {
-        include_counts: {
+        includeCounts: {
           type: "boolean",
           description:
             "Also count the contacts in each book (one extra request per book). Default false.",
@@ -43,7 +43,7 @@ export const ADDRESS_BOOK_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
     handler: async (args: ListArgs, service) => {
       try {
         const addressBooks = await service.listAddressBooks({
-          includeCounts: args.include_counts ?? false,
+          includeCounts: args.includeCounts ?? false,
         });
         return structured({ addressBooks, count: addressBooks.length });
       } catch (err) {

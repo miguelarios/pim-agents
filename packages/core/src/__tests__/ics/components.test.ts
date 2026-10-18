@@ -19,7 +19,7 @@ const masterIcs = generateEventIcs({
   start: "2026-05-04T13:00:00.000Z",
   end: "2026-05-04T13:30:00.000Z",
   uid: "components-test@pim-core",
-  recurrence_rule: "FREQ=WEEKLY;BYDAY=MO",
+  recurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
   organizer: { email: "alice@example.com", name: "Alice Smith" },
   attendees: [{ email: "bob@example.com" }],
 });
@@ -50,7 +50,7 @@ describe("createExceptionComponent — categories and alarms", () => {
     start: "2026-05-04T13:00:00.000Z",
     end: "2026-05-04T13:30:00.000Z",
     uid: "components-extras@pim-core",
-    recurrence_rule: "FREQ=WEEKLY;BYDAY=MO",
+    recurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
     categories: ["Work", "Sync"],
     alarms: [{ type: "relative", trigger: -600 }],
   });
@@ -172,8 +172,8 @@ describe("addExdateToIcs", () => {
       start: "2026-03-01T00:00:00.000Z",
       end: "2026-03-02T00:00:00.000Z",
       uid: "all-day-exdate@pim-core",
-      all_day: true,
-      recurrence_rule: "FREQ=DAILY;COUNT=30",
+      allDay: true,
+      recurrenceRule: "FREQ=DAILY;COUNT=30",
     });
     const once = addExdateToIcs(dailyMaster, "2026-03-15T00:00:00.000Z", true);
     const twice = addExdateToIcs(once, "2026-03-15T00:00:00.000Z", true);
@@ -427,7 +427,7 @@ describe("truncateRecurrenceIcs", () => {
       start: "2026-03-01T00:00:00Z",
       end: "2026-06-01T00:00:00Z",
     });
-    const starts = occurrences.map((e) => e.occurrence_date);
+    const starts = occurrences.map((e) => e.occurrenceDate);
     expect(starts).toContain("2026-03-23T15:00:00.000Z");
     expect(starts).not.toContain("2026-03-30T15:00:00.000Z");
     expect(starts.every((d) => d! < "2026-03-30")).toBe(true);
@@ -454,8 +454,8 @@ describe("truncateRecurrenceIcs", () => {
       start: "2026-03-01T00:00:00.000Z",
       end: "2026-03-02T00:00:00.000Z",
       uid: "trunc-all-day@pim-core",
-      all_day: true,
-      recurrence_rule: "FREQ=DAILY;COUNT=30",
+      allDay: true,
+      recurrenceRule: "FREQ=DAILY;COUNT=30",
     });
     const out = truncateRecurrenceIcs(allDay, "2026-03-10T00:00:00.000Z", true)!;
     expect(out).toContain("UNTIL=20260309");
@@ -521,10 +521,10 @@ describe("splitRecurrenceIcs", () => {
 
   it("together the two series cover exactly the original occurrences", () => {
     const { before, after } = splitRecurrenceIcs(SERIES, CUT, false, "split-1-tail")!;
-    const original = parseIcsEvents(SERIES, RANGE).map((e) => e.occurrence_date);
+    const original = parseIcsEvents(SERIES, RANGE).map((e) => e.occurrenceDate);
     const combined = [
-      ...parseIcsEvents(before, RANGE).map((e) => e.occurrence_date),
-      ...parseIcsEvents(after, RANGE).map((e) => e.occurrence_date),
+      ...parseIcsEvents(before, RANGE).map((e) => e.occurrenceDate),
+      ...parseIcsEvents(after, RANGE).map((e) => e.occurrenceDate),
     ];
     expect(combined).toEqual(original);
     // COUNT=10 minus the four rule instances before 30 Mar (2, 9, 16, 23).
@@ -553,7 +553,7 @@ describe("splitRecurrenceIcs", () => {
       start: "2026-03-02T15:00:00.000Z",
       end: "2026-03-02T15:30:00.000Z",
       uid: "split-zoned@pim-core",
-      recurrence_rule: "FREQ=WEEKLY;UNTIL=20260601T000000Z",
+      recurrenceRule: "FREQ=WEEKLY;UNTIL=20260601T000000Z",
       timezone: "America/Chicago",
     });
     // 09:00 Chicago is 15:00Z in March before DST and 14:00Z after; the
@@ -623,7 +623,7 @@ describe("EXDATE handling (#40)", () => {
       start: "2026-03-02T16:00:00.000Z",
       end: "2026-03-02T16:30:00.000Z",
       uid: "exdate@pim-core",
-      recurrence_rule: "FREQ=DAILY;COUNT=6",
+      recurrenceRule: "FREQ=DAILY;COUNT=6",
       timezone: "America/Chicago",
     }).replace(
       "RRULE:FREQ=DAILY;COUNT=6",
@@ -706,7 +706,7 @@ describe("EXDATE handling (#40)", () => {
       start: "2026-03-02T15:00:00.000Z",
       end: "2026-03-02T15:30:00.000Z",
       uid: "exdate-dst@pim-core",
-      recurrence_rule: "FREQ=DAILY;COUNT=12",
+      recurrenceRule: "FREQ=DAILY;COUNT=12",
       timezone: "America/Chicago",
     }).replace(
       "RRULE:FREQ=DAILY;COUNT=12",
@@ -750,8 +750,8 @@ describe("EXDATE handling (#40)", () => {
       start: "2026-03-02T00:00:00.000Z",
       end: "2026-03-03T00:00:00.000Z",
       uid: "exdate-all-day@pim-core",
-      all_day: true,
-      recurrence_rule: "FREQ=DAILY;COUNT=5",
+      allDay: true,
+      recurrenceRule: "FREQ=DAILY;COUNT=5",
     });
     const excluded = addExdateToIcs(allDay, "2026-03-04T00:00:00.000Z", true);
     const moved = updateMasterEventIcs(excluded, {

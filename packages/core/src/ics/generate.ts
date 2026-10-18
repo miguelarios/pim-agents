@@ -69,7 +69,7 @@ export function generateEventIcs(props: EventCreateProps): string {
   vevent.updatePropertyWithValue("summary", props.title);
   vevent.updatePropertyWithValue("status", "CONFIRMED");
 
-  const allDay = props.all_day === true;
+  const allDay = props.allDay === true;
   const dtstart = toIcalTime(props.start, allDay, props.timezone);
   const dtend = toIcalTime(props.end, allDay, props.timezone);
   const dtstartProp = vevent.updatePropertyWithValue("dtstart", dtstart);
@@ -104,10 +104,10 @@ export function generateEventIcs(props: EventCreateProps): string {
     setCategories(vevent, props.categories);
   }
 
-  if (props.recurrence_rule) {
-    const normalized = normalizeRecurrenceRule(props.recurrence_rule);
+  if (props.recurrenceRule) {
+    const normalized = normalizeRecurrenceRule(props.recurrenceRule);
     if (!normalized) {
-      throw new IcsGenerateError(`Invalid recurrence_rule: ${props.recurrence_rule}`, null);
+      throw new IcsGenerateError(`Invalid recurrenceRule: ${props.recurrenceRule}`, null);
     }
     vevent.addProperty(ICAL.Property.fromString(`RRULE:${normalized}`));
   }

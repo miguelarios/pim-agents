@@ -24,7 +24,7 @@ export { parseIcsJournals } from "./parse-journals.js";
 export { parseIcsFreeBusy } from "./parse-freebusy.js";
 export { generateEventIcs, generateVTimezoneIcs, toIcalTime } from "./generate.js";
 // Exported so callers that build an event response by hand (rather than by
-// re-reading it) can render `trigger_human` exactly as the parser would.
+// re-reading it) can render `triggerHuman` exactly as the parser would.
 export { formatTriggerHuman } from "./_shared.js";
 export {
   createExceptionComponent,

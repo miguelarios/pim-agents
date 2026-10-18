@@ -5,7 +5,7 @@
       "title": "Buy groceries",
       "due": null,
       "completed": null,
-      "percent_complete": null,
+      "percentComplete": null,
       "priority": 5,
       "status": "needs-action",
       "description": null,
@@ -13,10 +13,10 @@
       "attendees": [],
       "organizer": null,
       "alarms": [],
-      "recurrence_rule": null,
+      "recurrenceRule": null,
       "created": null,
-      "last_modified": null,
-      "occurrence_date": null
+      "lastModified": null,
+      "occurrenceDate": null
     }
   ]
 }

@@ -35,7 +35,7 @@ export function parseIcsTodos(icsContent: string): ParsedTodo[] {
         title: typeof rawSummary === "string" ? rawSummary : "",
         due: due instanceof ICAL.Time ? due.toJSDate().toISOString() : null,
         completed: completed instanceof ICAL.Time ? completed.toJSDate().toISOString() : null,
-        percent_complete: typeof percent === "number" ? percent : null,
+        percentComplete: typeof percent === "number" ? percent : null,
         priority: typeof priority === "number" ? priority : null,
         status: typeof status === "string" ? status.toLowerCase() : null,
         description: typeof rawDescription === "string" ? rawDescription : null,
@@ -43,11 +43,11 @@ export function parseIcsTodos(icsContent: string): ParsedTodo[] {
         attendees: parseAttendees(vtodo),
         organizer: parseOrganizer(vtodo),
         alarms: parseAlarms(vtodo),
-        recurrence_rule: rrule ? rrule.toString() : null,
+        recurrenceRule: rrule ? rrule.toString() : null,
         created: created instanceof ICAL.Time ? created.toJSDate().toISOString() : null,
-        last_modified:
+        lastModified:
           lastModified instanceof ICAL.Time ? lastModified.toJSDate().toISOString() : null,
-        occurrence_date: recurId instanceof ICAL.Time ? recurId.toJSDate().toISOString() : null,
+        occurrenceDate: recurId instanceof ICAL.Time ? recurId.toJSDate().toISOString() : null,
       });
     } catch {
       // Skip malformed VTODO, don't fail whole batch.

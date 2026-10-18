@@ -7,12 +7,36 @@
 
   | Was | Now |
   |---|---|
-  | `validation_error` | `VALIDATION_FAILED`, or `INVALID_ICS` when `import_ics` content has no events |
+  | `validation_error` | `VALIDATION_FAILED`, or `INVALID_ICS` when `import_ics` content does not parse or has no events |
   | `not_found` | `CALENDAR_NOT_FOUND` or `EVENT_NOT_FOUND` |
   | `backend_error` | `WRITE_FAILED`, `OPERATION_FAILED`, `CONNECTION_FAILED`, `CONNECTION_TIMEOUT`, `AUTH_FAILED` or `INTERNAL_ERROR` |
 
 - Caller mistakes that reached the server as `backend_error` are now caught first and reported as such: an unparseable or inverted `start`/`end` on `list_events`, `search_events` and `find_free_slots`, an unparseable date on `create_event` / `create_events_batch` (`VALIDATION_FAILED`), and unparseable `import_ics` content (`INVALID_ICS`).
 - **`delete_event` with `span: "this"` no longer corrupts the series on an unparseable `occurrence_date`.** It wrote `EXDATE:NaN-aNNaN…` into the event and reported success; it now fails with `VALIDATION_FAILED` before anything is written, as does `update_event` with `span: "this"`.
+- **Breaking: every tool parameter and output field is camelCase**, like card-mcp and email-mcp (#150). Tool names and enum values are unchanged (`list_events`, `span: "this"`, `access: "read-write"`).
+
+  | Was | Now |
+  |---|---|
+  | `all_day` | `allDay` |
+  | `calendar_id` | `calendarId` |
+  | `can_be_published` | `canBePublished` |
+  | `can_be_shared` | `canBeShared` |
+  | `detail_level` | `detailLevel` |
+  | `display_name` | `displayName` |
+  | `exclude_calendars` | `excludeCalendars` |
+  | `ics_content` | `icsContent` |
+  | `ignore_tentative` | `ignoreTentative` |
+  | `include_all_day_as_busy` | `includeAllDayAsBusy` |
+  | `is_recurring` | `isRecurring` |
+  | `last_modified` | `lastModified` |
+  | `occurrence_date` | `occurrenceDate` |
+  | `preferred_end` | `preferredEnd` |
+  | `preferred_start` | `preferredStart` |
+  | `read_only` | `readOnly` |
+  | `recurrence_rule` | `recurrenceRule` |
+  | `target_calendar` | `targetCalendar` |
+  | `trigger_human` | `triggerHuman` |
+  | `unavailable_providers` | `unavailableProviders` |
 
 ## 0.21.0 (2026-10-18)
 

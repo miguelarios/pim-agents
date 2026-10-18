@@ -59,7 +59,7 @@ describe("parseIcsEvents — week-duration alarm trigger (RFC 5545 §3.3.6)", ()
     expect(result[0].alarms[0]).toEqual({
       type: "relative",
       trigger: -604800,
-      trigger_human: "7 days before",
+      triggerHuman: "7 days before",
     });
   });
 });
@@ -94,8 +94,8 @@ describe("recurrence of a stored object read without a range (#99 review)", () =
     // Being invited to one occurrence of someone else's series stores exactly this.
     // Calling it recurring sent delete_event span=this down the ungated path.
     const [only] = parseIcsEvents(cal(OVERRIDE));
-    expect(only.is_recurring).toBe(false);
-    expect(only.occurrence_date).toBe("2026-10-20T14:00:00.000Z");
+    expect(only.isRecurring).toBe(false);
+    expect(only.occurrenceDate).toBe("2026-10-20T14:00:00.000Z");
   });
 
   it("still calls the same instance recurring when it comes from a ranged (expanded) listing", () => {
@@ -103,13 +103,13 @@ describe("recurrence of a stored object read without a range (#99 review)", () =
       start: "2026-10-19T00:00:00Z",
       end: "2026-10-22T00:00:00Z",
     });
-    expect(only.is_recurring).toBe(true);
+    expect(only.isRecurring).toBe(true);
   });
 
   it("gives an override stored next to its master the master's rule", () => {
     const events = parseIcsEvents(cal(MASTER, OVERRIDE));
     const moved = events.find((e) => e.title === "Moved");
-    expect(moved).toMatchObject({ is_recurring: true, recurrence_rule: "FREQ=DAILY;COUNT=3" });
+    expect(moved).toMatchObject({ isRecurring: true, recurrenceRule: "FREQ=DAILY;COUNT=3" });
   });
 
   it("calls an RDATE-only master recurring with or without a range", () => {
@@ -117,11 +117,11 @@ describe("recurrence of a stored object read without a range (#99 review)", () =
       "RRULE:FREQ=DAILY;COUNT=3",
       "RDATE:20261021T140000Z,20261023T140000Z",
     );
-    expect(parseIcsEvents(cal(rdateOnly))[0].is_recurring).toBe(true);
+    expect(parseIcsEvents(cal(rdateOnly))[0].isRecurring).toBe(true);
     const ranged = parseIcsEvents(cal(rdateOnly), {
       start: "2026-10-18T00:00:00Z",
       end: "2026-10-25T00:00:00Z",
     });
-    expect(ranged.every((e) => e.is_recurring)).toBe(true);
+    expect(ranged.every((e) => e.isRecurring)).toBe(true);
   });
 });

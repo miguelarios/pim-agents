@@ -17,25 +17,25 @@ List all calendars across all configured CalDAV providers. Returns provider-pref
 ```ts
 {
   calendars: Array<{
-    calendar_id: string;     // provider-prefixed, e.g. "mailbox/Work"
-    display_name: string;
+    calendarId: string;     // provider-prefixed, e.g. "mailbox/Work"
+    displayName: string;
     color: string | null;
     description: string | null;
     timezone: string | null; // IANA zone from calendar-timezone(-id), where the provider reports one
     order: number | null;    // Apple calendar-order sort position, where reported
     source: string;          // provider name
-    read_only: boolean;
+    readOnly: boolean;
     url: string;             // CalDAV URL
     ctag?: string;
   }>;
   // Only when some configured provider could not be listed — see below.
-  unavailable_providers?: Array<{ provider: string; error: string }>;
+  unavailableProviders?: Array<{ provider: string; error: string }>;
 }
 ```
 
 **When a provider is unreachable.** With several providers configured, one that cannot be
 reached (a LAN server seen from off that network, say) is skipped rather than failing the
-call: the reachable providers' calendars come back, and `unavailable_providers` names each
+call: the reachable providers' calendars come back, and `unavailableProviders` names each
 skipped one with its error. The field is absent when every provider answered. If no
 provider answers, the call fails as before. The same applies to `list_events`,
 `get_today_events` and `search_events` when they query all calendars. A calendar you name
@@ -55,14 +55,14 @@ Query events in a date range. Recurring events are expanded into individual inst
 | `calendars` | string[] | | Provider-prefixed calendar IDs to query (e.g., `["mailbox/Work", "mailbox/Team"]`). Combined with `calendar` if both are given. If neither is given, queries all calendars. |
 | `start` | string | yes | Start of date range (ISO 8601). |
 | `end` | string | yes | End of date range (ISO 8601). |
-| `detail_level` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
+| `detailLevel` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
 
 **Output**
 
 ```ts
-{ events: EventSummary[] }            // when detail_level = "summary" (default)
-{ events: EventFull[]    }            // when detail_level = "full"
-// plus unavailable_providers?: Array<{ provider, error }> when querying all calendars
+{ events: EventSummary[] }            // when detailLevel = "summary" (default)
+{ events: EventFull[]    }            // when detailLevel = "full"
+// plus unavailableProviders?: Array<{ provider, error }> when querying all calendars
 // skipped an unreachable provider — see list_calendars.
 ```
 
@@ -78,11 +78,11 @@ Get all events for today. Convenience wrapper over `list_events`.
 |-----------|------|----------|-------------|
 | `calendar` | string | | Provider-prefixed calendar ID. If omitted, queries all calendars. |
 | `calendars` | string[] | | Provider-prefixed calendar IDs to query. Combined with `calendar` if both are given. If neither is given, queries all calendars. |
-| `detail_level` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
+| `detailLevel` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
 
 **Output**
 
-Same as `list_events` — `{ events: EventSummary[] | EventFull[] }`. Plus `unavailable_providers` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
+Same as `list_events` — `{ events: EventSummary[] | EventFull[] }`. Plus `unavailableProviders` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
 
 ## search_events
 
@@ -97,15 +97,15 @@ Keyword search across event title, description, and location.
 | `calendars` | string[] | | Provider-prefixed calendar IDs to search. Combined with `calendar` if both are given. If neither is given, searches all calendars. |
 | `start` | string | | Range start (ISO 8601). Defaults to 90 days ago. |
 | `end` | string | | Range end (ISO 8601). Defaults to 90 days ahead. |
-| `detail_level` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
+| `detailLevel` | `"summary"` \| `"full"` | | Response verbosity (default: `summary`). |
 
 **Output**
 
-`{ events: EventSummary[] | EventFull[] }` — matches whose title, location, or (when `full`) description contains the query (case-insensitive substring). Plus `unavailable_providers` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
+`{ events: EventSummary[] | EventFull[] }` — matches whose title, location, or (when `full`) description contains the query (case-insensitive substring). Plus `unavailableProviders` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
 
 ## get_event
 
-Get full details of a single event by calendar and UID. For a recurring event, pass `occurrence_date` to get one occurrence as it will actually happen — including any changes made to just that occurrence — instead of the master series.
+Get full details of a single event by calendar and UID. For a recurring event, pass `occurrenceDate` to get one occurrence as it will actually happen — including any changes made to just that occurrence — instead of the master series.
 
 **Parameters**
 
@@ -113,7 +113,7 @@ Get full details of a single event by calendar and UID. For a recurring event, p
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
 | `uid` | string | yes | Event UID. |
-| `occurrence_date` | string | | ISO 8601 date-time of one occurrence of a recurring event, as returned in `list_events` results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master. `VALIDATION_FAILED` on a non-recurring event; `EVENT_NOT_FOUND` if the series has no occurrence at that instant. |
+| `occurrenceDate` | string | | ISO 8601 date-time of one occurrence of a recurring event, as returned in `list_events` results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master. `VALIDATION_FAILED` on a non-recurring event; `EVENT_NOT_FOUND` if the series has no occurrence at that instant. |
 
 **Output**
 
@@ -133,13 +133,13 @@ Create a new calendar event.
 | `title` | string | yes | Event title. |
 | `start` | string | yes | Start time (ISO 8601). |
 | `end` | string | yes | End time (ISO 8601). |
-| `all_day` | boolean | | All-day event flag (default: false). |
+| `allDay` | boolean | | All-day event flag (default: false). |
 | `location` | string | | Event location. |
 | `description` | string | | Event description. |
 | `attendees` | `{ email: string }[]` | | List of attendee email addresses to invite. Display name is resolved server-side from the invitee's address book. |
 | `alarms` | `{ type: "relative" \| "absolute", trigger: string \| number }[]` | | Event reminders/alarms. `trigger` is seconds offset (negative = before event) for relative, or ISO 8601 datetime for absolute. |
 | `categories` | string[] | | Event categories/tags. |
-| `recurrence_rule` | string | | RFC 5545 RRULE string for a recurring event (e.g., `FREQ=WEEKLY;BYDAY=MO,WE,FR` or `FREQ=MONTHLY;BYDAY=+3FR;COUNT=12`). Accepted with or without the `RRULE:` prefix. `FREQ` is required. |
+| `recurrenceRule` | string | | RFC 5545 RRULE string for a recurring event (e.g., `FREQ=WEEKLY;BYDAY=MO,WE,FR` or `FREQ=MONTHLY;BYDAY=+3FR;COUNT=12`). Accepted with or without the `RRULE:` prefix. `FREQ` is required. |
 | `availability` | `"busy"` \| `"free"` | | Free/busy transparency. `busy` (default) blocks the time (TRANSP:OPAQUE); `free` marks the time as available (TRANSP:TRANSPARENT). |
 
 **Output**
@@ -148,7 +148,7 @@ Create a new calendar event.
 { event: EventFull }
 ```
 
-Errors with `VALIDATION_FAILED` on invalid `recurrence_rule`. ORGANIZER is auto-populated from the calendar account when attendees are present.
+Errors with `VALIDATION_FAILED` on invalid `recurrenceRule`. ORGANIZER is auto-populated from the calendar account when attendees are present.
 
 ## update_event
 
@@ -163,13 +163,13 @@ Update an existing event. Only provided fields are changed.
 | `title` | string | | New event title. |
 | `start` | string | | New start time (ISO 8601). |
 | `end` | string | | New end time (ISO 8601). |
-| `all_day` | boolean | | All-day event flag. |
+| `allDay` | boolean | | All-day event flag. |
 | `location` | string | | New location. |
 | `description` | string | | New description. |
 | `attendees` | `{ email: string }[]` | | New attendee list (replaces existing). Display name is resolved server-side. |
 | `alarms` | `{ type: "relative" \| "absolute", trigger: string \| number }[]` | | Event reminders/alarms. |
 | `categories` | string[] | | Event categories/tags. |
-| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to modify. **Required** when `span` is `"this"` or `"future"` on a recurring event. Get this value from `list_events` results. |
+| `occurrenceDate` | string | | ISO 8601 date of the specific occurrence to modify. **Required** when `span` is `"this"` or `"future"` on a recurring event. Get this value from `list_events` results. |
 | `span` | `"this"` \| `"all"` \| `"future"` | | `this` modifies only this occurrence (default), `future` modifies this occurrence and every later one, `all` modifies the entire series. |
 | `availability` | `"busy"` \| `"free"` | | Free/busy transparency. If omitted, existing value is preserved. |
 
@@ -179,9 +179,9 @@ Update an existing event. Only provided fields are changed.
 { event: EventFull }
 ```
 
-When `span: "this"` is applied to a recurring event, the response reflects the modified occurrence (with `occurrence_date` set and `recurrence_rule: null`); the underlying series gets a RECURRENCE-ID exception.
+When `span: "this"` is applied to a recurring event, the response reflects the modified occurrence (with `occurrenceDate` set and `recurrenceRule: null`); the underlying series gets a RECURRENCE-ID exception.
 
-When `span: "future"` is applied to a recurring event, the series is split at the occurrence: the existing object is ended just before it (`UNTIL` on its `RRULE`, keeping earlier occurrences and their overrides), and a **new calendar object with a new UID** carries the remaining pattern with the changes applied — the response is that new series' event, so use its `uid` for later edits. A `COUNT` is reduced by the occurrences already consumed; `EXDATE`s and `RDATE`s are divided between the two halves; per-occurrence overrides at or after the cut are not carried over, and when there are any the user is asked to confirm first (`confirm_update_event`), since that is the one thing this update can lose. `occurrence_date` must be an occurrence the series actually generates (a rule instance or an `RDATE`), otherwise `VALIDATION_FAILED`: a nearby date would silently become the new series' start and shift every later occurrence. A cut at the first occurrence is the same as `span: "all"`. The new series is written before the old one is cut, so a failure part-way leaves a visible duplicate tail rather than missing occurrences. Giving `start` without `end` keeps the series' duration.
+When `span: "future"` is applied to a recurring event, the series is split at the occurrence: the existing object is ended just before it (`UNTIL` on its `RRULE`, keeping earlier occurrences and their overrides), and a **new calendar object with a new UID** carries the remaining pattern with the changes applied — the response is that new series' event, so use its `uid` for later edits. A `COUNT` is reduced by the occurrences already consumed; `EXDATE`s and `RDATE`s are divided between the two halves; per-occurrence overrides at or after the cut are not carried over, and when there are any the user is asked to confirm first (`confirm_update_event`), since that is the one thing this update can lose. `occurrenceDate` must be an occurrence the series actually generates (a rule instance or an `RDATE`), otherwise `VALIDATION_FAILED`: a nearby date would silently become the new series' start and shift every later occurrence. A cut at the first occurrence is the same as `span: "all"`. The new series is written before the old one is cut, so a failure part-way leaves a visible duplicate tail rather than missing occurrences. Giving `start` without `end` keeps the series' duration.
 
 ## move_event
 
@@ -193,7 +193,7 @@ Move an event to another calendar, equivalent to reassigning its calendar in a C
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID the event is in. |
 | `uid` | string | yes | Event UID to move. |
-| `target_calendar` | string | yes | Destination provider-prefixed calendar ID, on the same account. |
+| `targetCalendar` | string | yes | Destination provider-prefixed calendar ID, on the same account. |
 
 **Output**
 
@@ -213,7 +213,7 @@ Delete a calendar event by UID.
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
 | `uid` | string | yes | Event UID to delete. |
-| `occurrence_date` | string | | ISO 8601 date of the specific occurrence to delete. **Required** when `span` is `"this"` or `"future"` on a recurring event. Get this value from `list_events` results. |
+| `occurrenceDate` | string | | ISO 8601 date of the specific occurrence to delete. **Required** when `span` is `"this"` or `"future"` on a recurring event. Get this value from `list_events` results. |
 | `span` | `"this"` \| `"all"` \| `"future"` | | `this` deletes only this occurrence (adds EXDATE), `future` deletes this occurrence and every later one, `all` (default) deletes the entire series. |
 
 `span: "future"` sets `UNTIL` on the master `RRULE` to just before the occurrence (one second before for a timed series, the previous day for an all-day one), replacing any `COUNT`; overrides, `RDATE`s and `EXDATE`s at or after the cut are removed, earlier ones are kept. When the occurrence is the first one, nothing would remain, so the whole object is deleted instead. `VALIDATION_FAILED` on a non-recurring event.
@@ -233,7 +233,7 @@ Create multiple events at once. Returns created event count.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
-| `events` | object[] | yes | Array of events to create. Each event takes the same fields as `create_event` (minus `calendar`): `title` (required), `start` (required), `end` (required), `all_day`, `location`, `description`, `attendees`, `alarms`, `categories`, `recurrence_rule`, `availability`. |
+| `events` | object[] | yes | Array of events to create. Each event takes the same fields as `create_event` (minus `calendar`): `title` (required), `start` (required), `end` (required), `allDay`, `location`, `description`, `attendees`, `alarms`, `categories`, `recurrenceRule`, `availability`. |
 
 **Output**
 
@@ -241,7 +241,7 @@ Create multiple events at once. Returns created event count.
 { created: number; events: EventFull[] }
 ```
 
-Events are created one at a time, in order. An invalid `recurrence_rule` returns `VALIDATION_FAILED` and stops the batch, but events already created before it stay created.
+Events are created one at a time, in order. An invalid `recurrenceRule` returns `VALIDATION_FAILED` and stops the batch, but events already created before it stay created.
 
 ## import_ics
 
@@ -252,7 +252,7 @@ Import events from iCalendar (.ics) content into a calendar.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
-| `ics_content` | string | yes | Raw iCalendar content string. |
+| `icsContent` | string | yes | Raw iCalendar content string. |
 
 **Output**
 
@@ -279,8 +279,8 @@ When is a calendar busy? Returns the busy periods in a date range — merged, ty
 | `calendars` | string[] | | Provider-prefixed calendar IDs to report on. If omitted, uses all calendars. |
 | `start` | string | yes | Start of range (ISO 8601). |
 | `end` | string | yes | End of range (ISO 8601). Must be after `start`. |
-| `include_all_day_as_busy` | boolean | | Treat all-day events as busy when computing from events (default: false). A server-side answer decides this itself. |
-| `ignore_tentative` | boolean | | If true, tentative periods are left out (default: false). |
+| `includeAllDayAsBusy` | boolean | | Treat all-day events as busy when computing from events (default: false). A server-side answer decides this itself. |
+| `ignoreTentative` | boolean | | If true, tentative periods are left out (default: false). |
 
 **Output**
 
@@ -294,7 +294,7 @@ When is a calendar busy? Returns the busy periods in a date range — merged, ty
     type: "busy" | "tentative" | "unavailable";
   }>;
   count: number;
-  sources: Record<string, "server" | "computed">;   // per calendar_id
+  sources: Record<string, "server" | "computed">;   // per calendarId
 }
 ```
 
@@ -304,7 +304,7 @@ Overlapping periods of the same type are merged; a `busy` and a `tentative` peri
 
 Find available time slots across specified calendars. Returns free windows matching the requested duration.
 
-> **An unreachable provider fails the call** when no `calendars` are given, with an error naming the provider (`Calendar provider "nextcloud": …`), rather than skipping it: a skipped provider's busy time would read as free. Pass `calendars` without that provider's calendars to check the rest. `exclude_calendars` does not avoid the failure, since the provider is listed before exclusions apply.
+> **An unreachable provider fails the call** when no `calendars` are given, with an error naming the provider (`Calendar provider "nextcloud": …`), rather than skipping it: a skipped provider's busy time would read as free. Pass `calendars` without that provider's calendars to check the rest. `excludeCalendars` does not avoid the failure, since the provider is listed before exclusions apply.
 
 **Parameters**
 
@@ -314,11 +314,11 @@ Find available time slots across specified calendars. Returns free windows match
 | `start` | string | yes | Start of search range (ISO 8601). |
 | `end` | string | yes | End of search range (ISO 8601). |
 | `duration` | number | yes | Minimum slot duration in minutes. |
-| `preferred_start` | string | | Preferred earliest time (HH:MM, e.g., `08:00`). |
-| `preferred_end` | string | | Preferred latest time (HH:MM, e.g., `17:00`). |
-| `exclude_calendars` | string[] | | Calendar IDs to exclude from busy time calculation. |
-| `include_all_day_as_busy` | boolean | | Treat all-day events as busy (default: false). |
-| `ignore_tentative` | boolean | | If true, tentative events don't block slots (default: false). |
+| `preferredStart` | string | | Preferred earliest time (HH:MM, e.g., `08:00`). |
+| `preferredEnd` | string | | Preferred latest time (HH:MM, e.g., `17:00`). |
+| `excludeCalendars` | string[] | | Calendar IDs to exclude from busy time calculation. |
+| `includeAllDayAsBusy` | boolean | | Treat all-day events as busy (default: false). |
+| `ignoreTentative` | boolean | | If true, tentative events don't block slots (default: false). |
 
 **Output**
 
@@ -345,13 +345,13 @@ Issues `MKCALENDAR` (RFC 4791 §5.3.1). The request is atomic — name, descript
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `display_name` | string | yes | Display name for the new calendar. Becomes the second half of its `calendar_id`. |
+| `displayName` | string | yes | Display name for the new calendar. Becomes the second half of its `calendarId`. |
 | `provider` | string | | Provider/account to create on — the prefix half of a calendar ID (`mailbox` in `mailbox/Work`). Optional when only one account is configured; required otherwise. Call `list_calendars` to see the configured providers. |
 | `color` | string | | Colour as `#RRGGBB` or `#RRGGBBAA` (e.g. `#3B82F6`). |
 | `description` | string | | Calendar description. |
 | `timezone` | string | | Default timezone as an IANA zone name (e.g. `America/Chicago`). Written as RFC 4791 `calendar-timezone` (a `VTIMEZONE`); not every provider keeps it. |
 | `order` | integer (≥ 0) | | Sort position among the account's calendars, `0` first. Apple `calendar-order`; honoured by Apple, SabreDAV and Radicale-based servers, ignored by others. |
-| `slug` | string | | URL path segment (lowercase letters, digits, hyphens). Derived from `display_name` when omitted. |
+| `slug` | string | | URL path segment (lowercase letters, digits, hyphens). Derived from `displayName` when omitted. |
 
 **Output**
 
@@ -361,14 +361,14 @@ See [Collection results](#collection-results) — `status: "created"`.
 
 Update a calendar's display name, colour, description, default timezone and/or display order via `PROPPATCH`. At least one must be given.
 
-**Renaming changes the calendar's ID.** `calendar_id` is `provider/DisplayName`, so after a rename the old ID stops resolving and the new one is returned in the result. The collection URL does not move. As with `create_calendar`, renaming onto a name already used on that provider is refused.
+**Renaming changes the calendar's ID.** `calendarId` is `provider/DisplayName`, so after a rename the old ID stops resolving and the new one is returned in the result. The collection URL does not move. As with `create_calendar`, renaming onto a name already used on that provider is refused.
 
 **Parameters**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID to update (e.g. `mailbox/Work`). |
-| `display_name` | string | | New display name. Changes the calendar's ID. |
+| `displayName` | string | | New display name. Changes the calendar's ID. |
 | `color` | string | | New colour as `#RRGGBB` or `#RRGGBBAA`. |
 | `description` | string | | New description. |
 | `timezone` | string | | New default timezone as an IANA zone name. Written as RFC 4791 `calendar-timezone` only: RFC 7809's `calendar-timezone-id` is not implemented by SabreDAV-based servers, and a `PROPPATCH` is all-or-nothing, so including it would fail the whole update there. Both forms are read by `list_calendars`. |
@@ -376,7 +376,7 @@ Update a calendar's display name, colour, description, default timezone and/or d
 
 **Output**
 
-See [Collection results](#collection-results) — `status: "updated"`, and `calendar_id` is the **post-rename** ID.
+See [Collection results](#collection-results) — `status: "updated"`, and `calendarId` is the **post-rename** ID.
 
 ## delete_calendar
 
@@ -401,13 +401,13 @@ See [Collection results](#collection-results) — `status: "deleted"`.
 ```ts
 {
   status: "created" | "updated" | "deleted";
-  calendar_id: string;      // post-operation ID — reflects a rename
+  calendarId: string;      // post-operation ID — reflects a rename
   url: string;              // CalDAV collection URL
-  display_name?: string;
+  displayName?: string;
 }
 ```
 
-`calendar_id` is always usable directly by the event tools.
+`calendarId` is always usable directly by the event tools.
 
 ## get_calendar_sharing
 
@@ -431,9 +431,9 @@ Servers speak different sharing dialects. This reads whichever one the server re
 
 ```ts
 {
-  calendar_id: string;
-  can_be_shared: boolean;      // false when the server reports no sharing support
-  can_be_published: boolean;
+  calendarId: string;
+  canBeShared: boolean;      // false when the server reports no sharing support
+  canBePublished: boolean;
   protocol: "calendarserver" | "owncloud" | "webdav" | null;
   shares: Array<{
     email: string | null;      // calendarserver
@@ -490,19 +490,19 @@ Same as `get_calendar_sharing`.
 ```ts
 interface EventSummary {
   uid: string;
-  calendar_id: string;
+  calendarId: string;
   title: string;
   start: string;                    // ISO 8601
   end: string;                      // ISO 8601
-  all_day: boolean;
+  allDay: boolean;
   location: string | null;
   status: string | null;            // CONFIRMED | TENTATIVE | CANCELLED
-  is_recurring: boolean;
-  occurrence_date: string | null;   // ISO 8601 of expanded occurrence (recurring only)
+  isRecurring: boolean;
+  occurrenceDate: string | null;   // ISO 8601 of expanded occurrence (recurring only)
 }
 ```
 
-`EventFull` (returned by `get_event`, `create_event`, `update_event`, `move_event`, `create_events_batch`, `import_ics`, and by the list/search tools when `detail_level: "full"`). The advertised `outputSchema` is the summary shape with every full-only field optional, since one schema covers both detail levels:
+`EventFull` (returned by `get_event`, `create_event`, `update_event`, `move_event`, `create_events_batch`, `import_ics`, and by the list/search tools when `detailLevel: "full"`). The advertised `outputSchema` is the summary shape with every full-only field optional, since one schema covers both detail levels:
 
 ```ts
 interface EventFull extends EventSummary {
@@ -517,13 +517,13 @@ interface EventFull extends EventSummary {
     type: string;                    // CUTYPE: "person" | "room" | "resource" | "group" (or the raw value)
   }>;
   organizer: { name: string | null; email: string } | null;
-  recurrence_rule: string | null;    // RRULE string
+  recurrenceRule: string | null;    // RRULE string
   created: string | null;            // ISO 8601
-  last_modified: string | null;      // ISO 8601
+  lastModified: string | null;      // ISO 8601
   alarms: Array<{
     type: "relative" | "absolute";
     trigger: number | string;        // seconds offset (relative) or ISO 8601 (absolute)
-    trigger_human: string;           // readable form, e.g. "15 minutes before"; ISO 8601 for absolute
+    triggerHuman: string;           // readable form, e.g. "15 minutes before"; ISO 8601 for absolute
   }>;
   categories: string[];
   geo: { latitude: number; longitude: number } | null;
@@ -536,10 +536,10 @@ Errors are returned as a tool result with `isError: true` and a single text bloc
 
 | Code | When |
 |---|---|
-| `VALIDATION_FAILED` | The arguments cannot work: an unparseable or inverted `start`/`end`, an invalid `recurrence_rule`, an unparseable `occurrence_date` or a `span` without the one it needs, an `update_event` `span: "future"` cut that is not an occurrence of the series, a bad colour, time zone or order, an empty `display_name`, an unusable `sharee`, or an ambiguous or unknown `provider` on `create_calendar`. |
+| `VALIDATION_FAILED` | The arguments cannot work: an unparseable or inverted `start`/`end`, an invalid `recurrenceRule`, an unparseable `occurrenceDate` or a `span` without the one it needs, an `update_event` `span: "future"` cut that is not an occurrence of the series, a bad colour, time zone or order, an empty `displayName`, an unusable `sharee`, or an ambiguous or unknown `provider` on `create_calendar`. |
 | `INVALID_ICS` | `import_ics` content does not parse, or contains no events. |
 | `CALENDAR_NOT_FOUND` | No calendar matches `calendar` (or an entry of `calendars`), including a calendar ID with no `/` or an unconfigured provider prefix. |
-| `EVENT_NOT_FOUND` | No event with that `uid` in the calendar, or (`get_event`) the series has no occurrence at `occurrence_date`. |
+| `EVENT_NOT_FOUND` | No event with that `uid` in the calendar, or (`get_event`) the series has no occurrence at `occurrenceDate`. |
 | `WRITE_FAILED` | The server refused to create, update, move or delete an event. Moving between providers also reports this. |
 | `OPERATION_FAILED` | Any other request that failed: calendar create, update or delete (including a name or slug already in use), sharing, counting objects. |
 | `CONNECTION_FAILED`, `CONNECTION_TIMEOUT` | The server could not be reached. Retryable. |

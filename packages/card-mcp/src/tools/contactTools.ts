@@ -137,10 +137,10 @@ const TARGET_BOOK_PROP = {
 type ListArgs = {
   query?: string;
   addressBook?: string;
-  detail_level?: "summary" | "full";
-  include_groups?: boolean;
+  detailLevel?: "summary" | "full";
+  includeGroups?: boolean;
 };
-type GetArgs = { uid: string; addressBook?: string; detail_level?: "summary" | "full" };
+type GetArgs = { uid: string; addressBook?: string; detailLevel?: "summary" | "full" };
 /**
  * The `Contact` fields `update_contact` can write, and the single source of
  * truth for both the arg type and the copy loop in its handler. Deriving the
@@ -214,8 +214,8 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
             "Optional search query to filter contacts by name, email, phone, or organization",
         },
         addressBook: ADDRESS_BOOK_PROP,
-        detail_level: DETAIL_LEVEL_PROP,
-        include_groups: {
+        detailLevel: DETAIL_LEVEL_PROP,
+        includeGroups: {
           type: "boolean",
           description:
             "Include contact groups (kind='group') in the results. Default false: groups are listed by list_groups.",
@@ -226,14 +226,14 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
     handler: async (args: ListArgs, service) => {
       try {
         const books = await booksToSearch(args.addressBook, service);
-        const detailLevel = args.detail_level ?? "summary";
+        const detailLevel = args.detailLevel ?? "summary";
         const query = args.query;
         const all = await readAcrossBooks(books, (url) =>
           query
             ? service.searchContacts(url, query, { detailLevel })
             : service.fetchContacts(url, { detailLevel }),
         );
-        const contacts = args.include_groups ? all : all.filter((c) => !isGroup(c));
+        const contacts = args.includeGroups ? all : all.filter((c) => !isGroup(c));
         return structured({ contacts, count: contacts.length });
       } catch (err) {
         return toolError(err);
@@ -255,7 +255,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
       properties: {
         uid: { type: "string", description: "The unique identifier (UID) of the contact" },
         addressBook: ADDRESS_BOOK_PROP,
-        detail_level: DETAIL_LEVEL_PROP,
+        detailLevel: DETAIL_LEVEL_PROP,
       },
       required: ["uid"],
     },
@@ -263,7 +263,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
     handler: async (args: GetArgs, service) => {
       try {
         const books = await booksToSearch(args.addressBook, service);
-        const detailLevel = args.detail_level ?? "summary";
+        const detailLevel = args.detailLevel ?? "summary";
         const contacts = await readAcrossBooks(books, (url) =>
           service.fetchContacts(url, { detailLevel }),
         );

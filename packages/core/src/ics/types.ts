@@ -3,7 +3,7 @@
 export interface ParsedAlarm {
   type: "relative" | "absolute";
   trigger: number | string;
-  trigger_human: string;
+  triggerHuman: string;
 }
 
 export interface ParsedAttendee {
@@ -29,7 +29,7 @@ export interface ParsedEvent {
   title: string;
   start: string;
   end: string;
-  all_day: boolean;
+  allDay: boolean;
   location: string | null;
   description: string | null;
   status: string | null;
@@ -43,22 +43,22 @@ export interface ParsedEvent {
    * The series' RRULE. Every occurrence expanded from a master reports the
    * master's rule, overrides included. An instance whose master is not in the
    * payload (a server-expanded instance, an orphan override) has no rule to
-   * report, so this is null there even though `is_recurring` is true.
+   * report, so this is null there even though `isRecurring` is true.
    */
-  recurrence_rule: string | null;
+  recurrenceRule: string | null;
   rdates: string[] | null;
   created: string | null;
-  last_modified: string | null;
+  lastModified: string | null;
   /**
    * True for a master with an RRULE or RDATE, and for an occurrence of a series:
    * an instance with a RECURRENCE-ID that came from a ranged listing or sits
    * beside its master. An override stored without its master (an invitation
    * to one occurrence) is false: there is no series here to edit.
    */
-  is_recurring: boolean;
+  isRecurring: boolean;
   alarms: ParsedAlarm[];
   /** The occurrence's RECURRENCE-ID as an ISO instant (UTC midnight when date-only); null for a master or a one-off. */
-  occurrence_date: string | null;
+  occurrenceDate: string | null;
 }
 
 export interface ParsedTodo {
@@ -66,7 +66,7 @@ export interface ParsedTodo {
   title: string;
   due: string | null;
   completed: string | null;
-  percent_complete: number | null;
+  percentComplete: number | null;
   priority: number | null;
   status: string | null;
   description: string | null;
@@ -74,10 +74,10 @@ export interface ParsedTodo {
   attendees: ParsedAttendee[];
   organizer: ParsedOrganizer | null;
   alarms: ParsedAlarm[];
-  recurrence_rule: string | null;
+  recurrenceRule: string | null;
   created: string | null;
-  last_modified: string | null;
-  occurrence_date: string | null;
+  lastModified: string | null;
+  occurrenceDate: string | null;
 }
 
 export interface ParsedJournal {
@@ -88,7 +88,7 @@ export interface ParsedJournal {
   categories: string[];
   status: string | null;
   created: string | null;
-  last_modified: string | null;
+  lastModified: string | null;
 }
 
 /** How a busy period blocks time; `FREE` periods are never reported. */
@@ -109,7 +109,7 @@ export interface EventCreateProps {
   title: string;
   start: string;
   end: string;
-  all_day?: boolean;
+  allDay?: boolean;
   location?: string;
   description?: string;
   attendees?: Array<{ email: string }>;
@@ -117,7 +117,7 @@ export interface EventCreateProps {
   timezone?: string;
   alarms?: Array<{ type: "relative" | "absolute"; trigger: number | string }>;
   categories?: string[];
-  recurrence_rule?: string;
+  recurrenceRule?: string;
   organizer?: { email: string; name?: string | null };
   availability?: "busy" | "free";
 }

@@ -9,7 +9,7 @@ export interface CachedObject {
 
 type CacheShape = Record<string, Record<string, CachedObject>>;
 
-// Persistent UID→URL cache keyed by calendar_id. Used by findCalendarObject
+// Persistent UID→URL cache keyed by calendarId. Used by findCalendarObject
 // so get/update/delete can target a single event instead of scanning the
 // entire calendar. Primary driver: Mailbox.org's CalDAV ignores UID prop-
 // filters on calendar-query REPORTs and returns every object (observed:
@@ -70,7 +70,7 @@ export function deleteCachedObject(calendarId: string, uid: string): void {
 /**
  * Rekeys a calendar's cached entries after a rename.
  *
- * A PROPPATCH changes the display name, and with it the `calendar_id` this
+ * A PROPPATCH changes the display name, and with it the `calendarId` this
  * cache is keyed by — but not the object URLs underneath, so the entries stay
  * valid and only their key is stale. Correctness never depends on this:
  * `findCalendarObject` verifies UIDs after every fetch and falls back to a

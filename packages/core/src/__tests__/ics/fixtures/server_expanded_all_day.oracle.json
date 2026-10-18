@@ -9,7 +9,7 @@
       "title": "Smoke: all-day recur",
       "start": "2026-10-19T00:00:00.000Z",
       "end": "2026-10-20T00:00:00.000Z",
-      "all_day": true,
+      "allDay": true,
       "location": null,
       "description": null,
       "status": null,
@@ -19,20 +19,20 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": null,
+      "recurrenceRule": null,
       "rdates": null,
       "created": null,
-      "last_modified": null,
+      "lastModified": null,
       "alarms": [],
-      "is_recurring": true,
-      "occurrence_date": "2026-10-19T00:00:00.000Z"
+      "isRecurring": true,
+      "occurrenceDate": "2026-10-19T00:00:00.000Z"
     },
     {
       "uid": "smoke-allday-1@example.com",
       "title": "Smoke: all-day recur",
       "start": "2026-10-20T00:00:00.000Z",
       "end": "2026-10-21T00:00:00.000Z",
-      "all_day": true,
+      "allDay": true,
       "location": null,
       "description": null,
       "status": null,
@@ -42,13 +42,13 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": null,
+      "recurrenceRule": null,
       "rdates": null,
       "created": null,
-      "last_modified": null,
+      "lastModified": null,
       "alarms": [],
-      "is_recurring": true,
-      "occurrence_date": "2026-10-20T00:00:00.000Z"
+      "isRecurring": true,
+      "occurrenceDate": "2026-10-20T00:00:00.000Z"
     }
   ]
 }

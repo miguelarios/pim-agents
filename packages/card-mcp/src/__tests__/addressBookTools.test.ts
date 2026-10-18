@@ -82,9 +82,9 @@ describe("list_address_books", () => {
     expect(service.listAddressBooks).toHaveBeenCalledWith({ includeCounts: false });
   });
 
-  it("passes include_counts through as includeCounts", async () => {
+  it("passes includeCounts through as includeCounts", async () => {
     const service = fakeService();
-    await callTool("list_address_books", { include_counts: true }, service);
+    await callTool("list_address_books", { includeCounts: true }, service);
     expect(service.listAddressBooks).toHaveBeenCalledWith({ includeCounts: true });
   });
 });

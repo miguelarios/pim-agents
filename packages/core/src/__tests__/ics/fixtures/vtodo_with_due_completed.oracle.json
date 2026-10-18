@@ -5,7 +5,7 @@
       "title": "File 2025 taxes",
       "due": "2026-04-15T23:59:59.000Z",
       "completed": "2026-04-10T14:30:00.000Z",
-      "percent_complete": 100,
+      "percentComplete": 100,
       "priority": 1,
       "status": "completed",
       "description": "Use the imported 1099s from broker",
@@ -13,10 +13,10 @@
       "attendees": [],
       "organizer": null,
       "alarms": [],
-      "recurrence_rule": null,
+      "recurrenceRule": null,
       "created": null,
-      "last_modified": null,
-      "occurrence_date": null
+      "lastModified": null,
+      "occurrenceDate": null
     }
   ]
 }
