@@ -604,7 +604,12 @@ export class CalDavService {
             source: providerId,
             read_only: !canWrite,
             url: cal.url,
-            ctag: cal.ctag,
+            // tsdav parses a bare-integer <getctag> (Nextcloud) as a number. It
+            // is still a valid change marker, so keep it, as the string it is typed as.
+            // Anything else (xml2js yields {} for an empty <getctag/>) is dropped.
+            ...(typeof cal.ctag === "string" || typeof cal.ctag === "number"
+              ? { ctag: String(cal.ctag) }
+              : {}),
           });
         }
       } catch (error) {
