@@ -14,7 +14,7 @@ import { htmlToMarkdown, sanitizeEmailHtml } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
 import type { EmailFull, ImapService } from "../services/ImapService.js";
-import type { ComposeOptions, SmtpService } from "../services/SmtpService.js";
+import { type ComposeOptions, type SmtpService, ensureMessageId } from "../services/SmtpService.js";
 import {
   attachmentSchema,
   copyResultSchema,
@@ -1458,13 +1458,16 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           // A link, not the bytes: base64 for a payload this size would be a
           // third larger again, and most clients put a tool result straight
           // into the model's context. The bytes stay one resources/read away.
+          // A download the ceiling cut short only knows the part is larger.
+          const howBig = attachment.sizeIsLowerBound
+            ? `larger than the ${formatBytes(limit)} inline limit`
+            : `${formatBytes(attachment.size)}, over the ${formatBytes(limit)} inline limit`;
           return {
             content: [
               {
                 type: "text",
                 text:
-                  `${attachment.filename} is ${formatBytes(attachment.size)}, over the ` +
-                  `${formatBytes(limit)} inline limit, so it was not embedded. Fetch the bytes ` +
+                  `${attachment.filename} is ${howBig}, so it was not embedded. Fetch the bytes ` +
                   `with resources/read on ${uri}, or raise EMAIL_MAX_INLINE_BYTES.`,
               },
               {
@@ -1472,7 +1475,8 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
                 uri,
                 name: attachment.filename,
                 mimeType: attachment.contentType,
-                size: attachment.size,
+                // A size the download cut short is only a lower bound; leave it out.
+                ...(attachment.sizeIsLowerBound ? {} : { size: attachment.size }),
               },
             ],
             structuredContent,
@@ -1613,8 +1617,12 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       return run(async () => {
         const draftFolder = args.folder || (await imap.getSpecialUseFolder("\\Drafts"));
 
-        // Fetch raw source
-        const rawSource = await imap.fetchRawSource(draftFolder, args.uid);
+        // Fetch raw source. A draft another client saved may lack a Message-ID;
+        // add one so the sent copy, the Sent copy and the reported ID agree (#130).
+        const rawSource = ensureMessageId(
+          await imap.fetchRawSource(draftFolder, args.uid),
+          smtp.config.smtp.user,
+        );
 
         // Parse headers for SMTP envelope
         const parsed = await simpleParser(rawSource);

@@ -91,3 +91,13 @@ export interface FreeBusyResult {
   busy: FreeBusyPeriod[];
   sources: Record<string, FreeBusySource>;
 }
+
+export interface UnavailableProvider {
+  provider: string;
+  error: string;
+}
+
+export interface ReachableCalendars {
+  calendars: CalendarInfo[];
+  unavailable: UnavailableProvider[];
+}

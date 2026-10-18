@@ -13,5 +13,8 @@ originals (MIT-licensed) describing the expected parser output for the
 adjacent `.ics` input.
 
 The synthesized fixtures `dst_transition.ics`, `vtodo_basic.ics`,
-`vtodo_with_due_completed.ics`, and `vjournal_basic.ics` are pim-core
-originals (MIT-licensed).
+`vtodo_with_due_completed.ics`, `vjournal_basic.ics`, `server_expanded.ics` and
+`server_expanded_all_day.ics` are pim-core originals (MIT-licensed). The two
+`server_expanded*` fixtures reproduce the shape SabreDAV (Nextcloud) returns for a
+calendar-query with `<expand>`: one VEVENT per instance, each with a RECURRENCE-ID,
+no RRULE, no master, and no VTIMEZONE.

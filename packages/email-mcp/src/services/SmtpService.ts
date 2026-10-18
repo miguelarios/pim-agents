@@ -1,7 +1,32 @@
+import { randomUUID } from "node:crypto";
 import { type EmailConfig, toPimError } from "@miguelarios/pim-core";
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
+
+/**
+ * The Message-ID header of an RFC 5322 message, from its header block only
+ * (up to the first blank line), with folded continuation lines unfolded.
+ */
+function headerMessageId(raw: Buffer): string | undefined {
+  const text = raw.toString("latin1");
+  const end = text.search(/\r?\n\r?\n/);
+  const headers = (end === -1 ? text : text.slice(0, end)).replace(/\r?\n[ \t]+/g, " ");
+  const match = /^message-id:[ \t]*(.+?)[ \t]*$/im.exec(headers);
+  return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * The message as given when it already has a Message-ID, otherwise with one
+ * prepended on the sender's domain. A draft saved by another client may have
+ * none; giving it one before it is both sent and filed in Sent keeps the two
+ * copies, and the ID send_draft reports, the same.
+ */
+export function ensureMessageId(raw: Buffer, senderAddress: string): Buffer {
+  if (headerMessageId(raw)) return raw;
+  const domain = senderAddress.split("@")[1] || "localhost";
+  return Buffer.concat([Buffer.from(`Message-ID: <${randomUUID()}@${domain}>\r\n`, "latin1"), raw]);
+}
 
 export interface SendEmailOptions {
   to: string[];
@@ -184,7 +209,9 @@ export class SmtpService {
       });
 
       return {
-        messageId: info.messageId,
+        // nodemailer does not parse a `raw` message, so info.messageId is an
+        // id it invented and never sent (#130). Report the one on the wire.
+        messageId: headerMessageId(rawSource) ?? info.messageId,
         accepted: info.accepted as string[],
         rejected: info.rejected as string[],
       };

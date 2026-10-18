@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import "../../ics/_tz-init.js";
 import { parseIcsEvents } from "../../ics/parse-events.js";
 
@@ -33,6 +33,29 @@ function loadOracles(): Array<{ name: string; ics: string; oracle: Oracle }> {
 }
 
 describe("parseIcsEvents fixture-runner", () => {
+  for (const { name, ics, oracle } of loadOracles()) {
+    it(name, () => {
+      const result = parseIcsEvents(ics, oracle.range, oracle.timezone);
+      expect(result).toEqual(oracle.expected);
+    });
+  }
+});
+
+// CI runs in UTC, where a host-local conversion (Date#getHours, ICAL.Time#toJSDate
+// on a date-only value) is indistinguishable from a UTC one. Node honours a
+// runtime TZ change, so replay every fixture with the host clock set elsewhere.
+describe("parseIcsEvents fixture-runner, non-UTC host", () => {
+  beforeAll(() => {
+    vi.stubEnv("TZ", "America/Chicago");
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("really runs with a non-UTC host offset", () => {
+    expect(new Date("2026-01-01T00:00:00Z").getTimezoneOffset()).not.toBe(0);
+  });
+
   for (const { name, ics, oracle } of loadOracles()) {
     it(name, () => {
       const result = parseIcsEvents(ics, oracle.range, oracle.timezone);

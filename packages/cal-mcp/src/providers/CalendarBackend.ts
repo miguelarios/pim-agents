@@ -1,3 +1,4 @@
+import type { CalendarSharing, ShareAccess } from "../services/sharing.js";
 /**
  * What the calendar tools need from a backend, as an interface rather than the
  * concrete CalDavService (#42). See
@@ -27,12 +28,18 @@ import type {
   FreeBusyOptions,
   FreeBusyResult,
   FreeSlot,
+  ReachableCalendars,
 } from "./types.js";
 
 export interface CalendarBackend {
   // ── Accounts and calendars ────────────────────────────────────────────────
   /** Every calendar on every configured provider. Throws if any provider cannot be listed. */
   listCalendars(): Promise<CalendarInfo[]>;
+  /**
+   * The calendars of every provider that answers, and which did not (#127).
+   * Throws only when none answers. For listings; availability uses listCalendars.
+   */
+  listReachableCalendars(): Promise<ReachableCalendars>;
   /** The configured provider IDs: the prefix half of every calendar ID. */
   listProviders(): string[];
   /** The account's own address on the calendar's provider (used as ORGANIZER). */
@@ -101,6 +108,17 @@ export interface CalendarBackend {
     },
   ): Promise<CalendarCollection>;
   deleteCalendar(calendarId: string): Promise<CalendarCollection>;
+
+  // ── Sharing (#47) ─────────────────────────────────────────────────────────
+  /** Who a calendar is shared with, at what access, in the provider's own sharee form. */
+  getCalendarSharing(calendarId: string): Promise<CalendarSharing>;
+  /** Grants (`access` given) or revokes (`access` null) a sharee's access, then re-reads. */
+  changeCalendarShare(
+    calendarId: string,
+    sharee: string,
+    access: ShareAccess | null,
+    summary?: string,
+  ): Promise<CalendarSharing>;
 }
 
 /**

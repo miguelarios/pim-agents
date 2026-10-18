@@ -374,8 +374,9 @@ describe("parseVCard with iOS itemN groups", () => {
       "END:VCARD",
     ].join("\r\n");
     const contact = parseVCard(vcard);
-    expect(contact.emails).toEqual([{ type: "work", value: "alice@example.com" }]);
-    expect(contact.phones).toEqual([{ type: "cell", value: "+1-555-0100" }]);
+    // type=pref is not part of the label, but is kept as pref (#144).
+    expect(contact.emails).toEqual([{ type: "work", value: "alice@example.com", pref: true }]);
+    expect(contact.phones).toEqual([{ type: "cell", value: "+1-555-0100", pref: true }]);
   });
 
   it("parses itemN.URL", () => {
@@ -404,7 +405,7 @@ describe("parseVCard X-ABLabel resolution", () => {
       "END:VCARD",
     ].join("\r\n");
     const contact = parseVCard(vcard);
-    expect(contact.urls).toEqual([{ type: "homepage", value: "https://example.com" }]);
+    expect(contact.urls).toEqual([{ type: "homepage", value: "https://example.com", pref: true }]);
   });
 
   it("uses raw X-ABLabel when no wrapper syntax", () => {
@@ -861,5 +862,65 @@ describe("buildVCard contact groups", () => {
     expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:mailto:x@y.z");
     expect(built).toContain("X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:ddd");
     expect(built).not.toContain("urn:uuid:urn:uuid");
+  });
+});
+
+describe("preferred values survive a round trip (#144)", () => {
+  /** Shape of an iOS-synced card (synthetic values), as Nextcloud stores it. */
+  const IOS = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    "UID:pref-1",
+    "FN:Alice Smith",
+    "N:Smith;Alice;;;",
+    'EMAIL;TYPE="INTERNET,HOME,pref":alice@example.com',
+    "EMAIL;TYPE=INTERNET;TYPE=WORK:alice@work.example.com",
+    'TEL;TYPE="CELL,VOICE,pref";VALUE=UNKNOWN:+1-555-0100',
+    "TEL;TYPE=HOME:+1-555-0101",
+    "ADR;TYPE=HOME,PREF:;;123 Main St;Anytown;ST;00000;USA",
+    "URL;TYPE=pref:https://example.com",
+    "END:VCARD",
+  ].join("\r\n");
+
+  it("parses TYPE=pref into pref: true, leaving the label without it", () => {
+    const c = parseVCard(IOS);
+    expect(c.emails).toEqual([
+      { type: "home", value: "alice@example.com", pref: true },
+      { type: "work", value: "alice@work.example.com" },
+    ]);
+    expect(c.phones).toEqual([
+      { type: "cell", value: "+1-555-0100", pref: true },
+      { type: "home", value: "+1-555-0101" },
+    ]);
+    expect(c.addresses[0]).toMatchObject({ type: "home", pref: true });
+    expect(c.urls).toEqual([{ value: "https://example.com", pref: true }]);
+  });
+
+  it("parses vCard 4 PREF=1 as preferred, and a lower rank as not", () => {
+    const c = parseVCard(
+      [
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        "UID:pref-2",
+        "FN:Bob Jones",
+        "EMAIL;TYPE=work;PREF=1:bob@example.com",
+        "EMAIL;TYPE=home;PREF=2:bob@example.org",
+        "END:VCARD",
+      ].join("\r\n"),
+    );
+    expect(c.emails).toEqual([
+      { type: "work", value: "bob@example.com", pref: true },
+      { type: "home", value: "bob@example.org" },
+    ]);
+  });
+
+  it("writes pref back as a TYPE token, so an unrelated edit keeps it", () => {
+    const rebuilt = buildVCard({ ...parseVCard(IOS), title: "Lead" });
+    expect(rebuilt).toContain("EMAIL;TYPE=home,pref:alice@example.com");
+    expect(rebuilt).toContain("EMAIL;TYPE=work:alice@work.example.com");
+    expect(rebuilt).toContain("TEL;TYPE=cell,pref:+1-555-0100");
+    expect(rebuilt).toContain("ADR;TYPE=home,pref:");
+    expect(rebuilt).toContain("URL;TYPE=pref:https://example.com");
+    expect(parseVCard(rebuilt).emails).toEqual(parseVCard(IOS).emails);
   });
 });

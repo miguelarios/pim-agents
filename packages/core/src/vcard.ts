@@ -1,10 +1,18 @@
 export interface TypedValue {
   type?: string;
   value: string;
+  /**
+   * The contact's preferred value of its kind (vCard 3 `TYPE=pref`, vCard 4
+   * `PREF=1`). Apple clients and Nextcloud pick the default email, number or
+   * address by it. Parsing sets it only when true; false and absent are the same.
+   */
+  pref?: boolean;
 }
 
 export interface PostalAddress {
   type?: string;
+  /** As on TypedValue: the preferred address. */
+  pref?: boolean;
   street?: string;
   city?: string;
   state?: string;
@@ -154,6 +162,23 @@ function buildAbLabelMap(lines: string[]): Map<string, string> {
  * - Joins remaining tokens with "/"
  * Returns undefined when no meaningful token remains.
  */
+/**
+ * Whether a property's parameters mark it preferred: a `pref` TYPE token
+ * (vCard 3, any case, quoted or not) or `PREF=1` (vCard 4, where a higher
+ * number is a lower rank and so not "the" preferred one).
+ */
+function isPreferred(paramSection: string, typeValues: string[]): boolean {
+  const tokens = typeValues.flatMap((t) => t.split(/[,;]/));
+  if (tokens.some((tok) => tok.trim().replace(/^"|"$/g, "").toLowerCase() === "pref")) return true;
+  return /;PREF=1(?=[;:]|$)/i.test(paramSection);
+}
+
+/** The TYPE parameter for a label and a preferred flag, or "" when neither applies. */
+function typeParam(type: string | undefined, pref: boolean | undefined): string {
+  const tokens = [type, pref ? "pref" : undefined].filter(Boolean);
+  return tokens.length > 0 ? `;TYPE=${tokens.join(",")}` : "";
+}
+
 export function normalizeType(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   const tokens = raw
@@ -335,15 +360,15 @@ export function buildVCard(contact: Contact): string {
 
   for (const email of contact.emails) {
     const value = escapeVCardValue(email.value);
-    lines.push(email.type ? `EMAIL;TYPE=${email.type}:${value}` : `EMAIL:${value}`);
+    lines.push(`EMAIL${typeParam(email.type, email.pref)}:${value}`);
   }
   for (const phone of contact.phones) {
     const value = escapeVCardValue(phone.value);
-    lines.push(phone.type ? `TEL;TYPE=${phone.type}:${value}` : `TEL:${value}`);
+    lines.push(`TEL${typeParam(phone.type, phone.pref)}:${value}`);
   }
   for (const url of contact.urls) {
     const value = escapeVCardValue(url.value);
-    lines.push(url.type ? `URL;TYPE=${url.type}:${value}` : `URL:${value}`);
+    lines.push(`URL${typeParam(url.type, url.pref)}:${value}`);
   }
   for (const addr of contact.addresses) {
     const parts = [
@@ -355,8 +380,7 @@ export function buildVCard(contact: Contact): string {
       addr.postalCode ?? "",
       addr.country ?? "",
     ].map(escapeVCardValue);
-    const line = addr.type ? `ADR;TYPE=${addr.type}:${parts.join(";")}` : `ADR:${parts.join(";")}`;
-    lines.push(line);
+    lines.push(`ADR${typeParam(addr.type, addr.pref)}:${parts.join(";")}`);
   }
   // Gated on either part, like N: is on its five. Gating on `organization`
   // alone dropped the units whenever it was empty — clearing the company
@@ -494,7 +518,9 @@ function extractTypedAll(
       }
       const labelOverride = group ? abLabels.get(group) : undefined;
       const type = labelOverride ?? normalizeType(typeMatches.join(","));
-      results.push(type ? { type, value } : { value });
+      const entry: TypedValue = type ? { type, value } : { value };
+      if (isPreferred(paramSection, typeMatches)) entry.pref = true;
+      results.push(entry);
     }
   }
   return results;
@@ -528,6 +554,7 @@ function extractAddresses(lines: string[], abLabels: Map<string, string>): Posta
 
     const addr: PostalAddress = {};
     if (type) addr.type = type;
+    if (isPreferred(paramSection, typeMatches)) addr.pref = true;
     if (street) addr.street = street;
     if (city) addr.city = city;
     if (state) addr.state = state;

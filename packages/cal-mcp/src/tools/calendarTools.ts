@@ -24,7 +24,7 @@ import {
   toolError,
 } from "@miguelarios/pim-core/mcp";
 import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
-import type { EventFull, EventSummary } from "../providers/types.js";
+import type { EventFull, EventSummary, UnavailableProvider } from "../providers/types.js";
 import { drainDebugTimings } from "../services/CalDavService.js";
 import {
   batchCreateSchema,
@@ -102,24 +102,38 @@ function selectedCalendars(args: CalendarSelection): string[] {
   return [...new Set(ids)];
 }
 
+/** Spread into a listing result: the providers it skipped, when there were any. */
+function unavailableField(unavailable: UnavailableProvider[]) {
+  return unavailable.length > 0 ? { unavailable_providers: unavailable } : {};
+}
+
+/**
+ * Events in [start, end) on the selected calendars, or on every reachable
+ * calendar when none is selected. An unreachable provider is skipped and
+ * reported only in that second case: a calendar the caller named explicitly
+ * still fails the call if it cannot be read.
+ */
 async function fetchEvents(
   service: IcsCalendarBackend,
   selection: CalendarSelection,
   start: string,
   end: string,
   detailLevel: string,
-): Promise<EventSummary[] | EventFull[]> {
+): Promise<{ events: Array<EventSummary | EventFull>; unavailable: UnavailableProvider[] }> {
   const full = detailLevel === "full";
   let calendarIds = selectedCalendars(selection);
+  let unavailable: UnavailableProvider[] = [];
   if (calendarIds.length === 0) {
-    calendarIds = (await service.listCalendars()).map((cal) => cal.calendar_id);
+    const reachable = await service.listReachableCalendars();
+    calendarIds = reachable.calendars.map((cal) => cal.calendar_id);
+    unavailable = reachable.unavailable;
   }
   const results = await Promise.all(
     calendarIds.map((id) =>
       full ? service.listEventsFull(id, start, end) : service.listEvents(id, start, end),
     ),
   );
-  return results.flat();
+  return { events: results.flat(), unavailable };
 }
 
 /**
@@ -271,7 +285,10 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
     inputSchema: { type: "object", properties: {} },
     outputSchema: calendarListSchema,
     handler: (_args: Record<string, never>, service) =>
-      run(async () => ok({ calendars: await service.listCalendars() })),
+      run(async () => {
+        const { calendars, unavailable } = await service.listReachableCalendars();
+        return ok({ calendars, ...unavailableField(unavailable) });
+      }),
   },
   {
     name: "list_events",
@@ -299,17 +316,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       args: CalendarSelection & { start: string; end: string; detail_level?: DetailLevel },
       service,
     ) =>
-      run(async () =>
-        ok({
-          events: await fetchEvents(
-            service,
-            args,
-            args.start,
-            args.end,
-            args.detail_level ?? "summary",
-          ),
-        }),
-      ),
+      run(async () => {
+        const { events, unavailable } = await fetchEvents(
+          service,
+          args,
+          args.start,
+          args.end,
+          args.detail_level ?? "summary",
+        );
+        return ok({ events, ...unavailableField(unavailable) });
+      }),
   },
   {
     name: "get_today_events",
@@ -334,15 +350,14 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         const { year, month, day } = getLocalDateParts(new Date(), tz);
         const todayStart = zonedTimeToUtc(year, month, day, 0, 0, tz).toISOString();
         const todayEnd = zonedTimeToUtc(year, month, day + 1, 0, 0, tz).toISOString();
-        return ok({
-          events: await fetchEvents(
-            service,
-            args,
-            todayStart,
-            todayEnd,
-            args.detail_level ?? "summary",
-          ),
-        });
+        const { events, unavailable } = await fetchEvents(
+          service,
+          args,
+          todayStart,
+          todayEnd,
+          args.detail_level ?? "summary",
+        );
+        return ok({ events, ...unavailableField(unavailable) });
       }),
   },
   {
@@ -388,7 +403,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         const start = args.start ?? new Date(now.getTime() - 90 * 86400000).toISOString();
         const end = args.end ?? new Date(now.getTime() + 90 * 86400000).toISOString();
 
-        const events = await fetchEvents(service, args, start, end, detailLevel);
+        const { events, unavailable } = await fetchEvents(service, args, start, end, detailLevel);
         const matched = events.filter((e) => {
           const title = e.title?.toLowerCase() ?? "";
           const location = e.location?.toLowerCase() ?? "";
@@ -396,7 +411,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             detailLevel === "full" ? ((e as EventFull).description?.toLowerCase() ?? "") : "";
           return title.includes(query) || location.includes(query) || description.includes(query);
         });
-        return ok({ events: matched });
+        return ok({ events: matched, ...unavailableField(unavailable) });
       }),
   },
   {

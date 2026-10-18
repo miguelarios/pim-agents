@@ -1,5 +1,7 @@
+import * as v from "valibot";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CalDavService, buildCanonicalHref, mergeFreeBusy } from "../services/CalDavService.js";
+import { calendarListSchema } from "../tools/calendarSchemas.js";
 
 // Mock tsdav — same pattern as card-mcp
 vi.mock("tsdav", () => {
@@ -115,6 +117,65 @@ describe("CalDavService", () => {
     service = new CalDavService(TEST_CONFIG);
   });
 
+  describe("listReachableCalendars (#127)", () => {
+    /** Node's fetch hides the socket error in `cause`, as on an unreachable LAN host. */
+    const unreachable = () =>
+      Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("connect EHOSTUNREACH"), { code: "EHOSTUNREACH" }),
+      });
+
+    it("lists the reachable providers and names the one that failed", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      // Accounts log in in config order: mailbox, then nextcloud.
+      __mockClient.login.mockResolvedValueOnce(undefined).mockRejectedValueOnce(unreachable());
+
+      const { calendars, unavailable } = await service.listReachableCalendars();
+
+      expect(calendars.map((c) => c.calendar_id)).toEqual(["mailbox/Work", "mailbox/Personal"]);
+      expect(unavailable).toHaveLength(1);
+      expect(unavailable[0].provider).toBe("nextcloud");
+      expect(unavailable[0].error).toContain("fetch failed");
+    });
+
+    it("reports nothing unavailable when every provider answers", async () => {
+      const { calendars, unavailable } = await service.listReachableCalendars();
+      expect(calendars).toHaveLength(4);
+      expect(unavailable).toEqual([]);
+    });
+
+    it("throws when no provider is reachable, as a single-provider setup always did", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.login.mockRejectedValueOnce(unreachable()).mockRejectedValueOnce(unreachable());
+      await expect(service.listReachableCalendars()).rejects.toThrow("fetch failed");
+    });
+
+    it("retries a provider that failed once on the next listing", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.login.mockResolvedValueOnce(undefined).mockRejectedValueOnce(unreachable());
+      await service.listReachableCalendars();
+      const { unavailable } = await service.listReachableCalendars();
+      expect(unavailable).toEqual([]);
+      // mailbox logs in once and is cached; nextcloud fails, is not cached,
+      // and logs in again on the second listing.
+      expect(__mockClient.login).toHaveBeenCalledTimes(3);
+    });
+
+    it("names the provider without changing the error it was given", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const original = unreachable();
+      __mockClient.login.mockResolvedValueOnce(undefined).mockRejectedValueOnce(original);
+      const err = await service.listCalendars().catch((e) => e);
+      expect(err.message).toMatch(/^Calendar provider "nextcloud": fetch failed/);
+      expect(original.message).toBe("fetch failed");
+    });
+
+    it("listCalendars still fails on any unreachable provider, naming it", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.login.mockResolvedValueOnce(undefined).mockRejectedValueOnce(unreachable());
+      await expect(service.listCalendars()).rejects.toThrow(/nextcloud.*fetch failed/);
+    });
+  });
+
   describe("listCalendars", () => {
     it("fetches calendars from all providers and returns provider-prefixed IDs", async () => {
       const calendars = await service.listCalendars();
@@ -130,6 +191,23 @@ describe("CalDavService", () => {
 
       const ncCals = calendars.filter((c) => c.calendar_id.startsWith("nextcloud/"));
       expect(ncCals).toHaveLength(2);
+    });
+
+    it("coerces a numeric ctag to a string (#94)", async () => {
+      // Nextcloud answers <getctag>1305</getctag>, which tsdav parses as a number.
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchCalendars.mockResolvedValueOnce([
+        { displayName: "Work", url: "/cal/work/", ctag: 1305 },
+        { displayName: "Zero", url: "/cal/zero/", ctag: 0 },
+        { displayName: "None", url: "/cal/none/" },
+        { displayName: "Empty", url: "/dav/empty/", ctag: {} },
+      ]);
+      const calendars = await service.listCalendars();
+      const mailbox = calendars.filter((c) => c.source === "mailbox");
+      expect(mailbox.map((c) => c.ctag)).toEqual(["1305", "0", undefined, undefined]);
+      expect(mailbox[2]).not.toHaveProperty("ctag");
+      expect(mailbox[3]).not.toHaveProperty("ctag");
+      expect(() => v.parse(calendarListSchema, { calendars })).not.toThrow();
     });
 
     it("creates DAVClient with correct config per provider", async () => {
@@ -2683,5 +2761,203 @@ describe("buildCanonicalHref", () => {
   it("returns null for empty inputs", () => {
     expect(buildCanonicalHref("", "evt-1")).toBeNull();
     expect(buildCanonicalHref("/caldav/work/", "")).toBeNull();
+  });
+});
+
+describe("calendar sharing (#47)", () => {
+  const ox = (users: string) => `<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:"><D:response><D:href>/caldav/work/</D:href><D:propstat><D:prop>
+<allowed-sharing-modes xmlns="http://calendarserver.org/ns/"><can-be-shared/></allowed-sharing-modes>
+<invite xmlns="http://calendarserver.org/ns/" xmlns:CS="http://calendarserver.org/ns/">${users}</invite>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`;
+  const BOB = `<CS:user><D:href>mailto:bob@example.com</D:href><CS:invite-noresponse/><CS:access><CS:read/></CS:access></CS:user>`;
+  const reply = (status: number, text = "") =>
+    ({
+      status,
+      statusText: status === 207 ? "Multi-Status" : "X",
+      text: async () => text,
+    }) as unknown as Response;
+
+  let service: CalDavService;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service = new CalDavService(TEST_CONFIG);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads sharing with one Depth: 0 PROPFIND on the calendar's absolute URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply(207, ox(BOB)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const sharing = await service.getCalendarSharing("mailbox/Work");
+
+    expect(sharing.protocol).toBe("calendarserver");
+    expect(sharing.shares).toEqual([
+      { email: "bob@example.com", principal: null, name: null, access: "read", status: "pending" },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://dav.mailbox.org/caldav/work/");
+    expect(init.method).toBe("PROPFIND");
+    expect(init.headers.Depth).toBe("0");
+    expect(init.headers.Authorization).toMatch(/^Basic /);
+    expect(init.body).toContain("<cs:invite/>");
+  });
+
+  it("fails clearly when the server does not answer the PROPFIND with a multistatus", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(403)));
+    await expect(service.getCalendarSharing("mailbox/Work")).rejects.toThrow(/403/);
+  });
+
+  it("shares in the dialect the server read in, then returns the re-read sharing", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(207, ox("")))
+      .mockResolvedValueOnce(reply(200))
+      .mockResolvedValueOnce(reply(207, ox(BOB)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const after = await service.changeCalendarShare(
+      "mailbox/Work",
+      "bob@example.com",
+      "read",
+      "Hi",
+    );
+
+    const post = fetchMock.mock.calls[1][1];
+    expect(post.method).toBe("POST");
+    expect(post.body).toContain("<CS:set><D:href>mailto:bob@example.com</D:href>");
+    expect(post.body).toContain("<CS:summary>Hi</CS:summary><CS:read/>");
+    expect(after.shares.map((s) => s.email)).toEqual(["bob@example.com"]);
+  });
+
+  it("unshares with a CS:remove", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(207, ox(BOB)))
+      .mockResolvedValueOnce(reply(200))
+      .mockResolvedValueOnce(reply(207, ox("")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const after = await service.changeCalendarShare("mailbox/Work", "bob@example.com", null);
+
+    expect(fetchMock.mock.calls[1][1].body).toContain("<CS:remove><D:href>mailto:bob@example.com");
+    expect(after.shares).toEqual([]);
+  });
+
+  it("refuses to write when the server reports no sharing dialect it can write", async () => {
+    const none = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat>
+      <d:prop><d:invite><d:sharee><d:href>/p/1</d:href><d:share-access>read</d:share-access></d:sharee></d:invite></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`;
+    const fetchMock = vi.fn().mockResolvedValue(reply(207, none));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      service.changeCalendarShare("mailbox/Work", "bob@example.com", "read"),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a refused share with its HTTP status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, ox("")))
+        .mockResolvedValueOnce(reply(403)),
+    );
+    await expect(
+      service.changeCalendarShare("mailbox/Work", "bob@example.com", "read"),
+    ).rejects.toThrow(/Sharing "mailbox\/Work" failed: 403/);
+  });
+
+  it("says the share was applied when only the read-back fails, so it is not retried", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, ox("")))
+        .mockResolvedValueOnce(reply(200))
+        .mockResolvedValueOnce(reply(503)),
+    );
+    await expect(
+      service.changeCalendarShare("mailbox/Work", "bob@example.com", "read"),
+    ).rejects.toThrow(/succeeded, but reading .* back failed.*Do not repeat/);
+  });
+
+  describe("on Nextcloud (ownCloud sharing)", () => {
+    const nc = (users: string) => `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:oc="http://owncloud.org/ns">
+<d:response><d:href>/remote.php/dav/calendars/alice/work/</d:href>
+<d:propstat><d:prop><oc:invite>${users}</oc:invite>
+<cs:allowed-sharing-modes><cs:can-be-shared/></cs:allowed-sharing-modes></d:prop>
+<d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+<d:propstat><d:prop><cs:invite/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>
+</d:response></d:multistatus>`;
+    const BOB_RW = `<oc:user><d:href>principal:principals/users/bob</d:href><oc:invite-accepted/><oc:access><oc:read-write/></oc:access></oc:user>`;
+
+    it("shares with an oc:share POST to the principal, read-write as an element", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, nc("")))
+        .mockResolvedValueOnce(reply(200))
+        .mockResolvedValueOnce(reply(207, nc(BOB_RW)));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const after = await service.changeCalendarShare(
+        "nextcloud/Work",
+        "principals/users/bob",
+        "read-write",
+      );
+
+      const post = fetchMock.mock.calls[1][1];
+      expect(post.method).toBe("POST");
+      expect(post.body).toContain('<oc:share xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">');
+      expect(post.body).toContain(
+        "<oc:set><d:href>principal:principals/users/bob</d:href><oc:read-write/></oc:set>",
+      );
+      expect(after.protocol).toBe("owncloud");
+      expect(after.shares).toEqual([
+        {
+          email: null,
+          principal: "principal:principals/users/bob",
+          name: null,
+          access: "read-write",
+          status: "accepted",
+        },
+      ]);
+    });
+
+    it("unshares with an oc:remove", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, nc(BOB_RW)))
+        .mockResolvedValueOnce(reply(200))
+        .mockResolvedValueOnce(reply(207, nc("")));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await service.changeCalendarShare("nextcloud/Work", "principal:principals/users/bob", null);
+
+      expect(fetchMock.mock.calls[1][1].body).toContain(
+        "<oc:remove><d:href>principal:principals/users/bob</d:href></oc:remove>",
+      );
+    });
+
+    it("refuses an address as a validation error on sharee, before any POST", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(reply(207, nc("")));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(
+        service.changeCalendarShare("nextcloud/Work", "bob@example.com", "read"),
+      ).rejects.toMatchObject({
+        code: "VALIDATION_FAILED",
+        field: "sharee",
+        message: expect.stringContaining("principals/users/"),
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1].method).toBe("PROPFIND");
+    });
   });
 });

@@ -39,12 +39,25 @@ export interface ParsedEvent {
   categories: string[];
   geo: ParsedGeo | null;
   organizer: ParsedOrganizer | null;
+  /**
+   * The series' RRULE. Every occurrence expanded from a master reports the
+   * master's rule, overrides included. An instance whose master is not in the
+   * payload (a server-expanded instance, an orphan override) has no rule to
+   * report, so this is null there even though `is_recurring` is true.
+   */
   recurrence_rule: string | null;
   rdates: string[] | null;
   created: string | null;
   last_modified: string | null;
+  /**
+   * True for a master with an RRULE or RDATE, and for an occurrence of a series:
+   * an instance with a RECURRENCE-ID that came from a ranged listing or sits
+   * beside its master. An override stored without its master (an invitation
+   * to one occurrence) is false: there is no series here to edit.
+   */
   is_recurring: boolean;
   alarms: ParsedAlarm[];
+  /** The occurrence's RECURRENCE-ID as an ISO instant (UTC midnight when date-only); null for a master or a one-off. */
   occurrence_date: string | null;
 }
 
