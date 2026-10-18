@@ -16,11 +16,16 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "dave@example.com", "name": "Carol Davis" },
-      "recurrence_rule": null,
-      "rdates": null,
+      "recurrence_rule": "FREQ=MONTHLY;BYDAY=1TU",
+      "rdates": [
+        "2023-11-23T09:00:00.000Z",
+        "2012-11-05T18:00:00.000Z",
+        "2012-11-10T18:00:00.000Z",
+        "2012-11-30T18:00:00.000Z"
+      ],
       "created": null,
       "last_modified": "2012-09-12T17:15:40.000Z",
-      "is_recurring": false,
+      "is_recurring": true,
       "alarms": [
         { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
       ],
@@ -41,11 +46,16 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "dave@example.com", "name": "Carol Davis" },
-      "recurrence_rule": null,
-      "rdates": null,
+      "recurrence_rule": "FREQ=MONTHLY;BYDAY=1TU",
+      "rdates": [
+        "2023-11-23T09:00:00.000Z",
+        "2012-11-05T18:00:00.000Z",
+        "2012-11-10T18:00:00.000Z",
+        "2012-11-30T18:00:00.000Z"
+      ],
       "created": null,
       "last_modified": "2012-09-12T17:18:20.000Z",
-      "is_recurring": false,
+      "is_recurring": true,
       "alarms": [
         { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
       ],
