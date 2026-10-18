@@ -1,7 +1,7 @@
 import { dispatchTool } from "@miguelarios/pim-core/mcp";
 import type { ServerContext } from "@modelcontextprotocol/server";
 import * as v from "valibot";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { calendarListSchema, eventListSchema } from "../tools/calendarSchemas.js";
 import { CALENDAR_TOOLS } from "../tools/calendarTools.js";
 
@@ -1248,6 +1248,9 @@ describe("calendarTools", () => {
 
     beforeEach(() => {
       vi.clearAllMocks();
+      // The new series' DTSTART is written in the configured zone; pin it so
+      // the assertions below do not depend on the host clock.
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
       mockService.getEventWithMeta.mockResolvedValue({
         event: EXISTING,
         meta: { url: "/cal/standup.ics", etag: '"s1"' },
@@ -1264,6 +1267,10 @@ describe("calendarTools", () => {
         }),
       );
       mockService.updateEvent.mockResolvedValue({});
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
     });
 
     it("creates the new series with the changes, then ends the old one before the cut", async () => {
@@ -2007,6 +2014,9 @@ describe("calendarTools", () => {
 
     beforeEach(() => {
       vi.clearAllMocks();
+      // The handler writes DTSTART in the configured zone; pin it so the
+      // assertions below do not depend on the host clock.
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
       mockService.getEventWithMeta.mockResolvedValue({
         event: EXISTING,
         meta: { url: "/cal/fwd-1.ics", etag: '"e1"' },
@@ -2017,6 +2027,10 @@ describe("calendarTools", () => {
         etag: '"e1"',
       });
       mockService.updateEvent.mockResolvedValue({ uid: "fwd-1" });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
     });
 
     it("master branch (span=all) writes every field into the master VEVENT", async () => {

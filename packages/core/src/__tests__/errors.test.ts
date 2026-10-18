@@ -82,4 +82,110 @@ describe("PimError hierarchy", () => {
     const genericErr = toPimError(new Error("something broke"));
     expect(genericErr.code).toBe(ErrorCode.INTERNAL_ERROR);
   });
+
+  describe("Node fetch's 'fetch failed', whose reason is only in cause", () => {
+    const fetchFailed = (code: string) =>
+      Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error(`connect ${code} 192.0.2.1:443`), { code }),
+      });
+
+    it.each([
+      "EHOSTUNREACH",
+      "ENETUNREACH",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "ENOTFOUND",
+      "EAI_AGAIN",
+    ])("classifies %s as a retryable connection failure and names it", (code) => {
+      const err = toPimError(fetchFailed(code));
+      expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.isRetryable).toBe(true);
+      expect(err.message).toBe(`fetch failed (${code})`);
+    });
+
+    it("classifies a socket timeout as CONNECTION_TIMEOUT", () => {
+      const err = toPimError(fetchFailed("UND_ERR_CONNECT_TIMEOUT"));
+      expect(err.code).toBe(ErrorCode.CONNECTION_TIMEOUT);
+      expect(err.message).toBe("fetch failed (UND_ERR_CONNECT_TIMEOUT)");
+    });
+
+    it("finds the code on a nested cause", () => {
+      const inner = Object.assign(new Error("x"), { code: "ECONNREFUSED" });
+      const err = toPimError(
+        Object.assign(new TypeError("fetch failed"), {
+          cause: new Error("outer", { cause: inner }),
+        }),
+      );
+      expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.message).toBe("fetch failed (ECONNREFUSED)");
+    });
+
+    it("leaves a fetch failure with no recognisable cause as an internal error", () => {
+      const err = toPimError(new TypeError("fetch failed"));
+      expect(err.code).toBe(ErrorCode.INTERNAL_ERROR);
+      expect(err.message).toBe("fetch failed");
+    });
+
+    it("reads a code set on the error itself, as imapflow and nodemailer throw it", () => {
+      const err = toPimError(
+        Object.assign(new Error("connect EHOSTUNREACH 192.0.2.1:993"), { code: "EHOSTUNREACH" }),
+      );
+      expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.isRetryable).toBe(true);
+      // The code is already in the message, so it is not repeated.
+      expect(err.message).toBe("connect EHOSTUNREACH 192.0.2.1:993");
+    });
+
+    it("names a code outside the tables without changing the classification", () => {
+      const err = toPimError(
+        Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("self-signed certificate"), {
+            code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+          }),
+        }),
+      );
+      expect(err.code).toBe(ErrorCode.INTERNAL_ERROR);
+      expect(err.message).toBe("fetch failed (DEPTH_ZERO_SELF_SIGNED_CERT)");
+    });
+  });
+});
+
+describe("toPimError on the errors imapflow and nodemailer actually throw (#129 review)", () => {
+  const coded = (message: string, code: string, cause?: Error) =>
+    Object.assign(new Error(message, cause ? { cause } : undefined), { code });
+
+  it("classifies nodemailer's ESOCKET / ECONNECTION / EDNS as retryable connection failures", () => {
+    for (const code of ["ESOCKET", "ECONNECTION", "EDNS"]) {
+      const err = toPimError(coded("connect EHOSTUNREACH 192.0.2.1:465", code));
+      expect(err.code, code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.isRetryable, code).toBe(true);
+      expect(err.message, code).toBe(`connect EHOSTUNREACH 192.0.2.1:465 (${code})`);
+    }
+  });
+
+  it("classifies imapflow's timeouts as CONNECTION_TIMEOUT and its closed connections as failures", () => {
+    for (const code of ["ETIMEOUT", "CONNECT_TIMEOUT", "GREETING_TIMEOUT", "UPGRADE_TIMEOUT"]) {
+      expect(toPimError(coded("Timeout", code)).code, code).toBe(ErrorCode.CONNECTION_TIMEOUT);
+    }
+    for (const code of ["NoConnection", "EConnectionClosed"]) {
+      expect(toPimError(coded("Socket is already closed", code)).code, code).toBe(
+        ErrorCode.CONNECTION_FAILED,
+      );
+    }
+  });
+
+  it("prefers a recognised code deeper in the chain over an unrecognised one on top", () => {
+    const err = toPimError(
+      coded("upstream failed", "E_WRAPPER", coded("connect ECONNREFUSED", "ECONNREFUSED")),
+    );
+    expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+  });
+
+  it("isRetryableError agrees with toPimError", () => {
+    const fetchFailed = Object.assign(new TypeError("fetch failed"), {
+      cause: coded("x", "EHOSTUNREACH"),
+    });
+    expect(isRetryableError(fetchFailed)).toBe(true);
+    expect(isRetryableError(new Error("something broke"))).toBe(false);
+  });
 });
