@@ -23,12 +23,9 @@ import {
   structured,
   toolError,
 } from "@miguelarios/pim-core/mcp";
-import {
-  type CalDavService,
-  type EventFull,
-  type EventSummary,
-  drainDebugTimings,
-} from "../services/CalDavService.js";
+import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
+import type { EventFull, EventSummary } from "../providers/types.js";
+import { drainDebugTimings } from "../services/CalDavService.js";
 import {
   batchCreateSchema,
   calendarListSchema,
@@ -106,7 +103,7 @@ function selectedCalendars(args: CalendarSelection): string[] {
 }
 
 async function fetchEvents(
-  service: CalDavService,
+  service: IcsCalendarBackend,
   selection: CalendarSelection,
   start: string,
   end: string,
@@ -264,7 +261,7 @@ const READ_ONLY = {
   openWorldHint: true,
 } as const;
 
-export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
+export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
   {
     name: "list_calendars",
     title: "List Calendars",

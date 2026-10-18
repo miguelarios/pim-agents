@@ -12,7 +12,7 @@ import {
   structured,
   toolError,
 } from "@miguelarios/pim-core/mcp";
-import type { CalDavService } from "../services/CalDavService.js";
+import type { CalendarBackend } from "../providers/CalendarBackend.js";
 import { calendarWriteResultSchema } from "./calendarSchemas.js";
 
 /**
@@ -85,7 +85,7 @@ type UpdateArgs = {
 };
 type DeleteArgs = { calendar: string };
 
-export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
+export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> = [
   {
     name: "create_calendar",
     title: "Create Calendar",

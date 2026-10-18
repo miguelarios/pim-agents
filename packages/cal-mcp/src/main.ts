@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { loadCalDavConfig } from "@miguelarios/pim-core";
 import { TOOL_LIST_CACHE_HINT, registerTools, serve } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
+import type { IcsCalendarBackend } from "./providers/CalendarBackend.js";
 import { CalDavService } from "./services/CalDavService.js";
 import { CALENDAR_MANAGEMENT_TOOLS } from "./tools/calendarManagementTools.js";
 import { CALENDAR_TOOLS } from "./tools/calendarTools.js";
@@ -14,7 +15,7 @@ const { version } = require("../package.json") as { version: string };
  * stdio and per request over HTTP, so it must not open connections or install
  * process handlers of its own.
  */
-export function createServer(service: CalDavService): McpServer {
+export function createServer(service: IcsCalendarBackend): McpServer {
   const server = new McpServer(
     { name: "@miguelarios/cal-mcp", title: "CalDAV Calendars", version },
     {

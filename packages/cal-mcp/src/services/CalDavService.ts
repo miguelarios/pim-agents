@@ -22,6 +22,19 @@ import {
   parseIcsFreeBusy,
 } from "@miguelarios/pim-core/ics";
 import { DAVClient } from "tsdav";
+import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
+import type {
+  CalendarCollection,
+  CalendarInfo,
+  CalendarObjectMeta,
+  EventFull,
+  EventSummary,
+  FindFreeSlotsOptions,
+  FreeBusyOptions,
+  FreeBusyResult,
+  FreeBusySource,
+  FreeSlot,
+} from "../providers/types.js";
 import {
   deleteCachedObject,
   getCachedObject,
@@ -30,93 +43,18 @@ import {
   setCachedObject,
 } from "./urlCache.js";
 
-export interface CalendarInfo {
-  calendar_id: string;
-  display_name: string;
-  color: string | null;
-  description: string | null;
-  /** IANA zone the calendar defaults to (`calendar-timezone`), when the provider reports one. */
-  timezone: string | null;
-  /** Sort position among the account's calendars (Apple `calendar-order`), when reported. */
-  order: number | null;
-  source: string;
-  read_only: boolean;
-  url: string;
-  ctag?: string;
-}
-
-/** A calendar collection as the management tools name it. */
-export interface CalendarCollection {
-  calendar_id: string;
-  display_name: string;
-  url: string;
-  provider: string;
-}
-
-export interface EventSummary {
-  uid: string;
-  calendar_id: string;
-  title: string;
-  start: string;
-  end: string;
-  all_day: boolean;
-  location: string | null;
-  status: string | null;
-  is_recurring: boolean;
-  occurrence_date: string | null;
-}
-
-export interface EventFull extends EventSummary {
-  description: string | null;
-  url: string | null;
-  availability: string | null;
-  attendees: Array<{
-    name: string | null;
-    email: string;
-    status: string | null;
-    role: string | null;
-    type: string;
-  }>;
-  organizer: { name: string | null; email: string } | null;
-  recurrence_rule: string | null;
-  created: string | null;
-  last_modified: string | null;
-  alarms: ParsedAlarm[];
-  categories: string[];
-  geo: { latitude: number; longitude: number } | null;
-}
-
-export interface FreeSlot {
-  start: string;
-  end: string;
-  duration: number;
-}
-
-export interface FindFreeSlotsOptions {
-  ignoreTentative?: boolean;
-  preferredStart?: string;
-  preferredEnd?: string;
-  excludeCalendars?: string[];
-  includeAllDayAsBusy?: boolean;
-}
-
-export interface CalendarObjectMeta {
-  url: string;
-  etag?: string;
-}
-
-export interface FreeBusyOptions {
-  ignoreTentative?: boolean;
-  includeAllDayAsBusy?: boolean;
-}
-
-/** Where a calendar's busy periods came from. */
-export type FreeBusySource = "server" | "computed";
-
-export interface FreeBusyResult {
-  busy: FreeBusyPeriod[];
-  sources: Record<string, FreeBusySource>;
-}
+export type {
+  CalendarInfo,
+  CalendarCollection,
+  EventSummary,
+  EventFull,
+  FreeSlot,
+  FindFreeSlotsOptions,
+  CalendarObjectMeta,
+  FreeBusyOptions,
+  FreeBusySource,
+  FreeBusyResult,
+} from "../providers/types.js";
 
 /** The little an event contributes to a free/busy answer. */
 interface BusyCandidate {
@@ -341,7 +279,7 @@ export function drainDebugTimings(): Array<{
   return out;
 }
 
-export class CalDavService {
+export class CalDavService implements IcsCalendarBackend {
   private accounts: Map<string, CalDavAccount>;
   private clients: Map<string, DAVClient> = new Map();
   private calendarsCache: Map<string, any[]> = new Map();
