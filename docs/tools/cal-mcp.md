@@ -28,8 +28,20 @@ List all calendars across all configured CalDAV providers. Returns provider-pref
     url: string;             // CalDAV URL
     ctag?: string;
   }>;
+  // Only when some configured provider could not be listed — see below.
+  unavailable_providers?: Array<{ provider: string; error: string }>;
 }
 ```
+
+**When a provider is unreachable.** With several providers configured, one that cannot be
+reached (a LAN server seen from off that network, say) is skipped rather than failing the
+call: the reachable providers' calendars come back, and `unavailable_providers` names each
+skipped one with its error. The field is absent when every provider answered. If no
+provider answers, the call fails as before. The same applies to `list_events`,
+`get_today_events` and `search_events` when they query all calendars. A calendar you name
+explicitly still fails the call if it cannot be read, and `get_free_busy` and
+`find_free_slots` across all calendars fail rather than skip a provider, because skipping
+it would report its busy time as free. Pass `calendars` to check the reachable ones only.
 
 ## list_events
 
@@ -50,6 +62,8 @@ Query events in a date range. Recurring events are expanded into individual inst
 ```ts
 { events: EventSummary[] }            // when detail_level = "summary" (default)
 { events: EventFull[]    }            // when detail_level = "full"
+// plus unavailable_providers?: Array<{ provider, error }> when querying all calendars
+// skipped an unreachable provider — see list_calendars.
 ```
 
 See [Event shapes](#event-shapes) below.

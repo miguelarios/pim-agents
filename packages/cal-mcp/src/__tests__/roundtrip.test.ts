@@ -44,7 +44,7 @@ const RECURRING_ICS = [
 ].join("\r\n");
 
 function fakeService() {
-  return {
+  const service = {
     listCalendars: vi.fn().mockResolvedValue([
       {
         calendar_id: "mailbox/Work",
@@ -101,6 +101,14 @@ function fakeService() {
       url: "https://example.test/work",
       provider: "mailbox",
     }),
+  };
+  // Every provider reachable: the listing tools see what listCalendars returns.
+  return {
+    ...service,
+    listReachableCalendars: vi.fn(async () => ({
+      calendars: await service.listCalendars(),
+      unavailable: [] as Array<{ provider: string; error: string }>,
+    })),
   };
 }
 

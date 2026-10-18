@@ -1,6 +1,8 @@
 import { dispatchTool } from "@miguelarios/pim-core/mcp";
 import type { ServerContext } from "@modelcontextprotocol/server";
+import * as v from "valibot";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { calendarListSchema, eventListSchema } from "../tools/calendarSchemas.js";
 import { CALENDAR_TOOLS } from "../tools/calendarTools.js";
 
 /** A context that answers any confirmation prompt with "yes". */
@@ -19,6 +21,12 @@ const handleCalendarTool = (
 
 const mockService = {
   listCalendars: vi.fn(),
+  // Every provider reachable unless a test says otherwise: delegates to the
+  // listCalendars mock so the tests that stub that keep driving list_events.
+  listReachableCalendars: vi.fn(async () => ({
+    calendars: await mockService.listCalendars(),
+    unavailable: [] as Array<{ provider: string; error: string }>,
+  })),
   listEvents: vi.fn(),
   listEventsFull: vi.fn(),
   getEvent: vi.fn(),
@@ -2072,6 +2080,108 @@ describe("calendarTools", () => {
       expect(override).toContain("SUMMARY:Only title");
       expect(override).toContain("LOCATION:Old room");
       expect(override).toContain("DESCRIPTION:Old notes");
+    });
+  });
+
+  describe("one provider unreachable (#127)", () => {
+    const NEXTCLOUD_DOWN = { provider: "nextcloud", error: "fetch failed" };
+    const MAILBOX_WORK = {
+      calendar_id: "mailbox/Work",
+      display_name: "Work",
+      color: null,
+      description: null,
+      timezone: null,
+      order: null,
+      source: "mailbox",
+      read_only: false,
+      url: "/cal/work/",
+    };
+
+    /** The next listing finds mailbox reachable and nextcloud not. */
+    const nextcloudDown = () =>
+      mockService.listReachableCalendars.mockResolvedValueOnce({
+        calendars: [MAILBOX_WORK],
+        unavailable: [NEXTCLOUD_DOWN],
+      });
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("list_calendars returns the reachable calendars and names the unreachable provider", async () => {
+      nextcloudDown();
+      const result = await handleCalendarTool("list_calendars", {}, mockService as any);
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({
+        calendars: [MAILBOX_WORK],
+        unavailable_providers: [NEXTCLOUD_DOWN],
+      });
+      expect(() => v.parse(calendarListSchema, result.structuredContent)).not.toThrow();
+    });
+
+    it("list_events across all calendars returns what it could read and says what it skipped", async () => {
+      nextcloudDown();
+      mockService.listEvents.mockResolvedValueOnce([]);
+      const result = await handleCalendarTool(
+        "list_events",
+        { start: "2026-03-01", end: "2026-03-31" },
+        mockService as any,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(mockService.listEvents).toHaveBeenCalledWith(
+        "mailbox/Work",
+        "2026-03-01",
+        "2026-03-31",
+      );
+      expect(result.structuredContent.unavailable_providers).toEqual([NEXTCLOUD_DOWN]);
+      expect(() => v.parse(eventListSchema, result.structuredContent)).not.toThrow();
+    });
+
+    it("search_events and get_today_events report the skipped provider too", async () => {
+      nextcloudDown();
+      mockService.listEvents.mockResolvedValue([]);
+      const search = await handleCalendarTool("search_events", { query: "x" }, mockService as any);
+      expect(search.structuredContent.unavailable_providers).toEqual([NEXTCLOUD_DOWN]);
+
+      nextcloudDown();
+      const today = await handleCalendarTool("get_today_events", {}, mockService as any);
+      expect(today.structuredContent.unavailable_providers).toEqual([NEXTCLOUD_DOWN]);
+    });
+
+    it("omits unavailable_providers when every provider answered", async () => {
+      mockService.listReachableCalendars.mockResolvedValueOnce({
+        calendars: [MAILBOX_WORK],
+        unavailable: [],
+      });
+      const result = await handleCalendarTool("list_calendars", {}, mockService as any);
+      expect(result.structuredContent).not.toHaveProperty("unavailable_providers");
+    });
+
+    it("get_free_busy across all calendars fails rather than report the provider's time as free", async () => {
+      mockService.listCalendars.mockRejectedValueOnce(
+        new Error('Calendar provider "nextcloud": fetch failed'),
+      );
+      const result = await handleCalendarTool(
+        "get_free_busy",
+        { start: "2026-03-02T00:00:00Z", end: "2026-03-03T00:00:00Z" },
+        mockService as any,
+      );
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("nextcloud");
+      expect(mockService.getFreeBusy).not.toHaveBeenCalled();
+    });
+
+    it("find_free_slots across all calendars fails the same way", async () => {
+      mockService.listCalendars.mockRejectedValueOnce(
+        new Error('Calendar provider "nextcloud": fetch failed'),
+      );
+      const result = await handleCalendarTool(
+        "find_free_slots",
+        { start: "2026-03-02T00:00:00Z", end: "2026-03-03T00:00:00Z", duration: 30 },
+        mockService as any,
+      );
+      expect(result.isError).toBe(true);
+      expect(mockService.findFreeSlots).not.toHaveBeenCalled();
     });
   });
 });
