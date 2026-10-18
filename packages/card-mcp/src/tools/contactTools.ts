@@ -5,12 +5,14 @@ import {
   ErrorCode,
   ValidationError,
   isGroup,
+  parseVCard,
 } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import {
   type CardDavService,
   type ContactUpdates,
   FULL_NAME_REQUIRED,
+  type LocatedContact,
   duplicateContactError,
 } from "../services/CardDavService.js";
 import {
@@ -493,15 +495,32 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
     },
     outputSchema: writeResultSchema,
     handler: async (args: DeleteArgs, service, ctx) => {
+      // Found before the gate, so the prompt names the person being deleted
+      // rather than echoing a UID back, and an unknown UID fails without
+      // asking to delete nothing. The confirmed retry repeats the lookup.
+      let bookUrl: string;
+      let located: LocatedContact;
+      let label: string;
+      try {
+        const found = await locateBookFor(args.uid, args.addressBook, service);
+        bookUrl = found.bookUrl;
+        label = found.label;
+        located =
+          found.located ??
+          (await service.locateContact(args.uid, [{ url: found.bookUrl, label: found.label }]));
+      } catch (err) {
+        return toolError(err);
+      }
+
+      const name = parseVCard(located.data).fullName;
       const gate = confirmDestructive(
         ctx,
         "confirm_delete_contact",
-        `Permanently delete contact ${args.uid}? This cannot be undone.`,
+        `Permanently delete contact ${name ? `"${name}" (${args.uid})` : args.uid} from address book "${label}"? This cannot be undone.`,
       );
       if (gate.status === "interrupt") return gate.result;
 
       try {
-        const { bookUrl, located } = await locateBookFor(args.uid, args.addressBook, service);
         await service.deleteContact(bookUrl, args.uid, { located });
         return structured({ status: "deleted" as const, uid: args.uid });
       } catch (err) {

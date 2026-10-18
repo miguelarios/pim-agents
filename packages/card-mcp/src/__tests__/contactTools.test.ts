@@ -395,9 +395,50 @@ describe("update_contact field forwarding", () => {
 });
 
 describe("delete_contact confirmation gate", () => {
+  const CARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u1\r\nFN:Alice Smith\r\nEND:VCARD";
   const fakeService = () => ({
     listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "x" }]),
+    findAddressBook: vi.fn().mockResolvedValue("b"),
+    locateContact: vi
+      .fn()
+      .mockResolvedValue({ bookUrl: "b", url: "b/u1.vcf", etag: '"e"', data: CARD }),
     deleteContact: vi.fn().mockResolvedValue(undefined),
+  });
+
+  it("names the contact and its book in the prompt, not just the UID", async () => {
+    const service = fakeService();
+    const res = await callTool("delete_contact", { uid: "u1", addressBook: "PIM-Test" }, service);
+    const message = res.inputRequests.confirm_delete_contact.params.message as string;
+    expect(message).toContain('"Alice Smith"');
+    expect(message).toContain("u1");
+    expect(message).toContain('"PIM-Test"');
+    expect(message).toContain("cannot be undone");
+  });
+
+  it("reports an unknown UID without asking to delete it", async () => {
+    const service = fakeService();
+    service.locateContact.mockRejectedValue(
+      Object.assign(new Error("Contact nope not found"), { code: "CONTACT_NOT_FOUND" }),
+    );
+    const res = await callTool("delete_contact", { uid: "nope", addressBook: "PIM-Test" }, service);
+    expect(res.inputRequests).toBeUndefined();
+    expect(res.isError).toBe(true);
+    expect(service.deleteContact).not.toHaveBeenCalled();
+  });
+
+  it("passes the located card on, so the delete does not look it up again", async () => {
+    const service = fakeService();
+    const ctx = {
+      mcpReq: {
+        inputResponses: {
+          confirm_delete_contact: { action: "accept", content: { confirm: true } },
+        },
+      },
+    } as unknown as ServerContext;
+    await callTool("delete_contact", { uid: "u1", addressBook: "PIM-Test" }, service, ctx);
+    expect(service.deleteContact).toHaveBeenCalledWith("b", "u1", {
+      located: expect.objectContaining({ url: "b/u1.vcf", etag: '"e"' }),
+    });
   });
 
   it("asks for confirmation before deleting anything", async () => {
