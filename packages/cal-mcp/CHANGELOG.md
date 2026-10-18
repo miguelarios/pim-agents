@@ -12,7 +12,7 @@
   | `backend_error` | `WRITE_FAILED`, `OPERATION_FAILED`, `CONNECTION_FAILED`, `CONNECTION_TIMEOUT`, `AUTH_FAILED` or `INTERNAL_ERROR` |
 
 - Caller mistakes that reached the server as `backend_error` are now caught first and reported as such: an unparseable or inverted `start`/`end` on `list_events`, `search_events` and `find_free_slots`, an unparseable date on `create_event` / `create_events_batch` (`VALIDATION_FAILED`), and unparseable `import_ics` content (`INVALID_ICS`).
-- **`delete_event` with `span: "this"` no longer corrupts the series on an unparseable `occurrence_date`.** It wrote `EXDATE:NaN-aNNaN…` into the event and reported success; it now fails with `VALIDATION_FAILED` before anything is written, as does `update_event` with `span: "this"`.
+- **`delete_event` with `span: "this"` no longer corrupts the series on an unparseable `occurrenceDate`.** It wrote `EXDATE:NaN-aNNaN…` into the event and reported success; it now fails with `VALIDATION_FAILED` before anything is written, as does `update_event` with `span: "this"`.
 - **Breaking: every tool parameter and output field is camelCase**, like card-mcp and email-mcp (#150). Tool names and enum values are unchanged (`list_events`, `span: "this"`, `access: "read-write"`).
 
   | Was | Now |

@@ -53,6 +53,13 @@ confirmation codes, and the confirmation gate itself lives in core), so a core
 change that alters a server-visible code, result or gate is a breaking change
 for those servers too, and needs their major bump as well as core's.
 
+## Before tagging 1.0
+
+- pim-core reaches 1.0 in the same release wave as the servers, so no stable
+  server depends on a `0.x` core. cal-mcp passes core's `/ics` types through
+  as they are, so its pim-core range must move with every core release that
+  renames them.
+
 ## Allowed in a minor or patch
 
 - **Minor:** adding a tool; adding an optional input parameter; adding an output
