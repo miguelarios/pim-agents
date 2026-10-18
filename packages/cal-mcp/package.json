@@ -9,6 +9,9 @@
     "ical"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "author": "Miguel Rios",
   "repository": {
     "type": "git",

@@ -23,7 +23,7 @@
     "email-mcp": "dist/bin/cli.js"
   },
   "engines": {
-    "node": ">=20.18.1"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "build": "tsc && chmod +x dist/bin/cli.js",
