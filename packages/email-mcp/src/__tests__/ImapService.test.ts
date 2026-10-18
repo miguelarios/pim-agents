@@ -2072,13 +2072,13 @@ describe("ImapService", () => {
     });
 
     it("leaves an attachment whose BODYSTRUCTURE size is over the ceiling on the server", async () => {
-      // 8000 base64 bytes in 78-byte lines decode to about 5846 bytes.
+      // 8000 base64 bytes decode to at least floor(8000 * 8 / 11) - 2 = 5816 bytes.
       mockFetchOne.mockResolvedValueOnce(structureWith({ size: 8000, encoding: "base64" }));
       mockDownload.mockClear();
 
       const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
 
-      expect(result).toMatchObject({ oversized: true, size: 5846 });
+      expect(result).toMatchObject({ oversized: true, size: 5816 });
       expect(result.content).toBeUndefined();
       expect(mockDownload).not.toHaveBeenCalled();
     });
@@ -2108,7 +2108,30 @@ describe("ImapService", () => {
 
       const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
 
-      expect(result).toMatchObject({ oversized: true, size: 1025 });
+      expect(result).toMatchObject({ oversized: true, size: 1025, sizeIsLowerBound: true });
+    });
+
+    it("does not pre-refuse a quoted-printable part whose encoded size is over but decoded fits", async () => {
+      // QP inflates non-ASCII text up to 3x, so its encoded size is no lower bound.
+      mockFetchOne.mockResolvedValueOnce(
+        structureWith({ size: 3000, encoding: "quoted-printable" }),
+      );
+      const { stream } = countingStream(Buffer.from("é".repeat(400))); // 800 decoded bytes
+      mockDownload.mockResolvedValueOnce({
+        meta: { contentType: "text/calendar", filename: "invite.ics", expectedSize: MESSAGE_SIZE },
+        content: stream,
+      });
+
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
+
+      expect(result).toMatchObject({ oversized: false, size: 800 });
+      expect(mockDownload).toHaveBeenCalled();
+    });
+
+    it("reports an exact size, not a lower bound, when the pre-check refuses", async () => {
+      mockFetchOne.mockResolvedValueOnce(structureWith({ size: 8000, encoding: "base64" }));
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
+      expect(result.oversized && result.sizeIsLowerBound).toBeFalsy();
     });
   });
 

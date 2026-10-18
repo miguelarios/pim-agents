@@ -108,14 +108,19 @@ interface BodyPartNode {
 }
 
 /**
- * About how many bytes a part decodes to, from its encoded BODYSTRUCTURE size.
- * Base64 carries 57 bytes per 78-byte line (76 characters plus CRLF), so this
- * slightly under-estimates rather than refuse an attachment that would fit.
- * The download limiter catches anything it under-estimates.
+ * A lower bound on a base64 part's decoded size, from its encoded
+ * BODYSTRUCTURE size, or undefined when there is no safe bound. 64-character
+ * lines plus CRLF carry 48 bytes per 66 (the densest common wrapping carries
+ * 57 per 78), so 8/11 never overstates a part wrapped at 64 or more, minus at
+ * most two bytes of padding. It is only used to refuse without downloading,
+ * so it must never overstate: quoted-printable and 7bit/8bit are left to the
+ * download limiter, since their encoded size can be up to three times the
+ * decoded one.
  */
-function decodedSizeEstimate(node: BodyPartNode): number | undefined {
+function decodedSizeLowerBound(node: BodyPartNode): number | undefined {
   if (typeof node.size !== "number") return undefined;
-  return node.encoding?.toLowerCase() === "base64" ? Math.floor((node.size * 57) / 78) : node.size;
+  if (node.encoding?.toLowerCase() !== "base64") return undefined;
+  return Math.max(0, Math.floor((node.size * 8) / 11) - 2);
 }
 
 function partFilename(node: BodyPartNode): string | undefined {
@@ -136,6 +141,8 @@ export interface AttachmentBytes extends AttachmentMeta {
 export interface AttachmentTooLarge extends AttachmentMeta {
   oversized: true;
   content?: undefined;
+  /** Set when the download was cut at the ceiling, so `size` is a lower bound. */
+  sizeIsLowerBound?: true;
 }
 
 export type AttachmentDownload = AttachmentBytes | AttachmentTooLarge;
@@ -780,7 +787,7 @@ export class ImapService {
         // which is one cheap FETCH and only worth it when there is a ceiling.
         if (maxBytes !== undefined) {
           const node = await this.findBodyPart(client, uid, partId);
-          const estimate = node ? decodedSizeEstimate(node) : undefined;
+          const estimate = node ? decodedSizeLowerBound(node) : undefined;
           if (node && estimate !== undefined && estimate > maxBytes) {
             // Over the ceiling before a byte of the body is read, which is
             // precisely the transfer this ceiling exists to avoid.
@@ -793,9 +800,10 @@ export class ImapService {
           }
         }
 
-        // With a ceiling, imapflow's own limiter stops fetching once one byte
-        // past it has arrived, so even a size the server under-reported (or
-        // withheld) costs at most maxBytes + 1 bytes of transfer.
+        // With a ceiling, imapflow's own limiter (on the decoded stream) stops
+        // fetching once one byte past it has arrived. Transfer can overshoot by
+        // up to one FETCH chunk, but the buffer never holds more than
+        // maxBytes + 1 bytes, and a part with no usable size is still refused.
         const { meta, content } = await client.download(
           String(uid),
           partId,
@@ -822,7 +830,8 @@ export class ImapService {
         const size = buffer.length;
 
         if (maxBytes !== undefined && size > maxBytes) {
-          return { ...attachment, size, oversized: true };
+          // The limiter cut the stream, so the true size is only known to be larger.
+          return { ...attachment, size, oversized: true, sizeIsLowerBound: true };
         }
         return { ...attachment, size, oversized: false, content: buffer };
       } finally {
