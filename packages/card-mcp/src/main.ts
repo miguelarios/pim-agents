@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { loadCardDavConfig } from "@miguelarios/pim-core";
 import { TOOL_LIST_CACHE_HINT, registerTools, serve } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
+import type { ContactsBackend } from "./providers/ContactsBackend.js";
 import { CardDavService } from "./services/CardDavService.js";
 import { CARD_TOOLS } from "./tools/index.js";
 
@@ -13,7 +14,7 @@ const { version } = require("../package.json") as { version: string };
  * stdio and per request over HTTP, so it must not open connections or install
  * process handlers of its own.
  */
-export function createServer(service: CardDavService): McpServer {
+export function createServer(service: ContactsBackend): McpServer {
   const server = new McpServer(
     { name: "@miguelarios/card-mcp", title: "CardDAV Contacts", version },
     {

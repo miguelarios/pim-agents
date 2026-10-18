@@ -3,7 +3,8 @@
  * covers, where a write on a known UID goes, and where a create lands.
  */
 import { type Contact, ContactError, ErrorCode } from "@miguelarios/pim-core";
-import type { AddressBook, CardDavService, LocatedContact } from "../services/CardDavService.js";
+import type { ContactsBackend } from "../providers/ContactsBackend.js";
+import type { AddressBook, LocatedContact } from "../providers/types.js";
 
 /**
  * Resolves the omitted-book default for `create_contact`, the one tool that
@@ -12,7 +13,7 @@ import type { AddressBook, CardDavService, LocatedContact } from "../services/Ca
  */
 export async function resolveAddressBook(
   explicit: string | undefined,
-  service: CardDavService,
+  service: ContactsBackend,
 ): Promise<string> {
   if (explicit) return service.findAddressBook(explicit);
   const books = await service.listAddressBooks();
@@ -50,7 +51,7 @@ export interface BookRef {
  */
 export async function booksToSearch(
   explicit: string | undefined,
-  service: CardDavService,
+  service: ContactsBackend,
 ): Promise<BookRef[]> {
   if (explicit) return [{ url: await service.findAddressBook(explicit), label: explicit }];
   const books = await service.listAddressBooks();
@@ -85,7 +86,7 @@ export async function readAcrossBooks(
 export async function locateBookFor(
   uid: string,
   explicit: string | undefined,
-  service: CardDavService,
+  service: ContactsBackend,
 ): Promise<{ bookUrl: string; located?: LocatedContact; label: string }> {
   if (explicit) return { bookUrl: await service.findAddressBook(explicit), label: explicit };
   const books = await service.listAddressBooks();

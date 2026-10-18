@@ -13,15 +13,32 @@ import {
   toPimError,
 } from "@miguelarios/pim-core";
 import { DAVClient } from "tsdav";
+import type { ContactsBackend } from "../providers/ContactsBackend.js";
+import type {
+  AddressBook,
+  BookEntry,
+  BookToSearch,
+  ContactTransferFailure,
+  ContactTransferOutcome,
+  ContactTransferred,
+  ContactUpdates,
+  DetailLevel,
+  LocatedContact,
+  ResolveContactResult,
+} from "../providers/types.js";
 
-export interface AddressBook {
-  displayName: string;
-  url: string;
-  ctag?: string;
-  description?: string;
-  syncToken?: string;
-  contactCount?: number;
-}
+export type {
+  AddressBook,
+  DetailLevel,
+  ContactTransferred,
+  ContactTransferFailure,
+  ContactTransferOutcome,
+  LocatedContact,
+  BookEntry,
+  BookToSearch,
+  ResolveContactResult,
+  ContactUpdates,
+} from "../providers/types.js";
 
 /** Whether an address-book reference is a URL rather than a display name. */
 function isUrlRef(ref: string): boolean {
@@ -56,54 +73,6 @@ const BOOK_DAV_CHECK = {
     new ContactError(`Address book not found: ${url}`, ErrorCode.ADDRESSBOOK_NOT_FOUND),
   failed: (message: string) => new ContactError(message, ErrorCode.OPERATION_FAILED),
 };
-
-export type DetailLevel = "summary" | "full";
-
-/** One contact that reached the target book. `newUid` is set for copies only. */
-export interface ContactTransferred {
-  uid: string;
-  newUid?: string;
-}
-
-export interface ContactTransferFailure {
-  uid: string;
-  message: string;
-}
-
-/**
- * A batch transfer reports per contact rather than failing whole: one unknown
- * UID should not strand the contacts either side of it in the list.
- */
-export interface ContactTransferOutcome {
-  transferred: ContactTransferred[];
-  failed: ContactTransferFailure[];
-}
-
-/**
- * A contact found by {@link CardDavService.locateContact}: the book it lives
- * in plus the vCard's own URL, etag and data. Passing it back to
- * `updateContact`/`deleteContact` as `located` lets the write reuse the read
- * that found it instead of fetching the book again.
- */
-export interface LocatedContact {
-  bookUrl: string;
-  url: string;
-  etag?: string;
-  /** Always present: a hit without a body is not a hit. */
-  data: string;
-}
-
-/** One card of a book read by {@link CardDavService.fetchBook}: parsed, plus where it lives. */
-export interface BookEntry {
-  contact: Contact;
-  located: LocatedContact;
-}
-
-/** A book to search, with the label it is reported under in messages. */
-export interface BookToSearch {
-  url: string;
-  label: string;
-}
 
 /**
  * The one error every path reports a UID duplicated across books with, so
@@ -140,31 +109,11 @@ function groupTransferRefusal(uid: string): string {
   return `Contact ${uid} is a group; groups cannot be moved or copied because their members must stay in the same address book`;
 }
 
-export type ResolveContactResult =
-  | { status: "resolved"; fullName: string; email: string }
-  | {
-      status: "ambiguous";
-      candidates: Array<{ fullName: string; email: string; uid: string; addressBook?: string }>;
-    }
-  | { status: "not_found"; message: string };
-
 function applyDetailLevel(contact: Contact, level: DetailLevel): Contact {
   const { photo: _photo, ...rest } = contact;
   if (level === "full") return rest;
   return { ...rest, otherProperties: [] };
 }
-
-/**
- * Fields `updateContact` can write. Three states per field, matching what a
- * merge update has to distinguish: absent (`undefined`) keeps the stored
- * value, `null` clears it, anything else replaces it. Without the `null`
- * state a stale phone or note could never be removed short of deleting and
- * recreating the contact, because "not supplied" and "empty" would collapse
- * into the same thing.
- */
-export type ContactUpdates = {
-  [K in keyof Omit<Contact, "uid" | "otherProperties" | "photo" | "fullName">]?: Contact[K] | null;
-} & { fullName?: string };
 
 /** Fields that are arrays on `Contact`, so clearing them means `[]` rather than `undefined`. */
 const REQUIRED_ARRAY_FIELDS = ["emails", "phones", "addresses", "urls"] as const;
@@ -300,7 +249,7 @@ export interface CardDavServiceOptions {
   serverSearch?: boolean;
 }
 
-export class CardDavService {
+export class CardDavService implements ContactsBackend {
   private client: DAVClient | null = null;
   private config: CardDavConfig;
   /**

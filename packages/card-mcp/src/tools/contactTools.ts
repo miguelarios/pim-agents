@@ -8,13 +8,9 @@ import {
   parseVCard,
 } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
-import {
-  type CardDavService,
-  type ContactUpdates,
-  FULL_NAME_REQUIRED,
-  type LocatedContact,
-  duplicateContactError,
-} from "../services/CardDavService.js";
+import type { ContactsBackend } from "../providers/ContactsBackend.js";
+import type { ContactUpdates, LocatedContact } from "../providers/types.js";
+import { FULL_NAME_REQUIRED, duplicateContactError } from "../services/CardDavService.js";
 import {
   ADDRESS_BOOK_PROP,
   booksToSearch,
@@ -197,7 +193,7 @@ function copyDefined<T, K extends keyof T>(target: Partial<T>, source: Partial<T
   if (value !== undefined) target[key] = value;
 }
 
-export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
+export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
   {
     name: "list_contacts",
     title: "List Contacts",

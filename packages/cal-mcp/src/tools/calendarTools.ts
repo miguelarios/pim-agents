@@ -23,13 +23,9 @@ import {
   structured,
   toolError,
 } from "@miguelarios/pim-core/mcp";
-import {
-  type CalDavService,
-  type EventFull,
-  type EventSummary,
-  type UnavailableProvider,
-  drainDebugTimings,
-} from "../services/CalDavService.js";
+import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
+import type { EventFull, EventSummary, UnavailableProvider } from "../providers/types.js";
+import { drainDebugTimings } from "../services/CalDavService.js";
 import {
   batchCreateSchema,
   calendarListSchema,
@@ -118,7 +114,7 @@ function unavailableField(unavailable: UnavailableProvider[]) {
  * still fails the call if it cannot be read.
  */
 async function fetchEvents(
-  service: CalDavService,
+  service: IcsCalendarBackend,
   selection: CalendarSelection,
   start: string,
   end: string,
@@ -279,7 +275,7 @@ const READ_ONLY = {
   openWorldHint: true,
 } as const;
 
-export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
+export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
   {
     name: "list_calendars",
     title: "List Calendars",
