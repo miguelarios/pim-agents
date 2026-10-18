@@ -97,6 +97,11 @@ describe("ImapService", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // imapflow resolves these to a result on success and `false` on a refusal.
+    mockMessageMove.mockResolvedValue({ path: "INBOX", destination: "Archive" });
+    mockMessageFlagsAdd.mockResolvedValue(true);
+    mockMessageFlagsRemove.mockResolvedValue(true);
+    mockStatus.mockResolvedValue({ path: "INBOX", messages: 0 });
     service = new ImapService(testConfig);
   });
 
@@ -2352,6 +2357,141 @@ describe("ImapService", () => {
       mockList.mockResolvedValueOnce([{ path: "INBOX", delimiter: "/" }]);
 
       await expect(service.getSpecialUseFolder("\\Sent")).rejects.toThrow("FOLDER_NOT_FOUND");
+    });
+  });
+});
+
+describe("IMAP failures name the condition (misclassified errors, #150 follow-up)", () => {
+  let service: ImapService;
+  const commandFailed = (fields: Record<string, unknown>) =>
+    Object.assign(new Error("Command failed"), { responseStatus: "NO", ...fields });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCapabilities.clear();
+    mockCapabilities.set("MOVE", true);
+    mockMessageMove.mockResolvedValue({ path: "INBOX", destination: "Archive" });
+    mockMessageFlagsAdd.mockResolvedValue(true);
+    mockStatus.mockResolvedValue({ path: "Archive", messages: 0 });
+    service = new ImapService(testConfig);
+  });
+  afterAll(() => mockCapabilities.clear());
+
+  it("misclassified: a folder SELECT can't open is FOLDER_NOT_FOUND, naming it and the server's text", async () => {
+    mockGetMailboxLock.mockRejectedValueOnce(
+      commandFailed({
+        mailboxMissing: true,
+        responseText: "Mailbox doesn't exist: Nope",
+        serverResponseCode: "NONEXISTENT",
+      }),
+    );
+    const err = await service.searchEmails("Nope").catch((e) => e);
+    expect(err.code).toBe("FOLDER_NOT_FOUND");
+    expect(err.isRetryable).toBe(false);
+    expect(err.message).toContain("Folder not found: Nope");
+    expect(err.message).toContain("Mailbox doesn't exist: Nope");
+    expect(mockLogout).toHaveBeenCalled();
+  });
+
+  it("misclassified: STATUS on a missing folder is FOLDER_NOT_FOUND", async () => {
+    mockStatus.mockRejectedValueOnce(
+      Object.assign(new Error("Mailbox doesn't exist: Nope"), { code: "NotFound" }),
+    );
+    await expect(service.getFolderStatus("Nope")).rejects.toMatchObject({
+      code: "FOLDER_NOT_FOUND",
+    });
+  });
+
+  it("STATUS refused on a folder that exists fails instead of reporting zeros", async () => {
+    mockStatus.mockResolvedValueOnce(false);
+    await expect(service.getFolderStatus("Parent")).rejects.toMatchObject({
+      code: "OPERATION_FAILED",
+    });
+  });
+
+  it.each([
+    ["Cyrus", "Mailbox does not exist"],
+    ["Courier", "Mailbox does not exist, or must be subscribed to."],
+    ["Exchange", "Folder not found"],
+  ])("recognises %s's missing-mailbox text when no response code is sent", async (_, text) => {
+    mockGetMailboxLock.mockRejectedValueOnce(commandFailed({ responseText: text }));
+    await expect(service.fetchEmail("Nope", 1)).rejects.toMatchObject({ code: "FOLDER_NOT_FOUND" });
+  });
+
+  it("Gmail's missing-mailbox reply is FOLDER_NOT_FOUND, not AUTH_FAILED", async () => {
+    mockGetMailboxLock.mockRejectedValueOnce(
+      commandFailed({
+        responseText: "Unknown Mailbox: Nope (now in authenticated state) (Failure)",
+        serverResponseCode: "NONEXISTENT",
+      }),
+    );
+    await expect(service.fetchEmail("Nope", 1)).rejects.toMatchObject({ code: "FOLDER_NOT_FOUND" });
+  });
+
+  it("another refusal is OPERATION_FAILED with the server's text, not a bare 'Command failed'", async () => {
+    mockGetMailboxLock.mockRejectedValueOnce(
+      commandFailed({ responseText: "Permission denied", serverResponseCode: "NOPERM" }),
+    );
+    const err = await service.fetchEmail("Shared", 1).catch((e) => e);
+    expect(err.code).toBe("OPERATION_FAILED");
+    expect(err.message).toContain("Permission denied");
+  });
+
+  it("renaming a folder that does not exist is FOLDER_NOT_FOUND", async () => {
+    mockMailboxRename.mockRejectedValueOnce(
+      commandFailed({
+        responseText: "Mailbox doesn't exist: Old",
+        serverResponseCode: "NONEXISTENT",
+      }),
+    );
+    await expect(service.renameFolder("Old", "New")).rejects.toMatchObject({
+      code: "FOLDER_NOT_FOUND",
+    });
+  });
+
+  it("misclassified: a refused MOVE to a missing folder fails with FOLDER_NOT_FOUND instead of succeeding", async () => {
+    mockMessageMove.mockResolvedValueOnce(false);
+    mockStatus.mockRejectedValueOnce(
+      Object.assign(new Error("Mailbox doesn't exist: Arhcive"), { code: "NotFound" }),
+    );
+    await expect(service.moveEmails("INBOX", [1], "Arhcive")).rejects.toMatchObject({
+      code: "FOLDER_NOT_FOUND",
+    });
+  });
+
+  it("a refused MOVE to a folder that exists is OPERATION_FAILED", async () => {
+    mockMessageMove.mockResolvedValueOnce(false);
+    await expect(service.moveEmails("INBOX", [1], "Archive")).rejects.toMatchObject({
+      code: "OPERATION_FAILED",
+    });
+  });
+
+  it("without the MOVE extension, a missing destination never reaches the copy-then-delete fallback", async () => {
+    mockCapabilities.delete("MOVE");
+    mockStatus.mockRejectedValueOnce(
+      Object.assign(new Error("Mailbox doesn't exist: Arhcive"), { code: "NotFound" }),
+    );
+    await expect(service.moveEmails("INBOX", [1], "Arhcive")).rejects.toMatchObject({
+      code: "FOLDER_NOT_FOUND",
+    });
+    // imapflow's fallback deletes the originals even when its COPY was refused.
+    expect(mockMessageMove).not.toHaveBeenCalled();
+  });
+
+  it("a refused copy to a missing folder is FOLDER_NOT_FOUND", async () => {
+    mockMessageCopy.mockResolvedValueOnce(false);
+    mockStatus.mockRejectedValueOnce(
+      Object.assign(new Error("Mailbox doesn't exist: Nope"), { code: "NotFound" }),
+    );
+    await expect(service.copyEmails("INBOX", [1], "Nope")).rejects.toMatchObject({
+      code: "FOLDER_NOT_FOUND",
+    });
+  });
+
+  it("a refused flag change fails instead of reporting success", async () => {
+    mockMessageFlagsAdd.mockResolvedValueOnce(false);
+    await expect(service.markEmails("INBOX", [1], ["\\Seen"], "add")).rejects.toMatchObject({
+      code: "OPERATION_FAILED",
     });
   });
 });

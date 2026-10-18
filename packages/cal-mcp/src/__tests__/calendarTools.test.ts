@@ -441,7 +441,9 @@ describe("calendarTools", () => {
     });
 
     it("returns structured error with error code on service failure", async () => {
-      mockService.listCalendars.mockRejectedValue(new Error("Connection failed"));
+      mockService.listCalendars.mockRejectedValue(
+        Object.assign(new Error("Connection failed"), { code: "ECONNREFUSED" }),
+      );
 
       const result = await handleCalendarTool("list_calendars", {}, mockService as any);
       expect(result.isError).toBe(true);

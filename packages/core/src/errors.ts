@@ -124,6 +124,8 @@ const UNREACHABLE_CODES = new Set([
   // imapflow's own codes for a dropped or never-opened connection.
   "NoConnection",
   "EConnectionClosed",
+  "ClosedAfterConnectTLS",
+  "ClosedAfterConnectText",
 ]);
 const TIMEOUT_CODES = new Set([
   "ETIMEDOUT",
@@ -136,64 +138,165 @@ const TIMEOUT_CODES = new Set([
   "GREETING_TIMEOUT",
   "UPGRADE_TIMEOUT",
 ]);
+/** nodemailer: the server rejected the credentials. */
+const AUTH_CODES = new Set(["EAUTH"]);
+/** nodemailer: the server answered and refused the envelope or the message. */
+const SEND_CODES = new Set(["EENVELOPE", "EMESSAGE", "EPROTOCOL"]);
+/** imapflow: Microsoft 365 asked us to back off. */
+const THROTTLE_CODES = new Set(["ETHROTTLE"]);
+const KNOWN_CODES = [UNREACHABLE_CODES, TIMEOUT_CODES, AUTH_CODES, SEND_CODES, THROTTLE_CODES];
+
+/** IMAP response codes (RFC 5530) that mean the credentials were refused. */
+const IMAP_AUTH_RESPONSE_CODES = new Set([
+  "AUTHENTICATIONFAILED",
+  "AUTHORIZATIONFAILED",
+  "EXPIRED",
+]);
+/** IMAP response codes for a temporary refusal. */
+const IMAP_TEMPORARY_RESPONSE_CODES = new Set(["UNAVAILABLE", "INUSE"]);
+
+/**
+ * tsdav's HTTP failures, by their fixed prefix: `Collection query failed: 500
+ * Internal Server Error. Raw response: <server body>`. Only the prefix is
+ * read, so the server's body (which tsdav includes) cannot steer the class.
+ */
+const TSDAV_STATUS =
+  /^(?:Collection (?:query|sync|status check) failed|(?:Calendar|Address book) discovery failed|(?:VCard|Calendar object) fetch failed): (\d{3})\b/;
+
+interface StructuredFields {
+  code?: unknown;
+  authenticationFailed?: unknown;
+  responseStatus?: unknown;
+  responseText?: unknown;
+  serverResponseCode?: unknown;
+  responseCode?: unknown;
+}
+
+/** The error and its `cause` chain, bounded. */
+function causeChain(error: Error): Array<Error & StructuredFields> {
+  const chain: Array<Error & StructuredFields> = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
+    chain.push(current as Error & StructuredFields);
+    current = current.cause;
+  }
+  return chain;
+}
 
 /**
  * The code that best explains an error, from the error itself and down its
- * `cause` chain (bounded): the first one the tables below recognise, else
- * the first one present. imapflow and nodemailer set `code` on the error
- * they throw; undici's "fetch failed" only on its cause.
+ * `cause` chain: the first one the tables above recognise, else the first one
+ * present. imapflow and nodemailer set `code` on the error they throw;
+ * undici's "fetch failed" only on its cause.
  */
-function errorCode(error: Error): string | undefined {
+function errorCode(chain: StructuredFields[]): string | undefined {
   let first: string | undefined;
-  let current: unknown = error;
-  for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
-    const code = (current as { code?: unknown }).code;
+  for (const link of chain) {
+    const code = link.code;
     if (typeof code === "string") {
-      if (UNREACHABLE_CODES.has(code) || TIMEOUT_CODES.has(code)) return code;
+      if (KNOWN_CODES.some((table) => table.has(code))) return code;
       first ??= code;
     }
-    current = current.cause;
   }
   return first;
 }
 
+/** A classified error that is not one of the named subclasses. */
+class ClassifiedError extends PimError {
+  constructor(message: string, code: ErrorCode, retryable: boolean, stack?: string) {
+    super(message, code, retryable);
+    if (stack) this.stack = stack;
+  }
+}
+
+/**
+ * Classifies any thrown value as a {@link PimError}.
+ *
+ * Structured fields decide first: error codes down the `cause` chain
+ * (undici, nodemailer, imapflow), imapflow's `authenticationFailed` and IMAP
+ * response, the HTTP status in tsdav's fixed message prefix. Only then is
+ * text read, and only the library's own words: never a server body, and with
+ * patterns narrow enough that a caller's text ("Login page redesign", a
+ * folder named "Connection notes") does not match.
+ */
 export function toPimError(error: Error): PimError {
   if (error instanceof PimError) return error;
-  // Node's fetch (undici, under tsdav) reports every network failure as a bare
-  // "fetch failed" and puts the reason in `cause`. Without this an
-  // unreachable host surfaced as a non-retryable internal error with no hint why.
-  const code = errorCode(error);
+  const chain = causeChain(error);
+  const code = errorCode(chain);
+  const stack = error.stack;
+
+  // imapflow reports every refused command as "Command failed" and keeps the
+  // server's reason in `responseText`; bring it into the message.
+  const imap = chain.find((l) => l.responseStatus === "NO" || l.responseStatus === "BAD");
+  const serverText = typeof imap?.responseText === "string" ? imap.responseText : undefined;
+  let message = error.message;
+  if (serverText && !message.includes(serverText)) message = `${message}: ${serverText}`;
   // Name the code whenever there is one and the message does not already,
-  // including codes outside the tables below (a TLS failure such as
-  // DEPTH_ZERO_SELF_SIGNED_CERT), which keep the message-based class.
-  const message =
-    code && !error.message.includes(code) ? `${error.message} (${code})` : error.message;
-  if (code && UNREACHABLE_CODES.has(code)) {
-    return new ConnectionError(message);
+  // including codes outside the tables (a TLS failure such as
+  // DEPTH_ZERO_SELF_SIGNED_CERT).
+  if (code && !message.includes(code)) message = `${message} (${code})`;
+
+  if (chain.some((l) => l.authenticationFailed === true)) {
+    return new AuthenticationError(message);
   }
+  if (code && AUTH_CODES.has(code)) return new AuthenticationError(message);
+  if (code && UNREACHABLE_CODES.has(code)) return new ConnectionError(message);
   if (code && TIMEOUT_CODES.has(code)) {
     return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
   }
-  const msg = error.message.toLowerCase();
-  if (msg.includes("auth") || msg.includes("login") || msg.includes("credential")) {
-    return new AuthenticationError(message);
+  if (code && SEND_CODES.has(code)) {
+    // An SMTP 4xx is a temporary refusal; 5xx is final, and retrying a
+    // rejected message only sends it at the same wall again.
+    const reply = chain.map((l) => l.responseCode).find((c) => typeof c === "number") as
+      | number
+      | undefined;
+    const temporary = reply !== undefined && reply >= 400 && reply < 500;
+    return new ClassifiedError(message, ErrorCode.SEND_FAILED, temporary, stack);
   }
-  if (
-    msg.includes("econnrefused") ||
-    msg.includes("econnreset") ||
-    msg.includes("enotfound") ||
-    msg.includes("connection")
-  ) {
-    return new ConnectionError(message);
+  if (code && THROTTLE_CODES.has(code)) {
+    return new ClassifiedError(message, ErrorCode.OPERATION_FAILED, true, stack);
   }
-  if (msg.includes("timeout") || msg.includes("etimedout")) {
+
+  if (imap) {
+    const response =
+      typeof imap.serverResponseCode === "string" ? imap.serverResponseCode.toUpperCase() : "";
+    if (IMAP_AUTH_RESPONSE_CODES.has(response)) return new AuthenticationError(message);
+    // The server answered: neither unreachable nor our fault.
+    return new ClassifiedError(
+      message,
+      ErrorCode.OPERATION_FAILED,
+      IMAP_TEMPORARY_RESPONSE_CODES.has(response),
+      stack,
+    );
+  }
+
+  const status = TSDAV_STATUS.exec(error.message)?.[1];
+  if (status) {
+    const n = Number(status);
+    if (n === 401) return new AuthenticationError(message);
+    if (n === 408 || n === 504) return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
+    if (n === 502 || n === 503) return new ConnectionError(message);
+    // 429 asks us to come back later; every other status is the server's answer.
+    return new ClassifiedError(message, ErrorCode.OPERATION_FAILED, n === 429, stack);
+  }
+
+  if (error.name === "TimeoutError") {
     return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
   }
-  const wrapped = new (class InternalError extends PimError {
-    constructor() {
-      super(message, ErrorCode.INTERNAL_ERROR, false);
-      this.stack = error.stack;
-    }
-  })();
-  return wrapped;
+  // Last, the library's own words. tsdav appends the server's body after
+  // ". Raw response:", which is cut off before matching.
+  const own = error.message.split(/\. Raw response:/)[0];
+  if (
+    /\b(?:authentication failed|invalid credentials|unauthorized)\b/i.test(own) ||
+    /^oauth credentials missing/i.test(own)
+  ) {
+    return new AuthenticationError(message);
+  }
+  if (/\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN)\b/.test(own)) {
+    return new ConnectionError(message);
+  }
+  if (/\bETIMEDOUT\b/.test(own)) {
+    return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
+  }
+  return new ClassifiedError(message, ErrorCode.INTERNAL_ERROR, false, stack);
 }
