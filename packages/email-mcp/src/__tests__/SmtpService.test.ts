@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SmtpService } from "../services/SmtpService.js";
+import { SmtpService, ensureMessageId } from "../services/SmtpService.js";
 
 const { mockSendMail, mockVerify } = vi.hoisted(() => ({
   mockSendMail: vi.fn(),
@@ -260,5 +260,73 @@ describe("SmtpService", () => {
         raw,
       });
     });
+
+    describe("reports the Message-ID the raw message carries (#130)", () => {
+      // With `raw`, nodemailer never parses the message, so the id it reports
+      // is one it made up and did not send.
+      beforeEach(() => {
+        mockSendMail.mockResolvedValue({
+          messageId: "<nodemailer-invented@test.com>",
+          accepted: ["recipient@test.com"],
+          rejected: [],
+        });
+      });
+      const envelope = { from: "user@test.com", to: ["recipient@test.com"] };
+
+      it("returns the header's id, not nodemailer's", async () => {
+        const raw = Buffer.from(
+          "From: user@test.com\r\nMessage-ID: <real-1@test.com>\r\nSubject: Hi\r\n\r\nBody",
+        );
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe("<real-1@test.com>");
+      });
+
+      it("matches the header name case-insensitively and unfolds a folded value", async () => {
+        const raw = Buffer.from("message-id:\r\n <folded-1@test.com>\r\nSubject: Hi\r\n\r\nBody");
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe("<folded-1@test.com>");
+      });
+
+      it("ignores a Message-ID line in the body", async () => {
+        const raw = Buffer.from("Subject: Hi\r\n\r\nMessage-ID: <in-body@test.com>\r\n");
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe("<nodemailer-invented@test.com>");
+      });
+
+      it("returns the id composeRawMessage wrote, end to end", async () => {
+        const raw = await service.composeRawMessage({
+          from: "user@test.com",
+          to: ["recipient@test.com"],
+          subject: "Composed",
+          text: "Hello",
+        });
+        const written = /^Message-ID: (.+)$/im.exec(raw.toString())?.[1].trim();
+        expect(written).toMatch(/^<.+@.+>$/);
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe(written);
+      });
+    });
+  });
+});
+
+describe("ensureMessageId (#130)", () => {
+  it("leaves a message that has a Message-ID untouched", () => {
+    const raw = Buffer.from("Message-ID: <kept@test.com>\r\nSubject: Hi\r\n\r\nBody");
+    expect(ensureMessageId(raw, "user@test.com")).toBe(raw);
+  });
+
+  it("prepends one on the sender's domain when the message has none", () => {
+    const raw = Buffer.from("Subject: Hi\r\n\r\nMessage-ID: <in-body@test.com>\r\n");
+    const out = ensureMessageId(raw, "user@example.org").toString("latin1");
+    expect(out).toMatch(/^Message-ID: <[0-9a-f-]{36}@example\.org>\r\nSubject: Hi\r\n/);
+    expect(out.endsWith(raw.toString("latin1"))).toBe(true);
+  });
+});
+
+describe("a blank Message-ID header (#130 review)", () => {
+  it("counts as missing, so ensureMessageId adds a real one", () => {
+    const raw = Buffer.from("Message-ID: \r\nSubject: Hi\r\n\r\nBody");
+    const out = ensureMessageId(raw, "user@example.org").toString("latin1");
+    expect(out).toMatch(/^Message-ID: <[0-9a-f-]{36}@example\.org>\r\n/);
   });
 });
