@@ -39,6 +39,11 @@ function fakeService() {
         { contact: CONTACT, located: { bookUrl: "book1", url: "book1/u1.vcf", data: "" } },
       ]),
     searchContacts: vi.fn().mockResolvedValue([CONTACT]),
+    locateContact: vi.fn().mockImplementation(async (uid: string) => ({
+      bookUrl: "book1",
+      url: `book1/${uid}.vcf`,
+      data: `BEGIN:VCARD\r\nVERSION:3.0\r\nUID:${uid}\r\nFN:Alice Smith\r\nEND:VCARD`,
+    })),
     deleteContact: vi.fn().mockResolvedValue(undefined),
     updateContact: vi.fn().mockResolvedValue(undefined),
     createContact: vi.fn().mockResolvedValue(undefined),

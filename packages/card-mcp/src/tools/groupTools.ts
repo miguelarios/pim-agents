@@ -15,7 +15,8 @@ import {
   parseVCard,
 } from "@miguelarios/pim-core";
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
-import type { CardDavService, LocatedContact } from "../services/CardDavService.js";
+import type { ContactsBackend } from "../providers/ContactsBackend.js";
+import type { LocatedContact } from "../providers/types.js";
 import {
   ADDRESS_BOOK_PROP,
   booksToSearch,
@@ -66,7 +67,7 @@ function assertIsGroup(uid: string, group: Contact): void {
 async function loadGroupWithBook(
   uid: string,
   explicit: string | undefined,
-  service: CardDavService,
+  service: ContactsBackend,
 ): Promise<LoadedGroup & { book: Contact[] }> {
   const { bookUrl, label } = await locateBookFor(uid, explicit, service);
   const entries = await service.fetchBook(bookUrl, { detailLevel: "summary" });
@@ -92,7 +93,7 @@ async function loadGroupWithBook(
 async function loadGroup(
   uid: string,
   explicit: string | undefined,
-  service: CardDavService,
+  service: ContactsBackend,
 ): Promise<LoadedGroup> {
   const { bookUrl, label, located } = await locateBookFor(uid, explicit, service);
   if (!located) return loadGroupWithBook(uid, explicit, service);
@@ -122,7 +123,7 @@ function assertMembersInBook(uids: string[], book: Contact[]): void {
 
 const dedupe = (uids: string[]): string[] => [...new Set(uids)];
 
-export const GROUP_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
+export const GROUP_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
   {
     name: "list_groups",
     title: "List Contact Groups",

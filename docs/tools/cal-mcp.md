@@ -1,6 +1,6 @@
 # Calendar MCP Tools
 
-`@miguelarios/cal-mcp` — CalDAV calendar server with 16 tools.
+`@miguelarios/cal-mcp` — CalDAV calendar server with 19 tools.
 
 > Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts` (events) and `packages/cal-mcp/src/tools/calendarManagementTools.ts` (calendar collections). Output shapes from `packages/cal-mcp/src/tools/calendarSchemas.ts` and `packages/cal-mcp/src/services/CalDavService.ts`.
 
@@ -28,8 +28,20 @@ List all calendars across all configured CalDAV providers. Returns provider-pref
     url: string;             // CalDAV URL
     ctag?: string;
   }>;
+  // Only when some configured provider could not be listed — see below.
+  unavailable_providers?: Array<{ provider: string; error: string }>;
 }
 ```
+
+**When a provider is unreachable.** With several providers configured, one that cannot be
+reached (a LAN server seen from off that network, say) is skipped rather than failing the
+call: the reachable providers' calendars come back, and `unavailable_providers` names each
+skipped one with its error. The field is absent when every provider answered. If no
+provider answers, the call fails as before. The same applies to `list_events`,
+`get_today_events` and `search_events` when they query all calendars. A calendar you name
+explicitly still fails the call if it cannot be read, and `get_free_busy` and
+`find_free_slots` across all calendars fail rather than skip a provider, because skipping
+it would report its busy time as free. Pass `calendars` to check the reachable ones only.
 
 ## list_events
 
@@ -50,6 +62,8 @@ Query events in a date range. Recurring events are expanded into individual inst
 ```ts
 { events: EventSummary[] }            // when detail_level = "summary" (default)
 { events: EventFull[]    }            // when detail_level = "full"
+// plus unavailable_providers?: Array<{ provider, error }> when querying all calendars
+// skipped an unreachable provider — see list_calendars.
 ```
 
 See [Event shapes](#event-shapes) below.
@@ -68,7 +82,7 @@ Get all events for today. Convenience wrapper over `list_events`.
 
 **Output**
 
-Same as `list_events` — `{ events: EventSummary[] | EventFull[] }`.
+Same as `list_events` — `{ events: EventSummary[] | EventFull[] }`. Plus `unavailable_providers` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
 
 ## search_events
 
@@ -87,7 +101,7 @@ Keyword search across event title, description, and location.
 
 **Output**
 
-`{ events: EventSummary[] | EventFull[] }` — matches whose title, location, or (when `full`) description contains the query (case-insensitive substring).
+`{ events: EventSummary[] | EventFull[] }` — matches whose title, location, or (when `full`) description contains the query (case-insensitive substring). Plus `unavailable_providers` when querying all calendars skipped an unreachable provider — see [list_calendars](#list_calendars).
 
 ## get_event
 
@@ -256,6 +270,8 @@ The content is split by UID (a recurring series and its overrides stay one calen
 
 When is a calendar busy? Returns the busy periods in a date range — merged, typed as `busy`, `tentative` or `unavailable` — without event details, so availability questions cost one call and expose nothing else. Uses the server's own `free-busy-query` REPORT (RFC 4791 §7.10) where it answers one, otherwise computes from the expanded events the same way `find_free_slots` does. Use `find_free_slots` to get the free windows of a given length instead.
 
+> **An unreachable provider fails the call** when no `calendars` are given, with an error naming the provider (`Calendar provider "nextcloud": …`), rather than skipping it: a skipped provider's busy time would read as free. Pass `calendars` without that provider's calendars to check the rest.
+
 **Parameters**
 
 | Parameter | Type | Required | Description |
@@ -287,6 +303,8 @@ Overlapping periods of the same type are merged; a `busy` and a `tentative` peri
 ## find_free_slots
 
 Find available time slots across specified calendars. Returns free windows matching the requested duration.
+
+> **An unreachable provider fails the call** when no `calendars` are given, with an error naming the provider (`Calendar provider "nextcloud": …`), rather than skipping it: a skipped provider's busy time would read as free. Pass `calendars` without that provider's calendars to check the rest. `exclude_calendars` does not avoid the failure, since the provider is listed before exclusions apply.
 
 **Parameters**
 
@@ -390,6 +408,80 @@ See [Collection results](#collection-results) — `status: "deleted"`.
 ```
 
 `calendar_id` is always usable directly by the event tools.
+
+## get_calendar_sharing
+
+Who a calendar is shared with, at what access, and whether each person has accepted. Read-only.
+
+Servers speak different sharing dialects. This reads whichever one the server reports, preferring the one that names people by address:
+
+| `protocol` | Servers | Sharees appear as |
+|---|---|---|
+| `calendarserver` | mailbox.org / Open-Xchange, Apple | `email` (and `name`) |
+| `owncloud` | Nextcloud | `principal`, e.g. `principal:principals/users/bob` |
+| `webdav` | Fallback (WebDAV Resource Sharing draft) | `principal` |
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID. |
+
+**Output**
+
+```ts
+{
+  calendar_id: string;
+  can_be_shared: boolean;      // false when the server reports no sharing support
+  can_be_published: boolean;
+  protocol: "calendarserver" | "owncloud" | "webdav" | null;
+  shares: Array<{
+    email: string | null;      // calendarserver
+    principal: string | null;  // owncloud / webdav
+    name: string | null;
+    access: "read" | "read-write";
+    status: "accepted" | "pending" | "declined" | "invalid";
+  }>;
+}
+```
+
+The calendar's owner (CalendarServer's organizer) is not listed as a share.
+
+## share_calendar
+
+Share a calendar with someone, or change the access of someone it is already shared with. Returns the calendar's sharing as the server reports it afterwards.
+
+> **Asks for confirmation.** The server usually emails the sharee an invitation, so this is not undone by unsharing: *"Give bob@example.com read-only access to calendar "mailbox/Work"? The server may send them an invitation."* Set `PIM_MCP_CONFIRM=off` to skip.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID. |
+| `sharee` | string | yes | An email address on CalendarServer servers (mailbox.org, Apple). On Nextcloud, a user or group principal (`principals/users/bob`, `principals/groups/family`): Nextcloud resolves an address only when exactly one local user has it and otherwise drops it silently, so an address is refused with a `validation_error` rather than risk a share that does nothing. Principals may be given as `principal:principals/users/<id>`, `principals/users/<id>`, or a full principal URL; user IDs containing `@` are fine. |
+| `access` | `"read"` \| `"read-write"` | yes | `read` lets them see events; `read-write` also lets them change them. |
+| `summary` | string | | Note included in the invitation, where the server sends one. |
+
+**Output**
+
+Same as `get_calendar_sharing`. A calendar whose server reports neither CalendarServer nor Nextcloud sharing is refused with a `validation_error` before anything is sent.
+
+## unshare_calendar
+
+Remove someone's access to a calendar. Returns the calendar's sharing afterwards.
+
+> **Asks for confirmation** — *"Remove bob@example.com's access to calendar "mailbox/Work"?"*
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID. |
+| `sharee` | string | yes | The sharee as `get_calendar_sharing` reports it: an email address, or on Nextcloud a principal. |
+
+**Output**
+
+Same as `get_calendar_sharing`.
 
 ## Event shapes
 

@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { loadCalDavConfig } from "@miguelarios/pim-core";
 import { TOOL_LIST_CACHE_HINT, registerTools, serve } from "@miguelarios/pim-core/mcp";
 import { McpServer } from "@modelcontextprotocol/server";
+import type { IcsCalendarBackend } from "./providers/CalendarBackend.js";
 import { CalDavService } from "./services/CalDavService.js";
 import { CALENDAR_MANAGEMENT_TOOLS } from "./tools/calendarManagementTools.js";
 import { CALENDAR_TOOLS } from "./tools/calendarTools.js";
@@ -14,13 +15,13 @@ const { version } = require("../package.json") as { version: string };
  * stdio and per request over HTTP, so it must not open connections or install
  * process handlers of its own.
  */
-export function createServer(service: CalDavService): McpServer {
+export function createServer(service: IcsCalendarBackend): McpServer {
   const server = new McpServer(
     { name: "@miguelarios/cal-mcp", title: "CalDAV Calendars", version },
     {
       capabilities: { tools: { listChanged: false } },
       instructions:
-        "Read and manage CalDAV calendars across every configured provider. Calendar IDs are provider-prefixed (e.g. mailbox/Work) — call list_calendars first. delete_event asks the user to confirm whenever it removes the calendar object; excluding one occurrence of a recurring event does not. delete_calendar asks the user to confirm too, since it removes every event in the calendar. Renaming a calendar with update_calendar changes its ID.",
+        "Read and manage CalDAV calendars across every configured provider. Calendar IDs are provider-prefixed (e.g. mailbox/Work) — call list_calendars first. delete_event asks the user to confirm whenever it removes the calendar object; excluding one occurrence of a recurring event does not. delete_calendar asks the user to confirm too, since it removes every event in the calendar. share_calendar and unshare_calendar also ask: sharing usually emails the sharee an invitation. Renaming a calendar with update_calendar changes its ID.",
       cacheHints: { "tools/list": TOOL_LIST_CACHE_HINT },
     },
   );

@@ -893,6 +893,22 @@ describe("send_draft handler", () => {
     expect(mockDeleteEmails).toHaveBeenCalledWith("Drafts", [500], true);
   });
 
+  it("gives a draft without a Message-ID one, the same on the wire and in Sent (#130)", async () => {
+    const rawDraft = Buffer.from(
+      "From: user@test.com\r\nTo: r@test.com\r\nSubject: From another client\r\n\r\nBody",
+    );
+    mockFetchRawSource.mockResolvedValueOnce(rawDraft);
+
+    await handleEmailTool("send_draft", { uid: 501 }, mockImapService, mockSmtpService);
+
+    const sent = (mockSendRawMessage.mock.calls[0][0] as Buffer).toString("latin1");
+    const filed = (mockAppendMessage.mock.calls[0][1] as Buffer).toString("latin1");
+    const sentId = /^Message-ID: (<[^>]+@test\.com>)\r$/m.exec(sent)?.[1];
+    expect(sentId).toBeDefined();
+    expect(filed).toContain(`Message-ID: ${sentId}\r\n`);
+    expect(sent.endsWith("\r\n\r\nBody")).toBe(true);
+  });
+
   it("returns error when draft does not exist", async () => {
     mockFetchRawSource.mockRejectedValueOnce(new Error("Email UID 999 not found"));
 

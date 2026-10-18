@@ -1,5 +1,5 @@
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
-import type { CardDavService } from "../services/CardDavService.js";
+import type { ContactsBackend } from "../providers/ContactsBackend.js";
 import { addressBookListSchema, addressBookWriteResultSchema } from "./addressBookSchemas.js";
 
 /**
@@ -17,7 +17,7 @@ type CreateArgs = { displayName: string; description?: string; slug?: string };
 type RenameArgs = { addressBook: string; displayName?: string; description?: string };
 type DeleteArgs = { addressBook: string };
 
-export const ADDRESS_BOOK_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
+export const ADDRESS_BOOK_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
   {
     name: "list_address_books",
     title: "List Address Books",

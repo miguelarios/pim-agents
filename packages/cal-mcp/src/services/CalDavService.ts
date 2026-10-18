@@ -4,6 +4,7 @@ import {
   type CalDavConfig,
   CalendarError,
   ErrorCode,
+  PimError,
   ValidationError,
   checkDavCollectionResponse,
   formatInTimezone,
@@ -14,7 +15,6 @@ import {
 } from "@miguelarios/pim-core";
 import {
   type FreeBusyPeriod,
-  type ParsedAlarm,
   type ParsedEvent,
   type TimeRange,
   generateVTimezoneIcs,
@@ -22,6 +22,29 @@ import {
   parseIcsFreeBusy,
 } from "@miguelarios/pim-core/ics";
 import { DAVClient } from "tsdav";
+import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
+import type {
+  CalendarCollection,
+  CalendarInfo,
+  CalendarObjectMeta,
+  EventFull,
+  EventSummary,
+  FindFreeSlotsOptions,
+  FreeBusyOptions,
+  FreeBusyResult,
+  FreeBusySource,
+  FreeSlot,
+  ReachableCalendars,
+  UnavailableProvider,
+} from "../providers/types.js";
+import {
+  type CalendarSharing,
+  SHARING_PROPFIND_BODY,
+  type ShareAccess,
+  buildShareBody,
+  buildUnshareBody,
+  parseSharing,
+} from "./sharing.js";
 import {
   deleteCachedObject,
   getCachedObject,
@@ -30,92 +53,44 @@ import {
   setCachedObject,
 } from "./urlCache.js";
 
-export interface CalendarInfo {
-  calendar_id: string;
-  display_name: string;
-  color: string | null;
-  description: string | null;
-  /** IANA zone the calendar defaults to (`calendar-timezone`), when the provider reports one. */
-  timezone: string | null;
-  /** Sort position among the account's calendars (Apple `calendar-order`), when reported. */
-  order: number | null;
-  source: string;
-  read_only: boolean;
-  url: string;
-  ctag?: string;
+export type {
+  CalendarInfo,
+  CalendarCollection,
+  EventSummary,
+  EventFull,
+  FreeSlot,
+  FindFreeSlotsOptions,
+  CalendarObjectMeta,
+  FreeBusyOptions,
+  FreeBusySource,
+  FreeBusyResult,
+  ReachableCalendars,
+  UnavailableProvider,
+} from "../providers/types.js";
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
-/** A calendar collection as the management tools name it. */
-export interface CalendarCollection {
-  calendar_id: string;
-  display_name: string;
-  url: string;
-  provider: string;
+/** A provider's error, named, with the original's code and retryability. */
+class ProviderError extends PimError {
+  constructor(providerId: string, original: PimError) {
+    super(
+      `Calendar provider "${providerId}": ${original.message}`,
+      original.code,
+      original.isRetryable,
+    );
+    this.cause = original;
+  }
 }
 
-export interface EventSummary {
-  uid: string;
-  calendar_id: string;
-  title: string;
-  start: string;
-  end: string;
-  all_day: boolean;
-  location: string | null;
-  status: string | null;
-  is_recurring: boolean;
-  occurrence_date: string | null;
-}
-
-export interface EventFull extends EventSummary {
-  description: string | null;
-  url: string | null;
-  availability: string | null;
-  attendees: Array<{
-    name: string | null;
-    email: string;
-    status: string | null;
-    role: string | null;
-    type: string;
-  }>;
-  organizer: { name: string | null; email: string } | null;
-  recurrence_rule: string | null;
-  created: string | null;
-  last_modified: string | null;
-  alarms: ParsedAlarm[];
-  categories: string[];
-  geo: { latitude: number; longitude: number } | null;
-}
-
-export interface FreeSlot {
-  start: string;
-  end: string;
-  duration: number;
-}
-
-export interface FindFreeSlotsOptions {
-  ignoreTentative?: boolean;
-  preferredStart?: string;
-  preferredEnd?: string;
-  excludeCalendars?: string[];
-  includeAllDayAsBusy?: boolean;
-}
-
-export interface CalendarObjectMeta {
-  url: string;
-  etag?: string;
-}
-
-export interface FreeBusyOptions {
-  ignoreTentative?: boolean;
-  includeAllDayAsBusy?: boolean;
-}
-
-/** Where a calendar's busy periods came from. */
-export type FreeBusySource = "server" | "computed";
-
-export interface FreeBusyResult {
-  busy: FreeBusyPeriod[];
-  sources: Record<string, FreeBusySource>;
+/**
+ * The provider's error as a new PimError naming which provider failed. A new
+ * object rather than an edited message, so the caller's error and its stack
+ * are left alone and naming it twice cannot stack prefixes.
+ */
+function providerError(providerId: string, error: unknown): Error {
+  return new ProviderError(providerId, toPimError(asError(error)));
 }
 
 /** The little an event contributes to a free/busy answer. */
@@ -341,7 +316,7 @@ export function drainDebugTimings(): Array<{
   return out;
 }
 
-export class CalDavService {
+export class CalDavService implements IcsCalendarBackend {
   private accounts: Map<string, CalDavAccount>;
   private clients: Map<string, DAVClient> = new Map();
   private calendarsCache: Map<string, any[]> = new Map();
@@ -580,39 +555,81 @@ export class CalDavService {
     return account.username;
   }
 
+  /**
+   * Every calendar on every provider, or an error naming the first provider
+   * that could not be listed. For callers that must not act on a partial
+   * view — free/busy and free slots, where a missing provider's busy time
+   * would read as free.
+   */
   async listCalendars(): Promise<CalendarInfo[]> {
     const allCalendars: CalendarInfo[] = [];
-
     for (const [providerId, account] of this.accounts) {
       try {
-        const client = await this.getClient(account);
-        const calendars = await client.fetchCalendars({
-          props: CALENDAR_LIST_PROPS,
-          projectedProps: CALENDAR_LIST_PROJECTION,
-        });
-        this.calendarsCache.set(providerId, calendars);
-        for (const cal of calendars) {
-          const displayName = displayNameOf(cal);
-          const canWrite = await this.fetchPrivileges(client, cal.url);
-          allCalendars.push({
-            calendar_id: `${providerId}/${displayName}`,
-            display_name: displayName,
-            color: (cal as any).calendarColor ?? null,
-            description: descriptionOf(cal),
-            timezone: timezoneOf(cal),
-            order: orderOf(cal),
-            source: providerId,
-            read_only: !canWrite,
-            url: cal.url,
-            ctag: cal.ctag,
-          });
-        }
+        allCalendars.push(...(await this.listProviderCalendars(providerId, account)));
       } catch (error) {
-        throw toPimError(error instanceof Error ? error : new Error(String(error)));
+        throw providerError(providerId, error);
       }
     }
-
     return allCalendars;
+  }
+
+  /**
+   * The calendars of every provider that answers, plus which ones did not and
+   * why (#127). One unreachable provider — a LAN server seen from off that
+   * network — no longer hides the others. Only when none answers does this
+   * throw, so a single-provider setup fails exactly as before.
+   */
+  async listReachableCalendars(): Promise<ReachableCalendars> {
+    const calendars: CalendarInfo[] = [];
+    const unavailable: UnavailableProvider[] = [];
+    let firstError: unknown;
+    for (const [providerId, account] of this.accounts) {
+      try {
+        calendars.push(...(await this.listProviderCalendars(providerId, account)));
+      } catch (error) {
+        firstError ??= error;
+        unavailable.push({ provider: providerId, error: toPimError(asError(error)).message });
+      }
+    }
+    if (unavailable.length > 0 && unavailable.length === this.accounts.size) {
+      throw providerError(unavailable[0].provider, firstError);
+    }
+    return { calendars, unavailable };
+  }
+
+  private async listProviderCalendars(
+    providerId: string,
+    account: CalDavAccount,
+  ): Promise<CalendarInfo[]> {
+    const client = await this.getClient(account);
+    const calendars = await client.fetchCalendars({
+      props: CALENDAR_LIST_PROPS,
+      projectedProps: CALENDAR_LIST_PROJECTION,
+    });
+    this.calendarsCache.set(providerId, calendars);
+    const out: CalendarInfo[] = [];
+    for (const cal of calendars) {
+      const displayName = displayNameOf(cal);
+      const canWrite = await this.fetchPrivileges(client, cal.url);
+      out.push({
+        calendar_id: `${providerId}/${displayName}`,
+        display_name: displayName,
+        color: (cal as any).calendarColor ?? null,
+        description: descriptionOf(cal),
+        timezone: timezoneOf(cal),
+        order: orderOf(cal),
+        source: providerId,
+        read_only: !canWrite,
+        url: cal.url,
+        // tsdav parses a bare-integer <getctag> (Nextcloud) as a number. It
+        // is still a valid change marker, so keep it, as the string it is typed as.
+        // Anything else (xml2js yields {} for an empty <getctag/>) is dropped.
+        ...(typeof cal.ctag === "string" || typeof cal.ctag === "number"
+          ? { ctag: String(cal.ctag) }
+          : {}),
+      });
+    }
+    return out;
   }
 
   /** The configured provider IDs — the prefix half of every `calendar_id`. */
@@ -668,6 +685,111 @@ export class CalDavService {
     } catch (error) {
       if (error instanceof CalendarError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * One authenticated request to a calendar collection. Sharing uses raw
+   * requests rather than tsdav: tsdav's XML handling drops namespace prefixes,
+   * which collides `D:invite` with `CS:invite` (see sharing.ts).
+   */
+  private async collectionRequest(
+    calendarId: string,
+    method: "PROPFIND" | "POST",
+    body: string,
+    headers: Record<string, string> = {},
+  ): Promise<{ status: number; statusText: string; text: string; url: string }> {
+    const { account, calendarName } = this.resolveAccount(calendarId);
+    const client = await this.getClient(account);
+    const calendar = await this.findCalendar(client, calendarName, account.id);
+    const url = new URL((calendar as { url: string }).url, account.url).toString();
+    const response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${account.username}:${account.password}`).toString("base64")}`,
+        "Content-Type": "application/xml; charset=utf-8",
+        ...headers,
+      },
+      body,
+    });
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      text: await response.text(),
+      url,
+    };
+  }
+
+  /** Who a calendar is shared with, and at what access (#47). */
+  async getCalendarSharing(calendarId: string): Promise<CalendarSharing> {
+    try {
+      const res = await this.collectionRequest(calendarId, "PROPFIND", SHARING_PROPFIND_BODY, {
+        Depth: "0",
+      });
+      if (res.status !== 207) {
+        throw new CalendarError(
+          `Reading sharing for "${calendarId}" failed: ${res.status} ${res.statusText}`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+      return parseSharing(res.text);
+    } catch (error) {
+      if (error instanceof CalendarError || error instanceof ValidationError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Grants (`access` given) or revokes (`access` null) a sharee's access, in
+   * whichever sharing dialect the server answered the read with, then returns
+   * the calendar's sharing as the server now reports it.
+   */
+  async changeCalendarShare(
+    calendarId: string,
+    sharee: string,
+    access: ShareAccess | null,
+    summary?: string,
+  ): Promise<CalendarSharing> {
+    if (!sharee.trim()) throw new ValidationError("sharee is required", "sharee");
+    const before = await this.getCalendarSharing(calendarId);
+    const protocol = before.protocol;
+    if (!before.can_be_shared || (protocol !== "calendarserver" && protocol !== "owncloud")) {
+      throw new ValidationError(
+        `Calendar "${calendarId}" cannot be shared through this server: it reports neither CalendarServer nor Nextcloud sharing`,
+        "calendar",
+      );
+    }
+    let body: string;
+    try {
+      body =
+        access === null
+          ? buildUnshareBody(protocol, sharee)
+          : buildShareBody(protocol, sharee, access, summary);
+    } catch (error) {
+      throw new ValidationError(error instanceof Error ? error.message : String(error), "sharee");
+    }
+    try {
+      const res = await this.collectionRequest(calendarId, "POST", body);
+      if (res.status < 200 || res.status >= 300) {
+        throw new CalendarError(
+          `${access === null ? "Unsharing" : "Sharing"} "${calendarId}" failed: ${res.status} ${res.statusText}`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+    try {
+      return await this.getCalendarSharing(calendarId);
+    } catch (error) {
+      // The change was applied; only reading it back failed. Saying so keeps a
+      // caller from retrying a share, which could send a second invitation.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new CalendarError(
+        `${access === null ? "Unsharing" : "Sharing"} "${calendarId}" succeeded, but reading the calendar's sharing back failed: ${reason}. Do not repeat the change; call get_calendar_sharing to check.`,
+        ErrorCode.OPERATION_FAILED,
+      );
     }
   }
 

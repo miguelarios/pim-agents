@@ -4,6 +4,9 @@
   "description": "MCP server for contacts via CardDAV — CRUD contacts, contact groups, search, resolve names to emails",
   "keywords": ["mcp", "contacts", "carddav", "vcard"],
   "license": "MIT",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "author": "Miguel Rios",
   "repository": {
     "type": "git",

@@ -10,10 +10,12 @@ import * as v from "valibot";
 const typedValue = v.object({
   type: v.optional(v.string()),
   value: v.string(),
+  pref: v.optional(v.boolean()),
 });
 
 const postalAddress = v.object({
   type: v.optional(v.string()),
+  pref: v.optional(v.boolean()),
   street: v.optional(v.string()),
   city: v.optional(v.string()),
   state: v.optional(v.string()),

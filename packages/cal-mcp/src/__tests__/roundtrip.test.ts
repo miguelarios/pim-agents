@@ -44,7 +44,7 @@ const RECURRING_ICS = [
 ].join("\r\n");
 
 function fakeService() {
-  return {
+  const service = {
     listCalendars: vi.fn().mockResolvedValue([
       {
         calendar_id: "mailbox/Work",
@@ -101,6 +101,14 @@ function fakeService() {
       url: "https://example.test/work",
       provider: "mailbox",
     }),
+  };
+  // Every provider reachable: the listing tools see what listCalendars returns.
+  return {
+    ...service,
+    listReachableCalendars: vi.fn(async () => ({
+      calendars: await service.listCalendars(),
+      unavailable: [] as Array<{ provider: string; error: string }>,
+    })),
   };
 }
 
@@ -208,6 +216,30 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     });
   });
 
+  it("lists the reachable providers and reports the unreachable one over the wire (#127)", async () => {
+    const service = fakeService();
+    const down = [{ provider: "nextcloud", error: "fetch failed (EHOSTUNREACH)" }];
+    service.listReachableCalendars.mockImplementation(async () => ({
+      calendars: await service.listCalendars(),
+      unavailable: down,
+    }));
+    const { client } = await connect(era, service);
+    // Listing first makes the client validate structuredContent against the
+    // advertised (converted) outputSchema, not only the valibot one.
+    await client.listTools();
+
+    const calendars = await client.callTool({ name: "list_calendars", arguments: {} });
+    expect(calendars.isError).toBeFalsy();
+    expect(calendars.structuredContent).toMatchObject({ unavailable_providers: down });
+
+    const events = await client.callTool({
+      name: "list_events",
+      arguments: { start: "2026-08-01T00:00:00Z", end: "2026-08-02T00:00:00Z" },
+    });
+    expect(events.isError).toBeFalsy();
+    expect(events.structuredContent).toMatchObject({ unavailable_providers: down });
+  });
+
   it("expands events into structuredContent", async () => {
     const { client } = await connect(era, fakeService());
     const result = await client.callTool({
@@ -237,6 +269,45 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
       "mailbox/Work",
       "mailbox/Team",
     ]);
+  });
+
+  it("returns calendar sharing that validates against the wire schema, and gates sharing (#47)", async () => {
+    const sharing = {
+      can_be_shared: true,
+      can_be_published: false,
+      protocol: "calendarserver",
+      shares: [
+        {
+          email: "bob@example.com",
+          principal: null,
+          name: "Bob Jones",
+          access: "read-write",
+          status: "pending",
+        },
+      ],
+    };
+    const service = {
+      ...fakeService(),
+      getCalendarSharing: vi.fn().mockResolvedValue(sharing),
+      changeCalendarShare: vi.fn().mockResolvedValue(sharing),
+    };
+    const { client, elicitations } = await connect(era, service, { action: "decline" });
+    await client.listTools();
+
+    const read = await client.callTool({
+      name: "get_calendar_sharing",
+      arguments: { calendar: "mailbox/Work" },
+    });
+    expect(read.isError).toBeFalsy();
+    expect(read.structuredContent).toEqual({ calendar_id: "mailbox/Work", ...sharing });
+    expect(elicitations).toHaveLength(0);
+
+    await client.callTool({
+      name: "share_calendar",
+      arguments: { calendar: "mailbox/Work", sharee: "carol@example.com", access: "read" },
+    });
+    expect(elicitations).toHaveLength(1);
+    expect(service.changeCalendarShare).not.toHaveBeenCalled();
   });
 
   it("returns typed busy periods from get_free_busy that validate against its schema (#48)", async () => {

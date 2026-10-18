@@ -102,19 +102,81 @@ export class CalendarError extends PimError {
   }
 }
 
+/** Whether retrying could help, by the same classification toPimError applies. */
 export function isRetryableError(error: Error): boolean {
-  if (error instanceof PimError) {
-    return error.isRetryable;
+  return toPimError(error).isRetryable;
+}
+
+/** Socket-level error codes that mean "could not reach the server". */
+const UNREACHABLE_CODES = new Set([
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+  // nodemailer replaces the socket's code with its own category.
+  "ECONNECTION",
+  "ESOCKET",
+  "EDNS",
+  // imapflow's own codes for a dropped or never-opened connection.
+  "NoConnection",
+  "EConnectionClosed",
+]);
+const TIMEOUT_CODES = new Set([
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  // imapflow
+  "ETIMEOUT",
+  "CONNECT_TIMEOUT",
+  "GREETING_TIMEOUT",
+  "UPGRADE_TIMEOUT",
+]);
+
+/**
+ * The code that best explains an error, from the error itself and down its
+ * `cause` chain (bounded): the first one the tables below recognise, else
+ * the first one present. imapflow and nodemailer set `code` on the error
+ * they throw; undici's "fetch failed" only on its cause.
+ */
+function errorCode(error: Error): string | undefined {
+  let first: string | undefined;
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string") {
+      if (UNREACHABLE_CODES.has(code) || TIMEOUT_CODES.has(code)) return code;
+      first ??= code;
+    }
+    current = current.cause;
   }
-  const msg = error.message;
-  return msg.includes("ECONNRESET") || msg.includes("ENOTFOUND") || msg.includes("ETIMEDOUT");
+  return first;
 }
 
 export function toPimError(error: Error): PimError {
   if (error instanceof PimError) return error;
+  // Node's fetch (undici, under tsdav) reports every network failure as a bare
+  // "fetch failed" and puts the reason in `cause`. Without this an
+  // unreachable host surfaced as a non-retryable internal error with no hint why.
+  const code = errorCode(error);
+  // Name the code whenever there is one and the message does not already,
+  // including codes outside the tables below (a TLS failure such as
+  // DEPTH_ZERO_SELF_SIGNED_CERT), which keep the message-based class.
+  const message =
+    code && !error.message.includes(code) ? `${error.message} (${code})` : error.message;
+  if (code && UNREACHABLE_CODES.has(code)) {
+    return new ConnectionError(message);
+  }
+  if (code && TIMEOUT_CODES.has(code)) {
+    return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
+  }
   const msg = error.message.toLowerCase();
   if (msg.includes("auth") || msg.includes("login") || msg.includes("credential")) {
-    return new AuthenticationError(error.message);
+    return new AuthenticationError(message);
   }
   if (
     msg.includes("econnrefused") ||
@@ -122,14 +184,14 @@ export function toPimError(error: Error): PimError {
     msg.includes("enotfound") ||
     msg.includes("connection")
   ) {
-    return new ConnectionError(error.message);
+    return new ConnectionError(message);
   }
   if (msg.includes("timeout") || msg.includes("etimedout")) {
-    return new ConnectionError(error.message, ErrorCode.CONNECTION_TIMEOUT);
+    return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
   }
   const wrapped = new (class InternalError extends PimError {
     constructor() {
-      super(error.message, ErrorCode.INTERNAL_ERROR, false);
+      super(message, ErrorCode.INTERNAL_ERROR, false);
       this.stack = error.stack;
     }
   })();

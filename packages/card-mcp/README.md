@@ -9,6 +9,8 @@ Every tool declares a `title`, all four behaviour annotations, and an `outputSch
 
 `delete_contact`, `delete_group` and `delete_address_book` ask the user to confirm before deleting. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
 
+Requires Node.js **20.19.0 or newer**.
+
 ## Usage
 
 ```bash
