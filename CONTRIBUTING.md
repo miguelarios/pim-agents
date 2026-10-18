@@ -10,8 +10,9 @@ Read its routing table before filing anything.
 
 - **Questions and ideas** go in a comment on the related issue or pull request,
   not a new issue.
-- **Bugs** need expected vs actual behaviour, reproduction steps and the package
-  version. `gh issue create -T Bug` fills in the template.
+- **Bugs** need the evidence the account-wide routing table lists (expected vs
+  actual, reproduction steps, logs or output, version, OS and runtime, impact).
+  `gh issue create -T Bug` fills in the template.
 - **Security problems** are reported as the
   [security policy](https://github.com/miguelarios/.github/blob/main/SECURITY.md)
   describes, never in a public issue.
@@ -21,7 +22,7 @@ can be agreed before you write the code.
 
 ## Setup
 
-Node.js **20.18.1 or newer**, and npm.
+Node.js **20.19.0 or newer**, and npm.
 
 ```bash
 git clone https://github.com/miguelarios/pim-agents.git
@@ -62,11 +63,13 @@ hand.
   Tests never talk to a real server.
 - Each server's `roundtrip.test.ts` drives a real MCP client over both protocol
   eras. Add a case there when you change what a tool advertises or returns.
-- Tests must not depend on the host. The suite has to pass with any `TZ` and
-  with real `CALDAV_*` / `CARDDAV_*` / `IMAP_*` variables exported. Pin
-  `PIM_TIMEZONE` with `vi.stubEnv` in a block that asserts on wall-clock times,
-  and blank inherited variables rather than calling `vi.unstubAllEnvs()` to
-  "clear" them, which restores them instead.
+- Tests must not depend on the host. `vitest.setup.ts` deletes your own
+  `CALDAV_*`, `CARDDAV_*`, `IMAP_*`, `SMTP_*`, `EMAIL_*` and `PIM_*`
+  variables before each test file, so a test that needs one sets it with
+  `vi.stubEnv`. The host `TZ` is not cleared: pin `PIM_TIMEZONE` in a block
+  that asserts on wall-clock times, and undo it in that block's `afterEach`.
+  Don't call `vi.unstubAllEnvs()` to "clear" a variable mid-test; it restores
+  the original instead.
 - Test data uses the reserved synthetic identities, such as `Alice Smith` /
   `alice@example.com` / `+1-555-0100`, and `example.com` hosts. Never commit a
   real name, address, phone number, hostname or credential, including in
