@@ -1,8 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadCalDavConfig } from "../config.js";
 
+/**
+ * Blank every CALDAV_* variable the host shell exports, so a machine with real
+ * accounts configured sees the same environment as CI. stubEnv with undefined
+ * deletes the key; unstubAllEnvs in afterEach restores the originals.
+ */
+function clearHostCalDavEnv() {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith("CALDAV_")) vi.stubEnv(key, undefined);
+  }
+}
+
 describe("loadCalDavConfig", () => {
   beforeEach(() => {
+    clearHostCalDavEnv();
     vi.stubEnv("CALDAV_MAILBOX_URL", "https://dav.mailbox.org/caldav/");
     vi.stubEnv("CALDAV_MAILBOX_USER", "user@example.com");
     vi.stubEnv("CALDAV_MAILBOX_PASS", "caldav-secret");
@@ -41,7 +53,7 @@ describe("loadCalDavConfig", () => {
   });
 
   it("throws when no CalDAV env vars are set", () => {
-    vi.unstubAllEnvs();
+    clearHostCalDavEnv();
     expect(() => loadCalDavConfig()).toThrow("No CalDAV accounts found");
   });
 
@@ -61,7 +73,7 @@ describe("loadCalDavConfig", () => {
   });
 
   it("works with a single account", () => {
-    vi.unstubAllEnvs();
+    clearHostCalDavEnv();
     vi.stubEnv("CALDAV_WORK_URL", "https://cal.work.com/dav/");
     vi.stubEnv("CALDAV_WORK_USER", "user");
     vi.stubEnv("CALDAV_WORK_PASS", "pass");
