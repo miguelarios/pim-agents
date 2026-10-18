@@ -65,6 +65,15 @@ describe("SmtpService", () => {
       expect(() => service.resolveFromAddress("blocked@test.com")).toThrow(/not allowed/i);
     });
 
+    it("misclassified: an unlisted from address is INVALID_INPUT, whatever it spells", () => {
+      // Classified by text, "auth@…" used to come out as AUTH_FAILED.
+      for (const from of ["blocked@test.com", "auth@test.com", "connection@test.com"]) {
+        expect(() => service.resolveFromAddress(from)).toThrow(
+          expect.objectContaining({ code: "INVALID_INPUT" }),
+        );
+      }
+    });
+
     it("formats From headers with the configured display name", () => {
       expect(service.formatFromHeader("shared@test.com")).toBe('"Test User" <shared@test.com>');
     });

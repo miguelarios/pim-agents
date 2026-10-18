@@ -711,8 +711,9 @@ export class CardDavService implements ContactsBackend {
         filename: `${contact.uid}.vcf`,
       });
       if (response && !(response as any).ok) {
-        throw new Error(
-          `Failed to create contact: ${(response as any).statusText ?? "unknown error"}`,
+        throw new ContactError(
+          `Failed to create contact: ${(response as any).status} ${(response as any).statusText ?? ""}`.trim(),
+          ErrorCode.WRITE_FAILED,
         );
       }
     } catch (error) {

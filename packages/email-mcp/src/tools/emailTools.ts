@@ -1217,6 +1217,9 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         if (!Array.isArray(args.uids) || args.uids.length === 0) {
           return invalid("uids must be a non-empty array of message UIDs");
         }
+        if (!Array.isArray(args.flags) || args.flags.length === 0) {
+          return invalid("flags must be a non-empty array of IMAP flags or keywords");
+        }
         const action = args.action || "add";
         await imap.markEmails(args.folder || "INBOX", args.uids, args.flags, action);
         return structured({
@@ -1666,8 +1669,14 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           }
         }
 
-        // Delete draft (permanently — not move to Trash)
-        await imap.deleteEmails(draftFolder, [args.uid], true);
+        // Delete draft (permanently — not move to Trash). The message is
+        // already sent: a failure here must not read as a failed send, or the
+        // caller may send it again.
+        try {
+          await imap.deleteEmails(draftFolder, [args.uid], true);
+        } catch (deleteError) {
+          console.error("[email-mcp] Sent, but could not delete the draft:", deleteError);
+        }
 
         return structured({
           status: "sent" as const,

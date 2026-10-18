@@ -37,6 +37,7 @@
   | `target_calendar` | `targetCalendar` |
   | `trigger_human` | `triggerHuman` |
   | `unavailable_providers` | `unavailableProviders` |
+- A CalDAV read's HTTP error is classified by its status rather than by words in the server's reply: a 500 whose page said "connection" was a retryable `CONNECTION_FAILED` (pim-core).
 
 ## 0.21.0 (2026-10-18)
 

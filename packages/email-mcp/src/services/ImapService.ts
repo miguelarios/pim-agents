@@ -10,6 +10,7 @@ import { ImapFlow } from "imapflow";
 import { type Attachment, simpleParser } from "mailparser";
 import { uidSort } from "../imapSort.js";
 import { type SearchParams, buildSearchCriteria } from "../search.js";
+import { toImapError } from "./imapErrors.js";
 
 export interface EmailSummary {
   uid: number;
@@ -214,7 +215,7 @@ export class ImapService {
         delimiter: mb.delimiter,
       }));
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -290,7 +291,7 @@ export class ImapService {
         lock.release();
       }
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -472,7 +473,7 @@ export class ImapService {
       return { rootMessageId, messages };
     } catch (error) {
       if (error instanceof EmailError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, anchorFolder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -538,7 +539,7 @@ export class ImapService {
       }
     } catch (error) {
       if (error instanceof EmailError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -584,10 +585,54 @@ export class ImapService {
       }
     } catch (error) {
       if (error instanceof EmailError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
+  }
+
+  /**
+   * The error for a COPY or MOVE the server refused. imapflow resolves `false`
+   * and keeps the reason (usually `NO [TRYCREATE]`, a missing destination) to
+   * itself, so ask STATUS whether the destination exists.
+   */
+  private async refusedTransfer(
+    client: ImapFlow,
+    verb: "Copy" | "Move",
+    destination: string,
+  ): Promise<Error> {
+    try {
+      await client.status(destination, { messages: true });
+    } catch (error) {
+      const classified = toImapError(error, destination);
+      if (classified.code === ErrorCode.FOLDER_NOT_FOUND) return classified;
+    }
+    return new EmailError(
+      `${verb} to ${destination} failed — the server refused it. Check list_folders for the exact path.`,
+      ErrorCode.OPERATION_FAILED,
+    );
+  }
+
+  /**
+   * MOVE, failing loudly. On a server without the MOVE extension imapflow
+   * falls back to COPY then delete, and deletes even when the COPY was
+   * refused (a missing folder, a full quota, no permission), so that fallback
+   * is done here instead: the originals are deleted only after the copy
+   * succeeded.
+   */
+  private async moveOrThrow(
+    client: ImapFlow,
+    uidRange: string,
+    destination: string,
+  ): Promise<void> {
+    if (!client.capabilities.has("MOVE")) {
+      const copied = await client.messageCopy(uidRange, destination, { uid: true });
+      if (!copied) throw await this.refusedTransfer(client, "Move", destination);
+      await client.messageDelete(uidRange, { uid: true });
+      return;
+    }
+    const moved = await client.messageMove(uidRange, destination, { uid: true });
+    if (!moved) throw await this.refusedTransfer(client, "Move", destination);
   }
 
   /**
@@ -616,12 +661,7 @@ export class ImapService {
       const lock = await client.getMailboxLock(folder);
       try {
         const result = await client.messageCopy(uids.join(","), destination, { uid: true });
-        if (!result) {
-          throw new EmailError(
-            `Copy to ${destination} failed — the server refused it. The folder may not exist; create_folder first, or check list_folders for the exact path.`,
-            ErrorCode.OPERATION_FAILED,
-          );
-        }
+        if (!result) throw await this.refusedTransfer(client, "Copy", destination);
         if (!result.uidMap) return undefined;
         return [...result.uidMap].map(([uid, destinationUid]) => ({ uid, destinationUid }));
       } finally {
@@ -629,7 +669,7 @@ export class ImapService {
       }
     } catch (error) {
       if (error instanceof EmailError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -641,14 +681,12 @@ export class ImapService {
       await client.connect();
       const lock = await client.getMailboxLock(folder);
       try {
-        await client.messageMove(uids.join(","), destination, {
-          uid: true,
-        });
+        await this.moveOrThrow(client, uids.join(","), destination);
       } finally {
         lock.release();
       }
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -666,18 +704,21 @@ export class ImapService {
       const lock = await client.getMailboxLock(folder);
       try {
         const uidRange = uids.join(",");
-        if (action === "add") {
-          await client.messageFlagsAdd(uidRange, flags, { uid: true });
-        } else {
-          await client.messageFlagsRemove(uidRange, flags, {
-            uid: true,
-          });
+        const stored =
+          action === "add"
+            ? await client.messageFlagsAdd(uidRange, flags, { uid: true })
+            : await client.messageFlagsRemove(uidRange, flags, { uid: true });
+        if (!stored) {
+          throw new EmailError(
+            `Could not ${action === "add" ? "set" : "clear"} ${flags.join(", ")} in ${folder}: the server refused, or the folder does not allow these flags (see its PERMANENTFLAGS)`,
+            ErrorCode.OPERATION_FAILED,
+          );
         }
       } finally {
         lock.release();
       }
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -694,13 +735,13 @@ export class ImapService {
         if (permanent) {
           await client.messageDelete(uidRange, { uid: true });
         } else {
-          await client.messageMove(uidRange, trashFolder!, { uid: true });
+          await this.moveOrThrow(client, uidRange, trashFolder!);
         }
       } finally {
         lock.release();
       }
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -712,7 +753,7 @@ export class ImapService {
       await client.connect();
       await client.mailboxCreate(path);
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, path);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -739,7 +780,7 @@ export class ImapService {
         newPath: result?.newPath ?? newPath,
       };
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, path);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -757,7 +798,7 @@ export class ImapService {
       // to a folder that no longer exists.
       this.specialUseCache.clear();
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, path);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -839,7 +880,7 @@ export class ImapService {
       }
     } catch (error) {
       if (error instanceof EmailError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -885,7 +926,7 @@ export class ImapService {
       );
     } catch (error) {
       if (error instanceof EmailError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -903,7 +944,7 @@ export class ImapService {
       // ImapFlow returns { uid } when UIDPLUS is supported, false otherwise
       return { uid: result && typeof result === "object" && "uid" in result ? result.uid : 0 };
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -927,7 +968,7 @@ export class ImapService {
       }
     } catch (error) {
       if (error instanceof EmailError) throw error;
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }
@@ -938,9 +979,17 @@ export class ImapService {
     try {
       await client.connect();
       const status = await client.status(folder, { messages: true, unseen: true });
+      // imapflow resolves `false` when STATUS is refused on a folder that does
+      // exist, such as a \Noselect parent; zeros would claim it is empty.
+      if (!status) {
+        throw new EmailError(
+          `The server refused STATUS on ${folder}; it may not hold messages (a parent-only folder).`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
       return { total: status.messages ?? 0, unseen: status.unseen ?? 0 };
     } catch (error) {
-      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+      throw toImapError(error, folder);
     } finally {
       await client.logout().catch(() => {});
     }

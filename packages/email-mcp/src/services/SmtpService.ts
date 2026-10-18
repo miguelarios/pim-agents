@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type EmailConfig, toPimError } from "@miguelarios/pim-core";
+import { type EmailConfig, EmailError, ErrorCode, toPimError } from "@miguelarios/pim-core";
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
@@ -110,10 +110,11 @@ export class SmtpService {
     if (!normalizedRequested) return fallback;
 
     if (!this.normalizedAllowedFromAddresses().includes(normalizedRequested)) {
-      throw toPimError(
-        new Error(
-          `Requested from address is not allowed: ${requestedFrom}. Allowed addresses: ${this.normalizedAllowedFromAddresses().join(", ")}`,
-        ),
+      // The caller's mistake, said as such. Through toPimError's text
+      // classification it came out as whatever the address happened to spell.
+      throw new EmailError(
+        `Requested from address is not allowed: ${requestedFrom}. Allowed addresses: ${this.normalizedAllowedFromAddresses().join(", ")}`,
+        ErrorCode.INVALID_INPUT,
       );
     }
 

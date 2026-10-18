@@ -3,6 +3,10 @@
 ## Unreleased
 
 - **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
+- **A folder that does not exist is `FOLDER_NOT_FOUND`**, naming the folder and quoting the server, on every tool that takes one. It was `INTERNAL_ERROR`, usually with the message "Command failed". `copy_email` to a missing destination was `OPERATION_FAILED`.
+- **`move_email` fails when the server refuses the move**, instead of reporting success with nothing moved, and on a server without the IMAP MOVE extension does the copy-then-delete itself, deleting the originals only after the copy succeeded: imapflow's own fallback deleted them even when the copy was refused (a missing folder, a full quota, no permission). `delete_email`'s move to Trash and `mark_email` likewise fail on a refusal, and `get_folder_status` on a folder that cannot be opened (a parent-only folder) fails rather than reporting zeros.
+- `send_draft` reports a sent message as sent even if deleting the draft afterwards fails, so a caller is not invited to send it twice. `mark_email` rejects an empty `flags` with `INVALID_INPUT`.
+- Other IMAP refusals are `OPERATION_FAILED` with the server's reason, a wrong password is `AUTH_FAILED`, an SMTP rejection is `SEND_FAILED` (retryable only for a 4xx reply), and a `from` address outside `SMTP_ALLOWED_FROM` is `INVALID_INPUT` (pim-core).
 
 ## 0.18.0 (2026-10-18)
 

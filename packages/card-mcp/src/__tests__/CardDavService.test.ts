@@ -706,6 +706,30 @@ describe("CardDavService", () => {
         }),
       );
     });
+
+    it("misclassified: a refused create is WRITE_FAILED with the HTTP status", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.createVCard.mockResolvedValueOnce({
+        ok: false,
+        status: 507,
+        statusText: "Insufficient Storage",
+      });
+      await service.connect();
+      await expect(
+        service.createContact("/dav/addressbooks/users/miguel/contacts/", {
+          uid: "new-2",
+          fullName: "Alice Smith",
+          emails: [],
+          phones: [],
+          addresses: [],
+          urls: [],
+          otherProperties: [],
+        }),
+      ).rejects.toMatchObject({
+        code: "WRITE_FAILED",
+        message: "Failed to create contact: 507 Insufficient Storage",
+      });
+    });
   });
 
   describe("updateContact", () => {

@@ -313,7 +313,7 @@ Copy one or more emails into another IMAP folder, leaving the originals where th
 | `uids` | number[] | yes | UIDs of emails to copy. They remain in the source folder. |
 | `destination` | string | yes | Destination folder path. It must already exist — `create_folder` first if not. |
 
-An empty `uids`, or a `destination` equal to `folder`, is rejected with `INVALID_INPUT` before a connection is opened. A destination the server refuses — `NO [TRYCREATE]` for a folder that does not exist — is returned as an `OPERATION_FAILED` error, never as a successful copy. A self-copy is legal IMAP and duplicates every message in place, which is not what "copy to a folder" means.
+An empty `uids`, or a `destination` equal to `folder`, is rejected with `INVALID_INPUT` before a connection is opened. A destination that does not exist is reported as `FOLDER_NOT_FOUND`, and any other refusal as `OPERATION_FAILED`, never as a successful copy. `move_email` behaves the same way. A self-copy is legal IMAP and duplicates every message in place, which is not what "copy to a folder" means.
 
 **Output**
 
@@ -607,4 +607,15 @@ The folder sits in the authority and is percent-encoded whole (`imap://Archive%2
 
 ## Errors
 
-Errors are returned as a tool result with `isError: true` and a single text block holding `{ "error": <code>, "message": <text>, "retryable": <boolean> }`. `error` is the `PimError` code from `@miguelarios/pim-core` (e.g. `INVALID_INPUT`, `OPERATION_FAILED`); `retryable` is `true` for transient failures (network/IMAP-disconnect class).
+Errors are returned as a tool result with `isError: true` and a single text block holding `{ "error": <code>, "message": <text>, "retryable": <boolean> }`. `error` is the `PimError` code from `@miguelarios/pim-core`; `retryable` is `true` for transient failures.
+
+| Code | When |
+|---|---|
+| `INVALID_INPUT` | The arguments cannot work: an empty `uids`, a self-copy, a `from` address not in `SMTP_ALLOWED_FROM`, an attachment path outside `EMAIL_ATTACHMENT_DIR`. |
+| `FOLDER_NOT_FOUND` | A `folder`, `destination` or `path` the server does not have (RFC 5530 `NONEXISTENT` / `TRYCREATE`, or the server's equivalent text). The message names the folder and quotes the server. |
+| `EMAIL_NOT_FOUND`, `ATTACHMENT_NOT_FOUND` | No message with that `uid`, or no part with that `partId`. |
+| `OPERATION_FAILED` | Any other command the IMAP server refused, with its reason in `message`. Retryable only for `UNAVAILABLE` / `INUSE` and Microsoft 365 throttling. |
+| `SEND_FAILED` | The SMTP server refused the envelope or the message. Retryable only for a 4xx (temporary) reply. |
+| `AUTH_FAILED` | The IMAP or SMTP server rejected the credentials. |
+| `CONNECTION_FAILED`, `CONNECTION_TIMEOUT` | The server could not be reached, or stopped answering. Retryable. |
+| `INTERNAL_ERROR` | Anything unclassified. |
