@@ -149,3 +149,43 @@ describe("PimError hierarchy", () => {
     });
   });
 });
+
+describe("toPimError on the errors imapflow and nodemailer actually throw (#129 review)", () => {
+  const coded = (message: string, code: string, cause?: Error) =>
+    Object.assign(new Error(message, cause ? { cause } : undefined), { code });
+
+  it("classifies nodemailer's ESOCKET / ECONNECTION / EDNS as retryable connection failures", () => {
+    for (const code of ["ESOCKET", "ECONNECTION", "EDNS"]) {
+      const err = toPimError(coded("connect EHOSTUNREACH 192.0.2.1:465", code));
+      expect(err.code, code).toBe(ErrorCode.CONNECTION_FAILED);
+      expect(err.isRetryable, code).toBe(true);
+      expect(err.message, code).toBe(`connect EHOSTUNREACH 192.0.2.1:465 (${code})`);
+    }
+  });
+
+  it("classifies imapflow's timeouts as CONNECTION_TIMEOUT and its closed connections as failures", () => {
+    for (const code of ["ETIMEOUT", "CONNECT_TIMEOUT", "GREETING_TIMEOUT", "UPGRADE_TIMEOUT"]) {
+      expect(toPimError(coded("Timeout", code)).code, code).toBe(ErrorCode.CONNECTION_TIMEOUT);
+    }
+    for (const code of ["NoConnection", "EConnectionClosed"]) {
+      expect(toPimError(coded("Socket is already closed", code)).code, code).toBe(
+        ErrorCode.CONNECTION_FAILED,
+      );
+    }
+  });
+
+  it("prefers a recognised code deeper in the chain over an unrecognised one on top", () => {
+    const err = toPimError(
+      coded("upstream failed", "E_WRAPPER", coded("connect ECONNREFUSED", "ECONNREFUSED")),
+    );
+    expect(err.code).toBe(ErrorCode.CONNECTION_FAILED);
+  });
+
+  it("isRetryableError agrees with toPimError", () => {
+    const fetchFailed = Object.assign(new TypeError("fetch failed"), {
+      cause: coded("x", "EHOSTUNREACH"),
+    });
+    expect(isRetryableError(fetchFailed)).toBe(true);
+    expect(isRetryableError(new Error("something broke"))).toBe(false);
+  });
+});
