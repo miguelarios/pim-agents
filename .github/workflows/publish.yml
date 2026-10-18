@@ -4,8 +4,12 @@ name: Publish to npm
 #   * workflow_call — release.yml calls this once per package whose version
 #     changed on main. This is the path that makes merging a release PR
 #     sufficient to publish, with no terminal in the loop.
-#   * push of a `<package>/v<version>` tag — the original manual path, kept
-#     so an old-style `git push origin <tag>` still works.
+#   * push of a `<package>/v<version>` tag — the original manual path.
+#
+# Authentication is npm Trusted Publishing (OIDC): no token. Each package's
+# trusted publisher on npmjs.com names release.yml, and npm validates the
+# *calling* workflow, so the tag-push path (where this file is the top-level
+# workflow) is not authorised unless a package also trusts publish.yml.
 on:
   workflow_call:
     inputs:
@@ -18,8 +22,10 @@ on:
         required: true
         type: string
     secrets:
+      # Unused since trusted publishing; optional so callers that still pass
+      # it (`secrets: inherit`) keep working.
       NPM_TOKEN:
-        required: true
+        required: false
   push:
     tags:
       - "*/v*"
@@ -29,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # required for npm provenance
+      id-token: write # npm trusted publishing (OIDC) and provenance
 
     steps:
       - uses: actions/checkout@v5
@@ -111,13 +117,19 @@ jobs:
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Trusted publishing needs npm 11.5.1 or newer; don't depend on the
+      # version bundled with whichever Node 24 release setup-node picks.
+      - name: Use npm 11.5.1+
+        run: npm install -g npm@^11.5.1
+
       - run: npm ci
       - run: npm run build
       - run: npm test
 
       - name: Publish
         if: steps.exists.outputs.already == 'false'
+        # No NODE_AUTH_TOKEN: npm authenticates with the job's OIDC identity.
+        # A stored token expired silently on 2026-10-08 and failed every
+        # publish with E404; there is nothing here to expire now.
         run: npm publish --access public --provenance
         working-directory: ${{ steps.target.outputs.dir }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -101,7 +101,8 @@ convention changes do not ride along with a feature.
   with the changelog section as its notes. No local git client is needed, so a release can be
   finished entirely from the GitHub web UI or a cloud session.
 - Publish order is handled automatically: `pim-core` is sorted ahead of the MCP servers
-- Pushing a `<package>/v<version>` tag by hand still publishes, via `publish.yml`'s tag trigger.
+- npm authentication is **Trusted Publishing** (OIDC): each package's trusted publisher on npmjs.com names `release.yml`, and there is no npm token to expire. If a publish fails after the release PR merged, re-run it with **Actions → Release on merge → Run workflow** (`gh workflow run release.yml`): a manual run releases every package version that has no tag yet.
+- Pushing a `<package>/v<version>` tag by hand runs `publish.yml`'s tag trigger, but npm only authorises it if the package's trusted publishers also include `publish.yml`.
   Note this path publishes to npm only — the GitHub Release and changelog notes are written by
   `release.yml`, so a hand-pushed tag leaves no Release behind
 - If one package in a batch fails to publish, the others are still tagged and released; the failed

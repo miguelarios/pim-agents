@@ -10,6 +10,11 @@ name: Release on merge
 on:
   push:
     branches: [main]
+  # Retry path: releases every package whose current version has no tag yet,
+  # for when a publish failed after the release PR merged (an npm auth
+  # outage, say). Safe to repeat: tagged versions are skipped here, and
+  # publish.yml skips any version already on npm.
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -30,6 +35,7 @@ jobs:
         id: scan
         env:
           BEFORE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
 
@@ -61,7 +67,9 @@ jobs:
               OLD=""
             fi
 
-            if [ "$NEW" = "$OLD" ]; then
+            # On a manual run every untagged version counts, changed in this
+            # push or not; the tag check below is what keeps it idempotent.
+            if [ "$EVENT" != "workflow_dispatch" ] && [ "$NEW" = "$OLD" ]; then
               continue
             fi
 
