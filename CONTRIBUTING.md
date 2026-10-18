@@ -8,10 +8,13 @@ Read its routing table before filing anything.
 
 ## Before you start
 
-- **Questions and ideas** go in a discussion or a comment, not a new issue.
+- **Questions and ideas** go in a comment on the related issue or pull request,
+  not a new issue.
 - **Bugs** need expected vs actual behaviour, reproduction steps and the package
   version. `gh issue create -T Bug` fills in the template.
-- **Security problems** go in a private advisory, never a public issue.
+- **Security problems** are reported as the
+  [security policy](https://github.com/miguelarios/.github/blob/main/SECURITY.md)
+  describes, never in a public issue.
 
 For anything larger than a small fix, comment on the issue first so the approach
 can be agreed before you write the code.
@@ -36,7 +39,8 @@ testing a server against it.
 ## The checks a PR must pass
 
 Run these from the repository root before pushing. CI runs the same four steps
-on Node 20.18.1, 22 and 24, plus a gitleaks secret scan:
+on every Node version in its matrix (`.github/workflows/ci.yml`), plus a
+gitleaks secret scan:
 
 ```bash
 npm run lint       # Biome: formatting and lint rules
