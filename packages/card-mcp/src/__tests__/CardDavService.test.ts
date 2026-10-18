@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CardDavService } from "../services/CardDavService.js";
 import { addressBookListSchema } from "../tools/addressBookSchemas.js";
 
@@ -52,6 +52,12 @@ describe("CardDavService", () => {
       username: "miguel",
       password: "secret",
     });
+  });
+
+  // Some tests stub fetch for the service's own MOVE requests. tsdav 2.5
+  // looks fetch up at call time, so a stub left in place would reach it too.
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   describe("connect", () => {
