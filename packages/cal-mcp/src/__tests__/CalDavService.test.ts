@@ -153,6 +153,18 @@ describe("CalDavService", () => {
       await service.listReachableCalendars();
       const { unavailable } = await service.listReachableCalendars();
       expect(unavailable).toEqual([]);
+      // mailbox logs in once and is cached; nextcloud fails, is not cached,
+      // and logs in again on the second listing.
+      expect(__mockClient.login).toHaveBeenCalledTimes(3);
+    });
+
+    it("names the provider without changing the error it was given", async () => {
+      const { __mockClient } = (await import("tsdav")) as any;
+      const original = unreachable();
+      __mockClient.login.mockResolvedValueOnce(undefined).mockRejectedValueOnce(original);
+      const err = await service.listCalendars().catch((e) => e);
+      expect(err.message).toMatch(/^Calendar provider "nextcloud": fetch failed/);
+      expect(original.message).toBe("fetch failed");
     });
 
     it("listCalendars still fails on any unreachable provider, naming it", async () => {

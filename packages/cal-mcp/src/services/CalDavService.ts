@@ -4,6 +4,7 @@ import {
   type CalDavConfig,
   CalendarError,
   ErrorCode,
+  PimError,
   ValidationError,
   checkDavCollectionResponse,
   formatInTimezone,
@@ -60,11 +61,25 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-/** The provider's error as a PimError, its message prefixed with which provider failed. */
+/** A provider's error, named, with the original's code and retryability. */
+class ProviderError extends PimError {
+  constructor(providerId: string, original: PimError) {
+    super(
+      `Calendar provider "${providerId}": ${original.message}`,
+      original.code,
+      original.isRetryable,
+    );
+    this.cause = original;
+  }
+}
+
+/**
+ * The provider's error as a new PimError naming which provider failed. A new
+ * object rather than an edited message, so the caller's error and its stack
+ * are left alone and naming it twice cannot stack prefixes.
+ */
 function providerError(providerId: string, error: unknown): Error {
-  const pimError = toPimError(asError(error));
-  pimError.message = `Calendar provider "${providerId}": ${pimError.message}`;
-  return pimError;
+  return new ProviderError(providerId, toPimError(asError(error)));
 }
 
 /** A calendar collection as the management tools name it. */
