@@ -15,26 +15,11 @@ import {
 import type { CalendarBackend } from "../providers/CalendarBackend.js";
 import { calendarSharingSchema, calendarWriteResultSchema } from "./calendarSchemas.js";
 
-/**
- * Maps to this server's external error vocabulary, as `calendarTools` does —
- * plus `validation_error`, which these tools actually raise: bad colours, empty
- * names, unresolvable providers and empty updates are all caller-fixable, and
- * reporting them as `backend_error` would send a caller looking at the server.
- */
-function mapError(err: unknown) {
-  if (err && typeof err === "object" && "code" in err) {
-    const code = (err as { code: unknown }).code;
-    if (code === "CALENDAR_NOT_FOUND") return toolError(err, () => "not_found");
-    if (code === "VALIDATION_FAILED") return toolError(err, () => "validation_error");
-  }
-  return toolError(err, () => "backend_error");
-}
-
 async function run(body: () => Promise<ToolResult>): Promise<ToolResult> {
   try {
     return await body();
   } catch (err) {
-    return mapError(err);
+    return toolError(err);
   }
 }
 
@@ -231,7 +216,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
         entry = await service.findCalendarEntry(args.calendar);
         count = await service.countCalendarObjects(args.calendar);
       } catch (err) {
-        return mapError(err);
+        return toolError(err);
       }
 
       const eventsClause = count !== undefined ? `all ${count} events in it` : "every event in it";

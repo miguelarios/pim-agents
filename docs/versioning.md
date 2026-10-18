@@ -24,7 +24,7 @@ A change to any of the following needs a **major** version, unless the
 | **Output schemas** (`structuredContent`) | Removing or renaming a field, changing its type, making a required field optional or nullable, or changing what a value means (units, time zone, encoding, inclusive vs exclusive). Adding or removing a value of an `enum` the server returns (a client matching every value breaks on a new one). |
 | **Annotations** | Changing `readOnlyHint`, `destructiveHint` or `idempotentHint`, in either direction. Clients use them to decide what to auto-approve and what to retry, so either direction changes what runs unattended: tightening stops something that used to run, loosening lets something run that used to be held. `openWorldHint` is informational and may change in a minor. |
 | **Text result block** | Changing what the JSON text block carries. It mirrors `structuredContent` for clients that do not read structured output, and it is the *only* place an error's `{ error, message, retryable }` appears, since error results have no `structuredContent`. The output-schema and error-code rules apply to it. |
-| **Error codes** | Renaming or removing an `error` code, reporting an existing condition under a different code, or making a call that used to succeed fail. The `retryable` flag is part of this: flipping it for a condition changes client retry loops. This covers the codes every server shares through pim-core's MCP facade (`CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED`, `UNKNOWN_TOOL`) as well as each server's own. |
+| **Error codes** | Renaming or removing an `error` code, reporting an existing condition under a different code, or making a call that used to succeed fail. The `retryable` flag is part of this: flipping it for a condition changes client retry loops. This covers the codes every server shares through pim-core's MCP facade (`CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED`, `UNKNOWN_TOOL`) as well as the pim-core `ErrorCode` values each server returns for its own failures. |
 | **Confirmation** | Gating an operation that was not gated (a headless client that cannot answer the prompt starts failing), or no longer gating one that was (it now runs without asking). The same stance as annotations: both directions are breaking. |
 | **Configuration** | Renaming or removing an environment variable, changing a default, or changing how a value is parsed. |
 | **Transports and protocol** | Dropping stdio or Streamable HTTP, or a supported MCP protocol revision. |
@@ -38,8 +38,8 @@ Its contract is the JavaScript API exported from `@miguelarios/pim-core`,
 error classes and their `code`s. Anything not exported from those entry points
 is internal. pim-core is versioned on its own, and a server's major bump never
 requires a pim-core one. The reverse does not hold: the servers pass some of
-core's behaviour straight to clients (email-mcp and card-mcp return core's
-`ErrorCode` values as their error codes, every server returns the facade's
+core's behaviour straight to clients (every server returns core's
+`ErrorCode` values as its error codes, every server returns the facade's
 confirmation codes, and the confirmation gate itself lives in core), so a core
 change that alters a server-visible code, result or gate is a breaking change
 for those servers too, and needs their major bump as well as core's.
@@ -74,12 +74,5 @@ changelog entry, even though it needs no major bump.
 These parts of the surface are inconsistent today and become hard to change
 after 1.0:
 
-- **Error codes differ between servers.** cal-mcp maps its own failures to
-  `not_found`, `validation_error` or `backend_error`; email-mcp and card-mcp
-  return pim-core's `ErrorCode` values directly (`CONNECTION_FAILED`,
-  `CONTACT_NOT_FOUND`, …); and all three also return the facade's
-  `CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED` and `UNKNOWN_TOOL`. Pick
-  one vocabulary for the server-specific codes, or document both as the
-  contract, before the servers reach 1.0.
 - pim-core should reach 1.0 in the same release wave as the servers, so three
   stable servers do not depend on a `0.x` core.
