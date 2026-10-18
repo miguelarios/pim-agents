@@ -167,14 +167,14 @@ export function parseAlarms(component: ICAL.Component): ParsedAlarm[] {
       out.push({
         type: "absolute",
         trigger: date.toISOString(),
-        trigger_human: date.toISOString(),
+        triggerHuman: date.toISOString(),
       });
     } else if (value instanceof ICAL.Duration) {
       const seconds = value.toSeconds();
       out.push({
         type: "relative",
         trigger: seconds,
-        trigger_human: formatTriggerHuman(seconds),
+        triggerHuman: formatTriggerHuman(seconds),
       });
     }
   }

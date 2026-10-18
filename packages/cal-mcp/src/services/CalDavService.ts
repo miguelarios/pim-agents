@@ -99,8 +99,8 @@ interface BusyCandidate {
   end: string;
   status: string | null;
   availability: string | null;
-  all_day: boolean;
-  calendar_id: string;
+  allDay: boolean;
+  calendarId: string;
 }
 
 /**
@@ -546,7 +546,7 @@ export class CalDavService implements IcsCalendarBackend {
     }
   }
 
-  // Returns the CalDAV account username for the given calendar_id. Used by
+  // Returns the CalDAV account username for the given calendarId. Used by
   // the tool layer to populate ORGANIZER on events that include attendees —
   // without this, strict CalDAV servers reject the PUT with 412 (see
   // updateEvent and generateEventIcs for context).
@@ -612,14 +612,14 @@ export class CalDavService implements IcsCalendarBackend {
       const displayName = displayNameOf(cal);
       const canWrite = await this.fetchPrivileges(client, cal.url);
       out.push({
-        calendar_id: `${providerId}/${displayName}`,
-        display_name: displayName,
+        calendarId: `${providerId}/${displayName}`,
+        displayName: displayName,
         color: (cal as any).calendarColor ?? null,
         description: descriptionOf(cal),
         timezone: timezoneOf(cal),
         order: orderOf(cal),
         source: providerId,
-        read_only: !canWrite,
+        readOnly: !canWrite,
         url: cal.url,
         // tsdav parses a bare-integer <getctag> (Nextcloud) as a number. It
         // is still a valid change marker, so keep it, as the string it is typed as.
@@ -632,7 +632,7 @@ export class CalDavService implements IcsCalendarBackend {
     return out;
   }
 
-  /** The configured provider IDs — the prefix half of every `calendar_id`. */
+  /** The configured provider IDs — the prefix half of every `calendarId`. */
   listProviders(): string[] {
     return [...this.accounts.keys()];
   }
@@ -668,7 +668,7 @@ export class CalDavService implements IcsCalendarBackend {
   }
 
   /**
-   * Resolves a calendar_id to the entry it names, so a caller can say what it
+   * Resolves a calendarId to the entry it names, so a caller can say what it
    * is about to act on rather than echoing back the string it was handed.
    */
   async findCalendarEntry(calendarId: string): Promise<CalendarCollection> {
@@ -677,8 +677,8 @@ export class CalDavService implements IcsCalendarBackend {
       const client = await this.getClient(account);
       const calendar = await this.findCalendar(client, calendarName, account.id);
       return {
-        calendar_id: calendarId,
-        display_name: calendarName,
+        calendarId: calendarId,
+        displayName: calendarName,
         url: (calendar as { url: string }).url,
         provider: account.id,
       };
@@ -753,7 +753,7 @@ export class CalDavService implements IcsCalendarBackend {
     if (!sharee.trim()) throw new ValidationError("sharee is required", "sharee");
     const before = await this.getCalendarSharing(calendarId);
     const protocol = before.protocol;
-    if (!before.can_be_shared || (protocol !== "calendarserver" && protocol !== "owncloud")) {
+    if (!before.canBeShared || (protocol !== "calendarserver" && protocol !== "owncloud")) {
       throw new ValidationError(
         `Calendar "${calendarId}" cannot be shared through this server: it reports neither CalendarServer nor Nextcloud sharing`,
         "calendar",
@@ -848,11 +848,11 @@ export class CalDavService implements IcsCalendarBackend {
   }): Promise<CalendarCollection> {
     const account = this.resolveProvider(opts.provider);
 
-    // A calendar with no display name has no addressable calendar_id at all —
+    // A calendar with no display name has no addressable calendarId at all —
     // `provider/` resolves to nothing — so creating one is refused rather than
     // quietly made unreachable.
     if (opts.displayName.trim() === "") {
-      throw new ValidationError("display_name cannot be empty", "display_name");
+      throw new ValidationError("displayName cannot be empty", "displayName");
     }
     if (opts.slug !== undefined && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(opts.slug)) {
       throw new ValidationError(
@@ -869,7 +869,7 @@ export class CalDavService implements IcsCalendarBackend {
     const existing = await this.fetchCalendarsFor(client, account.id);
 
     // A second calendar with the same display name on the same provider would
-    // make its calendar_id ambiguous on *every subsequent call* — the name is
+    // make its calendarId ambiguous on *every subsequent call* — the name is
     // not a convenience alias here, it is half the ID, and findCalendar
     // resolves every event operation by exact display-name match. So duplicates
     // are refused rather than suffixed; that also keeps a retried create from
@@ -943,8 +943,8 @@ export class CalDavService implements IcsCalendarBackend {
     // that cache — so drop it or the calendar stays invisible to this process.
     this.calendarsCache.delete(account.id);
     return {
-      calendar_id: `${account.id}/${opts.displayName}`,
-      display_name: opts.displayName,
+      calendarId: `${account.id}/${opts.displayName}`,
+      displayName: opts.displayName,
       url,
       provider: account.id,
     };
@@ -953,7 +953,7 @@ export class CalDavService implements IcsCalendarBackend {
   /**
    * Updates a calendar's display name, description and/or colour via PROPPATCH.
    *
-   * Renaming changes the calendar's identity: `calendar_id` is
+   * Renaming changes the calendar's identity: `calendarId` is
    * `provider/DisplayName`, so the old ID stops resolving and the *new* one
    * comes back in the result. The collection URL is untouched — display name
    * and slug are allowed to drift, exactly as in every CalDAV client.
@@ -976,11 +976,11 @@ export class CalDavService implements IcsCalendarBackend {
       opts.order === undefined
     ) {
       throw new ValidationError(
-        "Nothing to change — provide a display_name, color, description, timezone and/or order",
+        "Nothing to change — provide a displayName, color, description, timezone and/or order",
       );
     }
     if (opts.displayName !== undefined && opts.displayName.trim() === "") {
-      throw new ValidationError("display_name cannot be empty", "display_name");
+      throw new ValidationError("displayName cannot be empty", "displayName");
     }
     const color = opts.color !== undefined ? normalizeCalendarColor(opts.color) : undefined;
     const timezone =
@@ -992,7 +992,7 @@ export class CalDavService implements IcsCalendarBackend {
     const calendar = await this.findCalendar(client, calendarName, account.id);
     const url = (calendar as { url: string }).url;
 
-    // Renaming onto a name already in use would make that calendar_id ambiguous
+    // Renaming onto a name already in use would make that calendarId ambiguous
     // — the same reason create refuses duplicates. The calendar being renamed is
     // excluded so re-applying its own name stays a no-op rather than an error.
     if (opts.displayName !== undefined) {
@@ -1044,13 +1044,13 @@ export class CalDavService implements IcsCalendarBackend {
     const newDisplayName = opts.displayName ?? calendarName;
     const newCalendarId = `${account.id}/${newDisplayName}`;
     this.calendarsCache.delete(account.id);
-    // The UID→URL cache is keyed by calendar_id; a rename leaves its entries
+    // The UID→URL cache is keyed by calendarId; a rename leaves its entries
     // valid but filed under a key nothing looks up again.
     moveCachedCalendar(calendarId, newCalendarId);
 
     return {
-      calendar_id: newCalendarId,
-      display_name: newDisplayName,
+      calendarId: newCalendarId,
+      displayName: newDisplayName,
       url,
       provider: account.id,
     };
@@ -1075,8 +1075,8 @@ export class CalDavService implements IcsCalendarBackend {
     this.calendarsCache.delete(account.id);
     purgeCachedCalendar(calendarId);
     return {
-      calendar_id: calendarId,
-      display_name: calendarName,
+      calendarId: calendarId,
+      displayName: calendarName,
       url,
       provider: account.id,
     };
@@ -1119,15 +1119,15 @@ export class CalDavService implements IcsCalendarBackend {
           }
           summaries.push({
             uid: event.uid,
-            calendar_id: calendarId,
+            calendarId: calendarId,
             title: event.title,
             start: event.start,
             end: event.end,
-            all_day: event.all_day,
+            allDay: event.allDay,
             location: event.location,
             status: event.status,
-            is_recurring: event.is_recurring,
-            occurrence_date: event.occurrence_date,
+            isRecurring: event.isRecurring,
+            occurrenceDate: event.occurrenceDate,
           });
         }
       }
@@ -1174,7 +1174,7 @@ export class CalDavService implements IcsCalendarBackend {
    * exactly as `list_events` would expand it. That covers a plain rule-generated
    * occurrence and an override VEVENT alike: the override's fields (moved time,
    * changed title) come back in place of the master's, which is what a caller
-   * holding an `occurrence_date` from `list_events` needs (#39).
+   * holding an `occurrenceDate` from `list_events` needs (#39).
    */
   private async readEvent(
     calendarId: string,
@@ -1210,12 +1210,12 @@ export class CalDavService implements IcsCalendarBackend {
 
   /**
    * Expands the series over a two-day window around `occurrenceDate` and keeps
-   * the instance whose `occurrence_date` is exactly that instant. The expansion
+   * the instance whose `occurrenceDate` is exactly that instant. The expansion
    * filters on the rule-generated slot (the RECURRENCE-ID), not on an
    * override's own DTSTART, so a moved override is found by its slot like any
    * other occurrence. The window exists because the range is half-open
    * `[start, end)`: a zero-width range would exclude the target itself. The
-   * exact match on `occurrence_date` then keeps the neighbours out.
+   * exact match on `occurrenceDate` then keeps the neighbours out.
    */
   private pickOccurrence(
     data: string,
@@ -1226,14 +1226,14 @@ export class CalDavService implements IcsCalendarBackend {
     const target = new Date(occurrenceDate).getTime();
     if (Number.isNaN(target)) {
       throw new ValidationError(
-        `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
-        "occurrence_date",
+        `Invalid occurrenceDate "${occurrenceDate}" — use an ISO 8601 date-time`,
+        "occurrenceDate",
       );
     }
-    if (!master.is_recurring) {
+    if (!master.isRecurring) {
       throw new ValidationError(
-        `Event "${uid}" is not recurring — omit occurrence_date to read it`,
-        "occurrence_date",
+        `Event "${uid}" is not recurring — omit occurrenceDate to read it`,
+        "occurrenceDate",
       );
     }
     const DAY = 86_400_000;
@@ -1242,12 +1242,11 @@ export class CalDavService implements IcsCalendarBackend {
       end: new Date(target + DAY).toISOString(),
     };
     const hit = parseIcsEvents(data, window, this.timezone).find(
-      (e) =>
-        e.uid === uid && e.occurrence_date !== null && Date.parse(e.occurrence_date) === target,
+      (e) => e.uid === uid && e.occurrenceDate !== null && Date.parse(e.occurrenceDate) === target,
     );
     if (!hit) {
       throw new CalendarError(
-        `Event "${uid}" has no occurrence at ${occurrenceDate} — occurrence_date must be a value list_events returned for it`,
+        `Event "${uid}" has no occurrence at ${occurrenceDate} — occurrenceDate must be a value list_events returned for it`,
         ErrorCode.EVENT_NOT_FOUND,
         uid,
       );
@@ -1569,8 +1568,8 @@ export class CalDavService implements IcsCalendarBackend {
             end: event.end,
             status: event.status,
             availability: event.availability,
-            all_day: event.all_day,
-            calendar_id: calendarId,
+            allDay: event.allDay,
+            calendarId: calendarId,
           });
         }
       }
@@ -1584,7 +1583,7 @@ export class CalDavService implements IcsCalendarBackend {
   /** Which candidates actually block time under the given options. */
   private static blocksTime(e: BusyCandidate, options: FreeBusyOptions): boolean {
     // Skip all-day events unless includeAllDayAsBusy
-    if (e.all_day && !options.includeAllDayAsBusy) return false;
+    if (e.allDay && !options.includeAllDayAsBusy) return false;
     // Skip free events
     if (e.availability === "free") return false;
     // Skip tentative when ignoreTentative
@@ -1876,23 +1875,23 @@ export class CalDavService implements IcsCalendarBackend {
   private toEventFull(event: ParsedEvent, calendarId: string): EventFull {
     return {
       uid: event.uid,
-      calendar_id: calendarId,
+      calendarId: calendarId,
       title: event.title,
       start: event.start,
       end: event.end,
-      all_day: event.all_day,
+      allDay: event.allDay,
       location: event.location,
       status: event.status,
-      is_recurring: event.is_recurring,
-      occurrence_date: event.occurrence_date,
+      isRecurring: event.isRecurring,
+      occurrenceDate: event.occurrenceDate,
       description: event.description,
       url: event.url,
       availability: event.availability,
       attendees: event.attendees,
       organizer: event.organizer,
-      recurrence_rule: event.recurrence_rule,
+      recurrenceRule: event.recurrenceRule,
       created: event.created,
-      last_modified: event.last_modified,
+      lastModified: event.lastModified,
       alarms: event.alarms,
       categories: event.categories,
       geo: event.geo,

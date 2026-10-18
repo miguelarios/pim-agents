@@ -17,15 +17,15 @@ const ALL_TOOLS = [...CALENDAR_TOOLS, ...CALENDAR_MANAGEMENT_TOOLS];
 
 const EVENT = {
   uid: "evt-1",
-  calendar_id: "mailbox/Work",
+  calendarId: "mailbox/Work",
   title: "Standup",
   start: "2026-08-01T09:00:00.000Z",
   end: "2026-08-01T09:15:00.000Z",
-  all_day: false,
+  allDay: false,
   location: null,
   status: null,
-  is_recurring: false,
-  occurrence_date: null,
+  isRecurring: false,
+  occurrenceDate: null,
 };
 
 const RECURRING_ICS = [
@@ -47,14 +47,14 @@ function fakeService() {
   const service = {
     listCalendars: vi.fn().mockResolvedValue([
       {
-        calendar_id: "mailbox/Work",
-        display_name: "Work",
+        calendarId: "mailbox/Work",
+        displayName: "Work",
         color: null,
         description: null,
         timezone: "America/Chicago",
         order: 0,
         source: "mailbox",
-        read_only: false,
+        readOnly: false,
         url: "https://example.test/work",
       },
     ]),
@@ -62,7 +62,7 @@ function fakeService() {
     listEventsFull: vi.fn().mockResolvedValue([EVENT]),
     getEvent: vi.fn().mockResolvedValue(EVENT),
     getEventWithMeta: vi.fn().mockResolvedValue({
-      event: { ...EVENT, is_recurring: false },
+      event: { ...EVENT, isRecurring: false },
       meta: { url: "u", etag: "e" },
     }),
     deleteEvent: vi.fn().mockResolvedValue(undefined),
@@ -77,27 +77,27 @@ function fakeService() {
     getAccountEmail: vi.fn(() => "user@example.com"),
     listProviders: vi.fn(() => ["mailbox"]),
     findCalendarEntry: vi.fn().mockResolvedValue({
-      calendar_id: "mailbox/Work",
-      display_name: "Work",
+      calendarId: "mailbox/Work",
+      displayName: "Work",
       url: "https://example.test/work",
       provider: "mailbox",
     }),
     countCalendarObjects: vi.fn().mockResolvedValue(214),
     createCalendar: vi.fn().mockResolvedValue({
-      calendar_id: "mailbox/Team",
-      display_name: "Team",
+      calendarId: "mailbox/Team",
+      displayName: "Team",
       url: "https://example.test/team",
       provider: "mailbox",
     }),
     updateCalendarMeta: vi.fn().mockResolvedValue({
-      calendar_id: "mailbox/Team",
-      display_name: "Team",
+      calendarId: "mailbox/Team",
+      displayName: "Team",
       url: "https://example.test/work",
       provider: "mailbox",
     }),
     deleteCalendar: vi.fn().mockResolvedValue({
-      calendar_id: "mailbox/Work",
-      display_name: "Work",
+      calendarId: "mailbox/Work",
+      displayName: "Work",
       url: "https://example.test/work",
       provider: "mailbox",
     }),
@@ -175,6 +175,24 @@ const connect = async (...args: Parameters<typeof open>) => {
   return session;
 };
 
+/**
+ * Every property name declared anywhere in a JSON Schema, nested objects and
+ * array items included, so a naming rule covers the whole advertised surface.
+ */
+function schemaKeys(schema: unknown, out = new Set<string>()): Set<string> {
+  if (Array.isArray(schema)) {
+    for (const s of schema) schemaKeys(s, out);
+  } else if (schema && typeof schema === "object") {
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === "properties" && value && typeof value === "object") {
+        for (const name of Object.keys(value)) out.add(name);
+      }
+      schemaKeys(value, out);
+    }
+  }
+  return out;
+}
+
 describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era) => {
   it("negotiates the expected protocol era", async () => {
     const { client } = await connect(era, fakeService());
@@ -198,6 +216,19 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     }
   });
 
+  it("names every input parameter and output field in camelCase (#150)", async () => {
+    const { client } = await connect(era, fakeService());
+    const { tools } = await client.listTools();
+
+    for (const tool of tools) {
+      const keys = [...schemaKeys(tool.inputSchema), ...schemaKeys(tool.outputSchema)];
+      expect(
+        keys.filter((k) => !/^[a-z][a-zA-Z0-9]*$/.test(k)),
+        tool.name,
+      ).toEqual([]);
+    }
+  });
+
   it("returns tools in a stable order across calls", async () => {
     const { client } = await connect(era, fakeService());
     const first = (await client.listTools()).tools.map((t) => t.name);
@@ -212,7 +243,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
 
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({
-      calendars: [{ calendar_id: "mailbox/Work", timezone: "America/Chicago", order: 0 }],
+      calendars: [{ calendarId: "mailbox/Work", timezone: "America/Chicago", order: 0 }],
     });
   });
 
@@ -230,14 +261,14 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
 
     const calendars = await client.callTool({ name: "list_calendars", arguments: {} });
     expect(calendars.isError).toBeFalsy();
-    expect(calendars.structuredContent).toMatchObject({ unavailable_providers: down });
+    expect(calendars.structuredContent).toMatchObject({ unavailableProviders: down });
 
     const events = await client.callTool({
       name: "list_events",
       arguments: { start: "2026-08-01T00:00:00Z", end: "2026-08-02T00:00:00Z" },
     });
     expect(events.isError).toBeFalsy();
-    expect(events.structuredContent).toMatchObject({ unavailable_providers: down });
+    expect(events.structuredContent).toMatchObject({ unavailableProviders: down });
   });
 
   it("expands events into structuredContent", async () => {
@@ -273,8 +304,8 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
 
   it("returns calendar sharing that validates against the wire schema, and gates sharing (#47)", async () => {
     const sharing = {
-      can_be_shared: true,
-      can_be_published: false,
+      canBeShared: true,
+      canBePublished: false,
       protocol: "calendarserver",
       shares: [
         {
@@ -299,7 +330,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
       arguments: { calendar: "mailbox/Work" },
     });
     expect(read.isError).toBeFalsy();
-    expect(read.structuredContent).toEqual({ calendar_id: "mailbox/Work", ...sharing });
+    expect(read.structuredContent).toEqual({ calendarId: "mailbox/Work", ...sharing });
     expect(elicitations).toHaveLength(0);
 
     await client.callTool({
@@ -385,7 +416,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     // drift from the advertised outputSchema.
     const service = fakeService();
     service.getEventWithMeta.mockResolvedValue({
-      event: { ...EVENT, is_recurring: true },
+      event: { ...EVENT, isRecurring: true },
       meta: { url: "u", etag: "e" },
     });
     const { client } = await connect(era, service);
@@ -396,7 +427,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
         calendar: "mailbox/Work",
         uid: "evt-1",
         span: "this",
-        occurrence_date: "2026-08-02T09:00:00.000Z",
+        occurrenceDate: "2026-08-02T09:00:00.000Z",
         attendees: [{ email: "guest@example.com" }],
         alarms: [{ type: "relative", trigger: -600 }],
       },
@@ -408,14 +439,14 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
       { email: "guest@example.com", name: null, status: null, role: null, type: "person" },
     ]);
     expect(event.alarms).toEqual([
-      { type: "relative", trigger: -600, trigger_human: "10 minutes before" },
+      { type: "relative", trigger: -600, triggerHuman: "10 minutes before" },
     ]);
   });
 
   it("splits a series for span=future and returns the new series' event (#38)", async () => {
     const service = fakeService();
     service.getEventWithMeta.mockResolvedValue({
-      event: { ...EVENT, is_recurring: true },
+      event: { ...EVENT, isRecurring: true },
       meta: { url: "u", etag: "e" },
     });
     service.createEvent.mockImplementation(async (_cal: string, _ics: string, uid: string) => ({
@@ -431,7 +462,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
         calendar: "mailbox/Work",
         uid: "evt-1",
         span: "future",
-        occurrence_date: "2026-08-05T09:00:00.000Z",
+        occurrenceDate: "2026-08-05T09:00:00.000Z",
         start: "2026-08-05T10:00:00.000Z",
         end: "2026-08-05T10:15:00.000Z",
       },
@@ -471,7 +502,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     );
     const service = fakeService();
     service.getEventWithMeta.mockResolvedValue({
-      event: { ...EVENT, is_recurring: true },
+      event: { ...EVENT, isRecurring: true },
       meta: { url: "u", etag: "e" },
     });
     service.fetchRawCalendarObject.mockResolvedValue({ data: withOverride, url: "u", etag: "e" });
@@ -487,7 +518,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
         calendar: "mailbox/Work",
         uid: "evt-1",
         span: "future",
-        occurrence_date: "2026-08-05T09:00:00.000Z",
+        occurrenceDate: "2026-08-05T09:00:00.000Z",
         title: "Standup v2",
       },
     });
@@ -504,7 +535,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
         calendar: "mailbox/Work",
         uid: "evt-1",
         span: "future",
-        occurrence_date: "2026-08-05T09:00:00.000Z",
+        occurrenceDate: "2026-08-05T09:00:00.000Z",
         title: "Standup v2",
       },
     });
@@ -517,7 +548,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
   it("excludes a single occurrence of a recurring event without asking", async () => {
     const service = fakeService();
     service.getEventWithMeta.mockResolvedValue({
-      event: { ...EVENT, is_recurring: true },
+      event: { ...EVENT, isRecurring: true },
       meta: { url: "u", etag: "e" },
     });
     const { client, elicitations } = await connect(era, service);
@@ -527,7 +558,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
         calendar: "mailbox/Work",
         uid: "evt-1",
         span: "this",
-        occurrence_date: "2026-08-02T09:00:00.000Z",
+        occurrenceDate: "2026-08-02T09:00:00.000Z",
       },
     });
 
@@ -541,7 +572,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
   it("confirms before ending a series with span=future, then rewrites the object (#41)", async () => {
     const service = fakeService();
     service.getEventWithMeta.mockResolvedValue({
-      event: { ...EVENT, is_recurring: true },
+      event: { ...EVENT, isRecurring: true },
       meta: { url: "u", etag: "e" },
     });
     const { client, elicitations } = await connect(era, service, {
@@ -554,7 +585,7 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
         calendar: "mailbox/Work",
         uid: "evt-1",
         span: "future",
-        occurrence_date: "2026-08-05T09:00:00.000Z",
+        occurrenceDate: "2026-08-05T09:00:00.000Z",
       },
     });
 
@@ -601,17 +632,17 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     const { client } = await connect(era, service);
     const result = await client.callTool({
       name: "create_calendar",
-      arguments: { provider: "mailbox", display_name: "Team", color: "#3B82F6" },
+      arguments: { provider: "mailbox", displayName: "Team", color: "#3B82F6" },
     });
 
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({
       status: "created",
-      calendar_id: "mailbox/Team",
+      calendarId: "mailbox/Team",
     });
   });
 
-  it("rejects a create with no display_name without running the handler", async () => {
+  it("rejects a create with no displayName without running the handler", async () => {
     const service = fakeService();
     const { client } = await connect(era, service);
     const result = await client.callTool({
@@ -651,18 +682,18 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect(service.updateCalendarMeta).not.toHaveBeenCalled();
   });
 
-  it("hands back the post-rename calendar_id from update_calendar", async () => {
+  it("hands back the post-rename calendarId from update_calendar", async () => {
     const service = fakeService();
     const { client } = await connect(era, service);
     const result = await client.callTool({
       name: "update_calendar",
-      arguments: { calendar: "mailbox/Work", display_name: "Team" },
+      arguments: { calendar: "mailbox/Work", displayName: "Team" },
     });
 
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({
       status: "updated",
-      calendar_id: "mailbox/Team",
+      calendarId: "mailbox/Team",
     });
   });
 

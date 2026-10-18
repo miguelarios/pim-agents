@@ -5,7 +5,7 @@
  *
  * They mirror `CalendarInfo`, `EventSummary`, `EventFull` and `FreeSlot` from
  * `../services/CalDavService.js`. `list_events` and friends can return either
- * the summary or the full shape depending on `detail_level`, so the event
+ * the summary or the full shape depending on `detailLevel`, so the event
  * schema is the summary shape with every full-only field optional.
  */
 import * as v from "valibot";
@@ -13,14 +13,14 @@ import * as v from "valibot";
 const nullableString = v.nullable(v.string());
 
 export const calendarSchema = v.object({
-  calendar_id: v.string(),
-  display_name: v.string(),
+  calendarId: v.string(),
+  displayName: v.string(),
   color: nullableString,
   description: nullableString,
   timezone: nullableString,
   order: v.nullable(v.number()),
   source: v.string(),
-  read_only: v.boolean(),
+  readOnly: v.boolean(),
   url: v.string(),
   ctag: v.optional(v.string()),
 });
@@ -36,29 +36,29 @@ const attendeeSchema = v.object({
 const alarmSchema = v.object({
   type: v.picklist(["relative", "absolute"]),
   trigger: v.union([v.number(), v.string()]),
-  trigger_human: v.string(),
+  triggerHuman: v.string(),
 });
 
 /** Summary fields, plus the full-detail fields as optional. */
 export const eventSchema = v.object({
   uid: v.string(),
-  calendar_id: v.string(),
+  calendarId: v.string(),
   title: v.string(),
   start: v.string(),
   end: v.string(),
-  all_day: v.boolean(),
+  allDay: v.boolean(),
   location: nullableString,
   status: nullableString,
-  is_recurring: v.boolean(),
-  occurrence_date: nullableString,
+  isRecurring: v.boolean(),
+  occurrenceDate: nullableString,
   description: v.optional(nullableString),
   url: v.optional(nullableString),
   availability: v.optional(nullableString),
   attendees: v.optional(v.array(attendeeSchema)),
   organizer: v.optional(v.nullable(v.object({ name: nullableString, email: v.string() }))),
-  recurrence_rule: v.optional(nullableString),
+  recurrenceRule: v.optional(nullableString),
   created: v.optional(nullableString),
-  last_modified: v.optional(nullableString),
+  lastModified: v.optional(nullableString),
   alarms: v.optional(v.array(alarmSchema)),
   categories: v.optional(v.array(v.string())),
   geo: v.optional(v.nullable(v.object({ latitude: v.number(), longitude: v.number() }))),
@@ -74,12 +74,12 @@ const unavailableProvidersSchema = v.optional(
 
 export const calendarListSchema = v.object({
   calendars: v.array(calendarSchema),
-  unavailable_providers: unavailableProvidersSchema,
+  unavailableProviders: unavailableProvidersSchema,
 });
 
 export const eventListSchema = v.object({
   events: v.array(eventSchema),
-  unavailable_providers: unavailableProvidersSchema,
+  unavailableProviders: unavailableProvidersSchema,
 });
 
 export const singleEventSchema = v.object({
@@ -124,22 +124,22 @@ export const freeBusySchema = v.object({
 });
 
 /**
- * Result of the three collection-management tools. `calendar_id` is always the
+ * Result of the three collection-management tools. `calendarId` is always the
  * post-operation ID, so a rename hands back the ID that resolves from now on
  * rather than the one the caller passed in.
  */
 export const calendarWriteResultSchema = v.object({
   status: v.picklist(["created", "updated", "deleted"]),
-  calendar_id: v.string(),
+  calendarId: v.string(),
   url: v.string(),
-  display_name: v.optional(v.string()),
+  displayName: v.optional(v.string()),
 });
 
 /** get_calendar_sharing, share_calendar and unshare_calendar (#47). */
 export const calendarSharingSchema = v.object({
-  calendar_id: v.string(),
-  can_be_shared: v.boolean(),
-  can_be_published: v.boolean(),
+  calendarId: v.string(),
+  canBeShared: v.boolean(),
+  canBePublished: v.boolean(),
   protocol: v.nullable(v.picklist(["calendarserver", "owncloud", "webdav"])),
   shares: v.array(
     v.object({

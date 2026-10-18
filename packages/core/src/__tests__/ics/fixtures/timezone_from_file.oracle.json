@@ -5,7 +5,7 @@
       "title": "A test event",
       "start": "2023-03-06T21:23:00.000Z",
       "end": "2023-03-06T22:23:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": null,
@@ -15,13 +15,13 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": null,
+      "recurrenceRule": null,
       "rdates": null,
       "created": null,
-      "last_modified": null,
-      "is_recurring": false,
+      "lastModified": null,
+      "isRecurring": false,
       "alarms": [],
-      "occurrence_date": null
+      "occurrenceDate": null
     }
   ]
 }

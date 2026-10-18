@@ -46,7 +46,7 @@ See [docs/tools/card-mcp.md](https://github.com/miguelarios/pim-agents/blob/main
 
 | Tool | Description |
 |------|-------------|
-| `list_contacts` | List and search contacts by name, email, phone, org (groups hidden unless `include_groups`) |
+| `list_contacts` | List and search contacts by name, email, phone, org (groups hidden unless `includeGroups`) |
 | `get_contact` | Get full contact details by UID |
 | `create_contact` | Create a new contact |
 | `update_contact` | Update an existing contact (merge-based; `null` clears a field) |

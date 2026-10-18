@@ -14,7 +14,7 @@ export interface ExceptionOverrides {
   title?: string;
   start?: string;
   end?: string;
-  all_day?: boolean;
+  allDay?: boolean;
   location?: string;
   description?: string;
   attendees?: Array<{ email: string }>;
@@ -28,7 +28,7 @@ export interface MasterEventUpdates {
   title?: string;
   start?: string; // ISO 8601
   end?: string;
-  all_day?: boolean;
+  allDay?: boolean;
   location?: string; // "" removes the property
   description?: string; // "" removes the property
   attendees?: Array<{ email: string }>; // replaces the list (participation state of replaced attendees is reset — inherent)
@@ -144,7 +144,7 @@ export function createExceptionComponent(
 
   const startIso = overrides.start ?? defaultStart;
   const endIso = overrides.end ?? defaultEnd;
-  const isAllDay = overrides.all_day ?? allDay;
+  const isAllDay = overrides.allDay ?? allDay;
 
   const dtstart = ICAL.Time.fromJSDate(new Date(startIso), true);
   if (isAllDay) dtstart.isDate = true;
@@ -308,7 +308,7 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
 
   const currentDtstart = master.getFirstPropertyValue("dtstart");
   const currentAllDay = currentDtstart instanceof ICAL.Time ? currentDtstart.isDate : false;
-  const allDay = updates.all_day ?? currentAllDay;
+  const allDay = updates.allDay ?? currentAllDay;
 
   if (updates.title !== undefined) master.updatePropertyWithValue("summary", updates.title);
 
@@ -557,7 +557,7 @@ export function splitRecurrenceIcs(
   }
   if (!isOccurrence) {
     throw new IcsParseError(
-      `No occurrence at ${occurrenceDate} — occurrence_date must be a value list_events returned for this event`,
+      `No occurrence at ${occurrenceDate} — occurrenceDate must be a value list_events returned for this event`,
       null,
     );
   }

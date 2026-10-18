@@ -6,7 +6,7 @@
       "title": "Every day recurring",
       "start": "2012-08-01T12:00:00.000Z",
       "end": "2012-08-01T13:00:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": "confirmed",
@@ -16,23 +16,23 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": "FREQ=DAILY",
+      "recurrenceRule": "FREQ=DAILY",
       "rdates": null,
       "created": "2012-08-03T22:12:36.000Z",
-      "last_modified": "2012-08-03T22:12:36.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-08-03T22:12:36.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -1800, "trigger_human": "30 minutes before" },
-        { "type": "relative", "trigger": -1800, "trigger_human": "30 minutes before" }
+        { "type": "relative", "trigger": -1800, "triggerHuman": "30 minutes before" },
+        { "type": "relative", "trigger": -1800, "triggerHuman": "30 minutes before" }
       ],
-      "occurrence_date": "2012-08-01T12:00:00.000Z"
+      "occurrenceDate": "2012-08-01T12:00:00.000Z"
     },
     {
       "uid": "event-3@example.com",
       "title": "Every day recurring",
       "start": "2012-08-02T12:00:00.000Z",
       "end": "2012-08-02T13:00:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": "confirmed",
@@ -42,23 +42,23 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": "FREQ=DAILY",
+      "recurrenceRule": "FREQ=DAILY",
       "rdates": null,
       "created": "2012-08-03T22:12:36.000Z",
-      "last_modified": "2012-08-03T22:12:36.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-08-03T22:12:36.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -1800, "trigger_human": "30 minutes before" },
-        { "type": "relative", "trigger": -1800, "trigger_human": "30 minutes before" }
+        { "type": "relative", "trigger": -1800, "triggerHuman": "30 minutes before" },
+        { "type": "relative", "trigger": -1800, "triggerHuman": "30 minutes before" }
       ],
-      "occurrence_date": "2012-08-02T12:00:00.000Z"
+      "occurrenceDate": "2012-08-02T12:00:00.000Z"
     },
     {
       "uid": "event-3@example.com",
       "title": "Every day recurring",
       "start": "2012-08-03T12:00:00.000Z",
       "end": "2012-08-03T13:00:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": null,
       "status": "confirmed",
@@ -68,16 +68,16 @@
       "categories": [],
       "geo": null,
       "organizer": null,
-      "recurrence_rule": "FREQ=DAILY",
+      "recurrenceRule": "FREQ=DAILY",
       "rdates": null,
       "created": "2012-08-03T22:12:36.000Z",
-      "last_modified": "2012-08-03T22:12:36.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-08-03T22:12:36.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -1800, "trigger_human": "30 minutes before" },
-        { "type": "relative", "trigger": -1800, "trigger_human": "30 minutes before" }
+        { "type": "relative", "trigger": -1800, "triggerHuman": "30 minutes before" },
+        { "type": "relative", "trigger": -1800, "triggerHuman": "30 minutes before" }
       ],
-      "occurrence_date": "2012-08-03T12:00:00.000Z"
+      "occurrenceDate": "2012-08-03T12:00:00.000Z"
     }
   ]
 }

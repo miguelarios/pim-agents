@@ -5,7 +5,7 @@
       "title": "Calendar",
       "start": "2012-09-11T17:30:00.000Z",
       "end": "2012-09-11T18:00:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": null,
       "description": "desc",
       "status": "confirmed",
@@ -18,15 +18,15 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "x@bar.com", "name": "foobar" },
-      "recurrence_rule": "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR",
+      "recurrenceRule": "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR",
       "rdates": null,
       "created": null,
-      "last_modified": "2012-09-11T18:48:51.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-09-11T18:48:51.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
+        { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrence_date": null
+      "occurrenceDate": null
     }
   ]
 }

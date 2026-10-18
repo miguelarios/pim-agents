@@ -6,7 +6,7 @@
       "title": "Crazy Event Thingy!",
       "start": "2012-10-02T17:00:00.000Z",
       "end": "2012-10-02T17:30:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": "PLACE",
       "description": "IAM FOO",
       "status": "confirmed",
@@ -20,22 +20,22 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "dave@example.com", "name": "Carol Davis" },
-      "recurrence_rule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
+      "recurrenceRule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
       "rdates": ["2012-11-10T18:00:00.000Z", "2012-11-05T18:00:00.000Z"],
       "created": null,
-      "last_modified": "2012-09-12T17:15:06.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-09-12T17:15:06.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
+        { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrence_date": "2012-10-02T17:00:00.000Z"
+      "occurrenceDate": "2012-10-02T17:00:00.000Z"
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
       "title": "Crazy Event Thingy!",
       "start": "2012-11-05T18:00:00.000Z",
       "end": "2012-11-05T18:30:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": "PLACE",
       "description": "IAM FOO",
       "status": "confirmed",
@@ -49,22 +49,22 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "dave@example.com", "name": "Carol Davis" },
-      "recurrence_rule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
+      "recurrenceRule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
       "rdates": ["2012-11-10T18:00:00.000Z", "2012-11-05T18:00:00.000Z"],
       "created": null,
-      "last_modified": "2012-09-12T17:15:06.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-09-12T17:15:06.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
+        { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrence_date": "2012-11-05T18:00:00.000Z"
+      "occurrenceDate": "2012-11-05T18:00:00.000Z"
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
       "title": "Crazy Event Thingy!",
       "start": "2012-11-06T18:00:00.000Z",
       "end": "2012-11-06T18:30:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": "PLACE",
       "description": "IAM FOO",
       "status": "confirmed",
@@ -78,22 +78,22 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "dave@example.com", "name": "Carol Davis" },
-      "recurrence_rule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
+      "recurrenceRule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
       "rdates": ["2012-11-10T18:00:00.000Z", "2012-11-05T18:00:00.000Z"],
       "created": null,
-      "last_modified": "2012-09-12T17:15:06.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-09-12T17:15:06.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
+        { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrence_date": "2012-11-06T18:00:00.000Z"
+      "occurrenceDate": "2012-11-06T18:00:00.000Z"
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
       "title": "Crazy Event Thingy!",
       "start": "2012-11-10T18:00:00.000Z",
       "end": "2012-11-10T18:30:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": "PLACE",
       "description": "IAM FOO",
       "status": "confirmed",
@@ -107,22 +107,22 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "dave@example.com", "name": "Carol Davis" },
-      "recurrence_rule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
+      "recurrenceRule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
       "rdates": ["2012-11-10T18:00:00.000Z", "2012-11-05T18:00:00.000Z"],
       "created": null,
-      "last_modified": "2012-09-12T17:15:06.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-09-12T17:15:06.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
+        { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrence_date": "2012-11-10T18:00:00.000Z"
+      "occurrenceDate": "2012-11-10T18:00:00.000Z"
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
       "title": "Crazy Event Thingy!",
       "start": "2012-12-04T18:00:00.000Z",
       "end": "2012-12-04T18:30:00.000Z",
-      "all_day": false,
+      "allDay": false,
       "location": "PLACE",
       "description": "IAM FOO",
       "status": "confirmed",
@@ -136,15 +136,15 @@
       "categories": [],
       "geo": null,
       "organizer": { "email": "dave@example.com", "name": "Carol Davis" },
-      "recurrence_rule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
+      "recurrenceRule": "FREQ=MONTHLY;BYDAY=1TU;UNTIL=20121231T100000",
       "rdates": ["2012-11-10T18:00:00.000Z", "2012-11-05T18:00:00.000Z"],
       "created": null,
-      "last_modified": "2012-09-12T17:15:06.000Z",
-      "is_recurring": true,
+      "lastModified": "2012-09-12T17:15:06.000Z",
+      "isRecurring": true,
       "alarms": [
-        { "type": "relative", "trigger": -300, "trigger_human": "5 minutes before" }
+        { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrence_date": "2012-12-04T18:00:00.000Z"
+      "occurrenceDate": "2012-12-04T18:00:00.000Z"
     }
   ]
 }

@@ -40,7 +40,7 @@ describe("urlCache basics", () => {
 });
 
 describe("moveCachedCalendar", () => {
-  it("rekeys every entry onto the new calendar_id", () => {
+  it("rekeys every entry onto the new calendarId", () => {
     setCachedObject("mailbox/Work", "evt-1", { url: "/caldav/work/evt-1.ics", etag: "e1" });
     setCachedObject("mailbox/Work", "evt-2", { url: "/caldav/work/evt-2.ics" });
 

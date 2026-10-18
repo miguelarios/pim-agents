@@ -1527,7 +1527,7 @@ describe("CardDavService", () => {
   });
 });
 
-describe("CardDavService detail_level", () => {
+describe("CardDavService detailLevel", () => {
   const sampleVCard = [
     "BEGIN:VCARD",
     "VERSION:3.0",
@@ -1539,7 +1539,7 @@ describe("CardDavService detail_level", () => {
     "END:VCARD",
   ].join("\r\n");
 
-  it('fetchContacts with detail_level="summary" drops otherProperties and photo', async () => {
+  it('fetchContacts with detailLevel="summary" drops otherProperties and photo', async () => {
     const service = new CardDavService({
       url: "https://x",
       username: "u",
@@ -1555,7 +1555,7 @@ describe("CardDavService detail_level", () => {
     expect(contacts[0].emails[0].value).toBe("jane@example.com");
   });
 
-  it('fetchContacts with detail_level="full" preserves otherProperties (minus Apple internals stripped by parser)', async () => {
+  it('fetchContacts with detailLevel="full" preserves otherProperties (minus Apple internals stripped by parser)', async () => {
     const service = new CardDavService({
       url: "https://x",
       username: "u",
@@ -1569,7 +1569,7 @@ describe("CardDavService detail_level", () => {
     expect(contacts[0].otherProperties.join("|")).not.toContain("PHOTO");
   });
 
-  it("fetchContacts defaults to summary when detail_level omitted", async () => {
+  it("fetchContacts defaults to summary when detailLevel omitted", async () => {
     const service = new CardDavService({
       url: "https://x",
       username: "u",

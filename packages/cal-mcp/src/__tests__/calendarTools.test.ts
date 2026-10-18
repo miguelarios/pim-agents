@@ -111,15 +111,15 @@ describe("calendarTools", () => {
     const props = (tool.inputSchema as any).properties;
     expect(props.title).toBeDefined();
     expect(props.summary).toBeUndefined();
-    expect(props.all_day).toBeDefined();
+    expect(props.allDay).toBeDefined();
     expect((tool.inputSchema as any).required).toContain("title");
   });
 
-  it("import_ics schema uses ics_content not icsContent", () => {
+  it("import_ics schema uses icsContent, not the pre-1.0 ics_content", () => {
     const tool = CALENDAR_TOOLS.find((t) => t.name === "import_ics")!;
     const props = (tool.inputSchema as any).properties;
-    expect(props.ics_content).toBeDefined();
-    expect(props.icsContent).toBeUndefined();
+    expect(props.icsContent).toBeDefined();
+    expect(props.ics_content).toBeUndefined();
   });
 
   it("import_ics PUTs one object per UID and reports unique-UID count", async () => {
@@ -166,7 +166,7 @@ describe("calendarTools", () => {
 
     const result = await handleCalendarTool(
       "import_ics",
-      { calendar: "mailbox/PIM-Test", ics_content: MULTI },
+      { calendar: "mailbox/PIM-Test", icsContent: MULTI },
       mockService as any,
     );
 
@@ -180,7 +180,7 @@ describe("calendarTools", () => {
       "import_ics",
       {
         calendar: "mailbox/PIM-Test",
-        ics_content: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nEND:VCALENDAR",
+        icsContent: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nEND:VCALENDAR",
       },
       mockService as any,
     );
@@ -193,11 +193,11 @@ describe("calendarTools", () => {
   it("find_free_slots schema has new params", () => {
     const tool = CALENDAR_TOOLS.find((t) => t.name === "find_free_slots")!;
     const props = (tool.inputSchema as any).properties;
-    expect(props.preferred_start).toBeDefined();
-    expect(props.preferred_end).toBeDefined();
-    expect(props.exclude_calendars).toBeDefined();
-    expect(props.include_all_day_as_busy).toBeDefined();
-    expect(props.ignore_tentative).toBeDefined();
+    expect(props.preferredStart).toBeDefined();
+    expect(props.preferredEnd).toBeDefined();
+    expect(props.excludeCalendars).toBeDefined();
+    expect(props.includeAllDayAsBusy).toBeDefined();
+    expect(props.ignoreTentative).toBeDefined();
     // calendars is optional
     expect((tool.inputSchema as any).required).not.toContain("calendars");
   });
@@ -213,10 +213,10 @@ describe("calendarTools", () => {
     }
   });
 
-  it("list_events schema has detail_level and optional calendar", () => {
+  it("list_events schema has detailLevel and optional calendar", () => {
     const tool = CALENDAR_TOOLS.find((t) => t.name === "list_events")!;
     const props = (tool.inputSchema as any).properties;
-    expect(props.detail_level).toBeDefined();
+    expect(props.detailLevel).toBeDefined();
     expect((tool.inputSchema as any).required).toEqual(["start", "end"]);
   });
 
@@ -245,11 +245,11 @@ describe("calendarTools", () => {
     it("list_calendars wraps in { calendars } envelope", async () => {
       mockService.listCalendars.mockResolvedValue([
         {
-          calendar_id: "mailbox/Work",
-          display_name: "Work",
+          calendarId: "mailbox/Work",
+          displayName: "Work",
           color: null,
           source: "mailbox",
-          read_only: false,
+          readOnly: false,
         },
       ]);
 
@@ -257,12 +257,12 @@ describe("calendarTools", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.calendars).toHaveLength(1);
-      expect(parsed.calendars[0].calendar_id).toBe("mailbox/Work");
+      expect(parsed.calendars[0].calendarId).toBe("mailbox/Work");
     });
 
     it("list_events wraps in { events } envelope", async () => {
       mockService.listEvents.mockResolvedValue([
-        { uid: "evt-1", calendar_id: "mailbox/Work", title: "Meeting" },
+        { uid: "evt-1", calendarId: "mailbox/Work", title: "Meeting" },
       ]);
 
       const result = await handleCalendarTool(
@@ -283,13 +283,13 @@ describe("calendarTools", () => {
       });
       mockService.moveEvent.mockResolvedValue({
         uid: "evt-1",
-        calendar_id: "mailbox/Personal",
+        calendarId: "mailbox/Personal",
         title: "Meeting",
       });
 
       const result = await handleCalendarTool(
         "move_event",
-        { calendar: "mailbox/Work", uid: "evt-1", target_calendar: "mailbox/Personal" },
+        { calendar: "mailbox/Work", uid: "evt-1", targetCalendar: "mailbox/Personal" },
         mockService as any,
       );
 
@@ -304,14 +304,14 @@ describe("calendarTools", () => {
         },
       );
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.event.calendar_id).toBe("mailbox/Personal");
+      expect(parsed.event.calendarId).toBe("mailbox/Personal");
     });
 
-    it("get_event forwards occurrence_date to the service (#39)", async () => {
+    it("get_event forwards occurrenceDate to the service (#39)", async () => {
       mockService.getEvent.mockResolvedValueOnce({ uid: "standup" });
       await handleCalendarTool(
         "get_event",
-        { calendar: "prov/Cal", uid: "standup", occurrence_date: "2026-03-09T15:00:00Z" },
+        { calendar: "prov/Cal", uid: "standup", occurrenceDate: "2026-03-09T15:00:00Z" },
         mockService as any,
       );
       expect(mockService.getEvent).toHaveBeenCalledWith(
@@ -325,7 +325,7 @@ describe("calendarTools", () => {
       mockService.getEvent.mockRejectedValueOnce(new ValidationError("not recurring"));
       const result = await handleCalendarTool(
         "get_event",
-        { calendar: "prov/Cal", uid: "one-off", occurrence_date: "2026-03-09T15:00:00Z" },
+        { calendar: "prov/Cal", uid: "one-off", occurrenceDate: "2026-03-09T15:00:00Z" },
         mockService as any,
       );
       expect(result.isError).toBe(true);
@@ -397,7 +397,7 @@ describe("calendarTools", () => {
       // There is no occurrence to exclude, so this is a full irreversible
       // delete — the narrower-sounding span must not bypass the gate.
       mockService.getEventWithMeta.mockResolvedValue({
-        event: { uid: "evt-1", is_recurring: false, all_day: false },
+        event: { uid: "evt-1", isRecurring: false, allDay: false },
         meta: { url: "u", etag: "e" },
       });
       mockService.deleteEvent.mockResolvedValue(undefined);
@@ -415,7 +415,7 @@ describe("calendarTools", () => {
 
     it("delete_event span=this on a NON-recurring event deletes once confirmed", async () => {
       mockService.getEventWithMeta.mockResolvedValue({
-        event: { uid: "evt-1", is_recurring: false, all_day: false },
+        event: { uid: "evt-1", isRecurring: false, allDay: false },
         meta: { url: "u", etag: "e" },
       });
       mockService.deleteEvent.mockResolvedValue(undefined);
@@ -451,17 +451,17 @@ describe("calendarTools", () => {
       expect(parsed.message).toContain("Connection failed");
     });
 
-    it("update_event schema has occurrence_date and a span enum including future (#38)", () => {
+    it("update_event schema has occurrenceDate and a span enum including future (#38)", () => {
       const tool = CALENDAR_TOOLS.find((t) => t.name === "update_event")!;
       const props = (tool.inputSchema as any).properties;
-      expect(props.occurrence_date).toBeDefined();
+      expect(props.occurrenceDate).toBeDefined();
       expect(props.span.enum).toEqual(["this", "all", "future"]);
     });
 
-    it("delete_event schema has occurrence_date and a span enum including future (#41)", () => {
+    it("delete_event schema has occurrenceDate and a span enum including future (#41)", () => {
       const tool = CALENDAR_TOOLS.find((t) => t.name === "delete_event")!;
       const props = (tool.inputSchema as any).properties;
-      expect(props.occurrence_date).toBeDefined();
+      expect(props.occurrenceDate).toBeDefined();
       expect(props.span.enum).toEqual(["this", "all", "future"]);
     });
 
@@ -470,11 +470,11 @@ describe("calendarTools", () => {
         event: {
           uid: "evt-1",
           title: "Meeting",
-          is_recurring: false,
-          recurrence_rule: null,
+          isRecurring: false,
+          recurrenceRule: null,
           start: "2026-03-10T14:00:00Z",
           end: "2026-03-10T15:00:00Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           attendees: [],
@@ -500,7 +500,7 @@ describe("calendarTools", () => {
       mockService.updateEvent.mockResolvedValue({
         uid: "evt-1",
         title: "Updated Meeting",
-        is_recurring: false,
+        isRecurring: false,
       });
 
       const result = await handleCalendarTool(
@@ -518,7 +518,7 @@ describe("calendarTools", () => {
       mockService.createEvent.mockResolvedValue({
         uid: "new-1",
         title: "Event with Alarm",
-        alarms: [{ type: "relative", trigger: -900, trigger_human: "15 minutes before" }],
+        alarms: [{ type: "relative", trigger: -900, triggerHuman: "15 minutes before" }],
         categories: ["Work"],
       });
 
@@ -546,15 +546,15 @@ describe("calendarTools", () => {
         event: {
           uid: "evt-1",
           title: "Meeting",
-          is_recurring: false,
-          recurrence_rule: null,
+          isRecurring: false,
+          recurrenceRule: null,
           start: "2026-03-10T14:00:00Z",
           end: "2026-03-10T15:00:00Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           attendees: [],
-          alarms: [{ type: "relative", trigger: -900, trigger_human: "15 minutes before" }],
+          alarms: [{ type: "relative", trigger: -900, triggerHuman: "15 minutes before" }],
           categories: ["Meeting"],
         },
         meta: { url: "/cal/evt-1.ics", etag: '"e1"' },
@@ -584,7 +584,7 @@ describe("calendarTools", () => {
       mockService.updateEvent.mockResolvedValue({
         uid: "evt-1",
         title: "Updated Meeting",
-        alarms: [{ type: "relative", trigger: -900, trigger_human: "15 minutes before" }],
+        alarms: [{ type: "relative", trigger: -900, triggerHuman: "15 minutes before" }],
         categories: ["Meeting"],
       });
 
@@ -597,28 +597,28 @@ describe("calendarTools", () => {
       expect(result.isError).toBeUndefined();
     });
 
-    it("list_calendars handler passes through read_only field", async () => {
+    it("list_calendars handler passes through readOnly field", async () => {
       mockService.listCalendars.mockResolvedValue([
         {
-          calendar_id: "mailbox/Work",
-          display_name: "Work",
+          calendarId: "mailbox/Work",
+          displayName: "Work",
           color: null,
           source: "mailbox",
-          read_only: false,
+          readOnly: false,
         },
         {
-          calendar_id: "mailbox/Holidays",
-          display_name: "Holidays",
+          calendarId: "mailbox/Holidays",
+          displayName: "Holidays",
           color: null,
           source: "mailbox",
-          read_only: true,
+          readOnly: true,
         },
       ]);
 
       const result = await handleCalendarTool("list_calendars", {}, mockService as any);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.calendars[0].read_only).toBe(false);
-      expect(parsed.calendars[1].read_only).toBe(true);
+      expect(parsed.calendars[0].readOnly).toBe(false);
+      expect(parsed.calendars[1].readOnly).toBe(true);
     });
 
     it("get_free_busy passes the calendars and options through and wraps the result (#48)", async () => {
@@ -634,7 +634,7 @@ describe("calendarTools", () => {
           calendars: ["prov/A"],
           start: "2026-03-10T08:00:00Z",
           end: "2026-03-10T17:00:00Z",
-          ignore_tentative: true,
+          ignoreTentative: true,
         },
         mockService as any,
       );
@@ -659,8 +659,8 @@ describe("calendarTools", () => {
 
     it("get_free_busy defaults to every calendar and rejects an inverted range (#48)", async () => {
       mockService.listCalendars.mockResolvedValueOnce([
-        { calendar_id: "prov/A" },
-        { calendar_id: "prov/B" },
+        { calendarId: "prov/A" },
+        { calendarId: "prov/B" },
       ]);
       mockService.getFreeBusy.mockResolvedValueOnce({ busy: [], sources: {} });
       await handleCalendarTool(
@@ -680,7 +680,7 @@ describe("calendarTools", () => {
     });
 
     it("find_free_slots wraps in { slots, count } envelope", async () => {
-      mockService.listCalendars.mockResolvedValue([{ calendar_id: "mailbox/Work" }]);
+      mockService.listCalendars.mockResolvedValue([{ calendarId: "mailbox/Work" }]);
       mockService.findFreeSlots.mockResolvedValue([
         { start: "2026-03-10T10:00:00Z", end: "2026-03-10T12:00:00Z", duration: 120 },
       ]);
@@ -698,13 +698,13 @@ describe("calendarTools", () => {
 
     const fullEventFixture = (overrides: Record<string, unknown> = {}) => ({
       uid: "weekly",
-      calendar_id: "prov/Cal",
+      calendarId: "prov/Cal",
       title: "Standup",
       start: "2026-03-05T10:00:00Z",
       end: "2026-03-05T11:00:00Z",
-      all_day: false,
-      is_recurring: true,
-      occurrence_date: "2026-03-05T10:00:00Z",
+      allDay: false,
+      isRecurring: true,
+      occurrenceDate: "2026-03-05T10:00:00Z",
       location: null,
       description: "Weekly standup meeting",
       attendees: [],
@@ -716,22 +716,22 @@ describe("calendarTools", () => {
       availability: null,
       url: null,
       created: null,
-      last_modified: null,
-      recurrence_rule: "FREQ=WEEKLY;COUNT=52",
+      lastModified: null,
+      recurrenceRule: "FREQ=WEEKLY;COUNT=52",
       ...overrides,
     });
 
-    it("list_events detail_level=full fetches full events in one call (no per-event getEvent)", async () => {
+    it("list_events detailLevel=full fetches full events in one call (no per-event getEvent)", async () => {
       mockService.listEventsFull.mockResolvedValueOnce([fullEventFixture()]);
 
       const result = await handleCalendarTool(
         "list_events",
-        { start: "2026-03-01", end: "2026-03-31", calendar: "prov/Cal", detail_level: "full" },
+        { start: "2026-03-01", end: "2026-03-31", calendar: "prov/Cal", detailLevel: "full" },
         mockService as any,
       );
 
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.events[0].occurrence_date).toBe("2026-03-05T10:00:00Z");
+      expect(parsed.events[0].occurrenceDate).toBe("2026-03-05T10:00:00Z");
       expect(parsed.events[0].start).toBe("2026-03-05T10:00:00Z");
       expect(parsed.events[0].end).toBe("2026-03-05T11:00:00Z");
       expect(parsed.events[0].description).toBe("Weekly standup meeting");
@@ -739,18 +739,18 @@ describe("calendarTools", () => {
       expect(mockService.listEventsFull).toHaveBeenCalledTimes(1);
     });
 
-    it("list_events detail_level=full across all calendars fetches in parallel", async () => {
+    it("list_events detailLevel=full across all calendars fetches in parallel", async () => {
       mockService.listCalendars.mockResolvedValueOnce([
-        { calendar_id: "prov/A" },
-        { calendar_id: "prov/B" },
+        { calendarId: "prov/A" },
+        { calendarId: "prov/B" },
       ]);
       mockService.listEventsFull
-        .mockResolvedValueOnce([fullEventFixture({ uid: "a", calendar_id: "prov/A" })])
-        .mockResolvedValueOnce([fullEventFixture({ uid: "b", calendar_id: "prov/B" })]);
+        .mockResolvedValueOnce([fullEventFixture({ uid: "a", calendarId: "prov/A" })])
+        .mockResolvedValueOnce([fullEventFixture({ uid: "b", calendarId: "prov/B" })]);
 
       const result = await handleCalendarTool(
         "list_events",
-        { start: "2026-03-01", end: "2026-03-31", detail_level: "full" },
+        { start: "2026-03-01", end: "2026-03-31", detailLevel: "full" },
         mockService as any,
       );
 
@@ -763,8 +763,8 @@ describe("calendarTools", () => {
 
     it("list_events with `calendars` queries exactly those, without listing calendars (#49)", async () => {
       mockService.listEvents
-        .mockResolvedValueOnce([{ uid: "a", calendar_id: "prov/A" }])
-        .mockResolvedValueOnce([{ uid: "b", calendar_id: "prov/B" }]);
+        .mockResolvedValueOnce([{ uid: "a", calendarId: "prov/A" }])
+        .mockResolvedValueOnce([{ uid: "b", calendarId: "prov/B" }]);
 
       const result = await handleCalendarTool(
         "list_events",
@@ -799,7 +799,7 @@ describe("calendarTools", () => {
     });
 
     it("list_events with an empty `calendars` falls back to every calendar (#49)", async () => {
-      mockService.listCalendars.mockResolvedValueOnce([{ calendar_id: "prov/Only" }]);
+      mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Only" }]);
       mockService.listEvents.mockResolvedValue([]);
 
       await handleCalendarTool(
@@ -851,26 +851,26 @@ describe("calendarTools", () => {
       expect(mockService.listEvents.mock.calls.map((c) => c[0])).toEqual(["prov/B"]);
     });
 
-    it("get_today_events detail_level=full uses listEventsFull", async () => {
-      mockService.listCalendars.mockResolvedValueOnce([{ calendar_id: "prov/Cal" }]);
+    it("get_today_events detailLevel=full uses listEventsFull", async () => {
+      mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Cal" }]);
       mockService.listEventsFull.mockResolvedValueOnce([
         fullEventFixture({
           uid: "daily",
           start: "2026-03-28T09:00:00Z",
           end: "2026-03-28T09:30:00Z",
-          occurrence_date: "2026-03-28T09:00:00Z",
+          occurrenceDate: "2026-03-28T09:00:00Z",
           description: "Daily standup",
         }),
       ]);
 
       const result = await handleCalendarTool(
         "get_today_events",
-        { detail_level: "full" },
+        { detailLevel: "full" },
         mockService as any,
       );
 
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.events[0].occurrence_date).toBe("2026-03-28T09:00:00Z");
+      expect(parsed.events[0].occurrenceDate).toBe("2026-03-28T09:00:00Z");
       expect(parsed.events[0].description).toBe("Daily standup");
       expect(mockService.getEvent).not.toHaveBeenCalled();
     });
@@ -879,7 +879,7 @@ describe("calendarTools", () => {
       vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-07-10T03:00:00Z")); // still July 9 in Chicago
-      mockService.listCalendars.mockResolvedValueOnce([{ calendar_id: "prov/Cal" }]);
+      mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Cal" }]);
       mockService.listEvents.mockResolvedValueOnce([]);
 
       await handleCalendarTool("get_today_events", {}, mockService as any);
@@ -891,8 +891,8 @@ describe("calendarTools", () => {
       vi.unstubAllEnvs();
     });
 
-    it("search_events detail_level=full filters against description from full events", async () => {
-      mockService.listCalendars.mockResolvedValueOnce([{ calendar_id: "prov/Cal" }]);
+    it("search_events detailLevel=full filters against description from full events", async () => {
+      mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Cal" }]);
       mockService.listEventsFull.mockResolvedValueOnce([
         fullEventFixture({ title: "Standup", description: "Weekly standup meeting" }),
         fullEventFixture({ uid: "other", title: "Other", description: "Unrelated" }),
@@ -900,7 +900,7 @@ describe("calendarTools", () => {
 
       const result = await handleCalendarTool(
         "search_events",
-        { query: "standup", detail_level: "full" },
+        { query: "standup", detailLevel: "full" },
         mockService as any,
       );
 
@@ -936,12 +936,12 @@ describe("calendarTools", () => {
         event: {
           uid: "weekly",
           title: "Standup",
-          is_recurring: true,
+          isRecurring: true,
           start: "2026-01-01T10:00:00.000Z",
           end: "2026-01-01T11:00:00.000Z",
-          all_day: false,
+          allDay: false,
           location: "Room A",
-          recurrence_rule: "FREQ=WEEKLY;COUNT=52",
+          recurrenceRule: "FREQ=WEEKLY;COUNT=52",
           description: null,
           attendees: [],
           alarms: [],
@@ -952,9 +952,9 @@ describe("calendarTools", () => {
           availability: null,
           url: null,
           created: null,
-          last_modified: null,
-          calendar_id: "prov/Cal",
-          occurrence_date: null,
+          lastModified: null,
+          calendarId: "prov/Cal",
+          occurrenceDate: null,
         },
         meta: { url: "/cal/weekly.ics", etag: '"etag-1"' },
       });
@@ -974,7 +974,7 @@ describe("calendarTools", () => {
           uid: "weekly",
           title: "Renamed Standup",
           span: "this",
-          occurrence_date: "2026-03-05T10:00:00.000Z",
+          occurrenceDate: "2026-03-05T10:00:00.000Z",
         },
         mockService as any,
       );
@@ -992,9 +992,9 @@ describe("calendarTools", () => {
       );
     });
 
-    it("returns error when span=this + recurring + no occurrence_date", async () => {
+    it("returns error when span=this + recurring + no occurrenceDate", async () => {
       mockService.getEventWithMeta.mockResolvedValueOnce({
-        event: { uid: "weekly", is_recurring: true, all_day: false, occurrence_date: null },
+        event: { uid: "weekly", isRecurring: true, allDay: false, occurrenceDate: null },
         meta: { url: "/cal/weekly.ics", etag: '"etag-1"' },
       });
 
@@ -1005,7 +1005,7 @@ describe("calendarTools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("occurrence_date");
+      expect(result.content[0].text).toContain("occurrenceDate");
     });
   });
 
@@ -1029,7 +1029,7 @@ describe("calendarTools", () => {
       ].join("\r\n");
 
       mockService.getEventWithMeta.mockResolvedValueOnce({
-        event: { uid: "weekly", is_recurring: true, all_day: false, occurrence_date: null },
+        event: { uid: "weekly", isRecurring: true, allDay: false, occurrenceDate: null },
         meta: { url: "/cal/weekly.ics", etag: '"etag-1"' },
       });
 
@@ -1047,7 +1047,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "weekly",
           span: "this",
-          occurrence_date: "2026-03-05T10:00:00.000Z",
+          occurrenceDate: "2026-03-05T10:00:00.000Z",
         },
         mockService as any,
       );
@@ -1065,9 +1065,9 @@ describe("calendarTools", () => {
       );
     });
 
-    it("returns error when span=this + recurring + no occurrence_date", async () => {
+    it("returns error when span=this + recurring + no occurrenceDate", async () => {
       mockService.getEventWithMeta.mockResolvedValueOnce({
-        event: { uid: "weekly", is_recurring: true, all_day: false, occurrence_date: null },
+        event: { uid: "weekly", isRecurring: true, allDay: false, occurrenceDate: null },
         meta: { url: "/cal/weekly.ics", etag: '"etag-1"' },
       });
 
@@ -1078,7 +1078,7 @@ describe("calendarTools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("occurrence_date");
+      expect(result.content[0].text).toContain("occurrenceDate");
     });
 
     it("removes existing exception VEVENT when deleting occurrence", async () => {
@@ -1103,7 +1103,7 @@ describe("calendarTools", () => {
       ].join("\r\n");
 
       mockService.getEventWithMeta.mockResolvedValueOnce({
-        event: { uid: "weekly", is_recurring: true, all_day: false, occurrence_date: null },
+        event: { uid: "weekly", isRecurring: true, allDay: false, occurrenceDate: null },
         meta: { url: "/cal/weekly.ics", etag: '"etag-1"' },
       });
       mockService.fetchRawCalendarObject.mockResolvedValueOnce({
@@ -1119,7 +1119,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "weekly",
           span: "this",
-          occurrence_date: "2026-03-05T10:00:00.000Z",
+          occurrenceDate: "2026-03-05T10:00:00.000Z",
         },
         mockService as any,
       );
@@ -1156,12 +1156,12 @@ describe("calendarTools", () => {
     ].join("\r\n");
     const EXISTING = {
       uid: "standup",
-      calendar_id: "prov/Cal",
+      calendarId: "prov/Cal",
       title: "Standup",
       start: "2026-03-02T15:00:00.000Z",
       end: "2026-03-02T15:30:00.000Z",
-      all_day: false,
-      is_recurring: true,
+      allDay: false,
+      isRecurring: true,
       location: null,
       description: null,
       attendees: [],
@@ -1191,7 +1191,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "this",
-          occurrence_date: "2026-03-05T15:00:00.000Z",
+          occurrenceDate: "2026-03-05T15:00:00.000Z",
           title: "Standup is back",
         },
         mockService as any,
@@ -1251,12 +1251,12 @@ describe("calendarTools", () => {
     ].join("\r\n");
     const EXISTING = {
       uid: "standup",
-      calendar_id: "prov/Cal",
+      calendarId: "prov/Cal",
       title: "Standup",
       start: "2026-03-02T15:00:00.000Z",
       end: "2026-03-02T15:30:00.000Z",
-      all_day: false,
-      is_recurring: true,
+      allDay: false,
+      isRecurring: true,
       location: "Room A",
       attendees: [],
       organizer: null,
@@ -1296,7 +1296,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-04-06T15:00:00.000Z",
+          occurrenceDate: "2026-04-06T15:00:00.000Z",
           title: "Standup v2",
           start: "2026-04-06T16:00:00.000Z",
           end: "2026-04-06T16:30:00.000Z",
@@ -1339,7 +1339,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-04-06T15:00:00.000Z",
+          occurrenceDate: "2026-04-06T15:00:00.000Z",
           start: "2026-04-06T17:00:00.000Z",
         },
         mockService as any,
@@ -1356,7 +1356,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-03-02T15:00:00.000Z",
+          occurrenceDate: "2026-03-02T15:00:00.000Z",
           title: "Standup v2",
         },
         mockService as any,
@@ -1376,7 +1376,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-03-09T15:00:00.000Z",
+          occurrenceDate: "2026-03-09T15:00:00.000Z",
           title: "Standup v2",
         },
         mockService as any,
@@ -1394,7 +1394,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-03-09T15:00:00.000Z",
+          occurrenceDate: "2026-03-09T15:00:00.000Z",
           title: "Standup v2",
         },
         mockService as any,
@@ -1411,7 +1411,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-04-07T15:00:00.000Z",
+          occurrenceDate: "2026-04-07T15:00:00.000Z",
           title: "x",
         },
         mockService as any,
@@ -1421,14 +1421,14 @@ describe("calendarTools", () => {
       expect(mockService.createEvent).not.toHaveBeenCalled();
     });
 
-    it("rejects span=future without occurrence_date, and past the end of the series", async () => {
+    it("rejects span=future without occurrenceDate, and past the end of the series", async () => {
       const missing = await handleCalendarTool(
         "update_event",
         { calendar: "prov/Cal", uid: "standup", span: "future", title: "x" },
         mockService as any,
       );
       expect(missing.isError).toBe(true);
-      expect(missing.content[0].text).toContain("occurrence_date");
+      expect(missing.content[0].text).toContain("occurrenceDate");
 
       const past = await handleCalendarTool(
         "update_event",
@@ -1436,7 +1436,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2027-01-01T00:00:00.000Z",
+          occurrenceDate: "2027-01-01T00:00:00.000Z",
           title: "x",
         },
         mockService as any,
@@ -1449,7 +1449,7 @@ describe("calendarTools", () => {
 
     it("treats span=future on a non-recurring event as a plain update", async () => {
       mockService.getEventWithMeta.mockResolvedValue({
-        event: { ...EXISTING, uid: "one-off", is_recurring: false },
+        event: { ...EXISTING, uid: "one-off", isRecurring: false },
         meta: { url: "/cal/one-off.ics", etag: '"o1"' },
       });
       mockService.fetchRawCalendarObject.mockResolvedValue({
@@ -1503,7 +1503,7 @@ describe("calendarTools", () => {
     beforeEach(() => {
       vi.clearAllMocks();
       mockService.getEventWithMeta.mockResolvedValue({
-        event: { uid: "standup", is_recurring: true, all_day: false },
+        event: { uid: "standup", isRecurring: true, allDay: false },
         meta: { url: "/cal/standup.ics", etag: '"s1"' },
       });
       mockService.fetchRawCalendarObject.mockResolvedValue({
@@ -1522,7 +1522,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-04-06T15:00:00.000Z",
+          occurrenceDate: "2026-04-06T15:00:00.000Z",
         },
         mockService as any,
       );
@@ -1539,7 +1539,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-04-06T15:00:00.000Z",
+          occurrenceDate: "2026-04-06T15:00:00.000Z",
         },
         mockService as any,
         confirmed("confirm_delete_event"),
@@ -1564,7 +1564,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "standup",
           span: "future",
-          occurrence_date: "2026-03-02T15:00:00.000Z",
+          occurrenceDate: "2026-03-02T15:00:00.000Z",
         },
         mockService as any,
         confirmed("confirm_delete_event"),
@@ -1577,20 +1577,20 @@ describe("calendarTools", () => {
       });
     });
 
-    it("rejects span=future without occurrence_date", async () => {
+    it("rejects span=future without occurrenceDate", async () => {
       const result = await handleCalendarTool(
         "delete_event",
         { calendar: "prov/Cal", uid: "standup", span: "future" },
         mockService as any,
       );
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("occurrence_date");
+      expect(result.content[0].text).toContain("occurrenceDate");
       expect(mockService.fetchRawCalendarObject).not.toHaveBeenCalled();
     });
 
     it("rejects span=future on a non-recurring event without touching it", async () => {
       mockService.getEventWithMeta.mockResolvedValue({
-        event: { uid: "one-off", is_recurring: false, all_day: false },
+        event: { uid: "one-off", isRecurring: false, allDay: false },
         meta: { url: "/cal/one-off.ics", etag: '"o1"' },
       });
       const result = await handleCalendarTool(
@@ -1599,7 +1599,7 @@ describe("calendarTools", () => {
           calendar: "prov/Cal",
           uid: "one-off",
           span: "future",
-          occurrence_date: "2026-03-02T15:00:00.000Z",
+          occurrenceDate: "2026-03-02T15:00:00.000Z",
         },
         mockService as any,
         confirmed("confirm_delete_event"),
@@ -1656,11 +1656,11 @@ describe("calendarTools", () => {
         event: {
           uid: "evt-1",
           title: "Meeting",
-          is_recurring: false,
-          recurrence_rule: null,
+          isRecurring: false,
+          recurrenceRule: null,
           start: "2026-03-10T14:00:00Z",
           end: "2026-03-10T15:00:00Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           attendees: [],
@@ -1709,11 +1709,11 @@ describe("calendarTools", () => {
         event: {
           uid: "evt-1",
           title: "Meeting",
-          is_recurring: false,
-          recurrence_rule: null,
+          isRecurring: false,
+          recurrenceRule: null,
           start: "2026-03-10T14:00:00Z",
           end: "2026-03-10T15:00:00Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           attendees: [{ email: "bob@example.com" }],
@@ -1795,11 +1795,11 @@ describe("calendarTools", () => {
         event: {
           uid: "evt-1",
           title: "Focus",
-          is_recurring: false,
-          recurrence_rule: null,
+          isRecurring: false,
+          recurrenceRule: null,
           start: "2026-03-10T14:00:00Z",
           end: "2026-03-10T15:00:00Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           attendees: [],
@@ -1844,11 +1844,11 @@ describe("calendarTools", () => {
         event: {
           uid: "evt-1",
           title: "Meeting",
-          is_recurring: false,
-          recurrence_rule: null,
+          isRecurring: false,
+          recurrenceRule: null,
           start: "2026-03-10T14:00:00Z",
           end: "2026-03-10T15:00:00Z",
-          all_day: false,
+          allDay: false,
           location: null,
           description: null,
           attendees: [],
@@ -1926,13 +1926,13 @@ describe("calendarTools", () => {
       mockService.getEventWithMeta.mockResolvedValueOnce({
         event: {
           uid: "weekly-9",
-          calendar_id: "mailbox/Calendar",
+          calendarId: "mailbox/Calendar",
           title: "Weekly sync",
           start: "2026-03-02T15:00:00.000Z",
           end: "2026-03-02T15:30:00.000Z",
-          all_day: false,
-          is_recurring: true,
-          recurrence_rule: "FREQ=WEEKLY;BYDAY=MO",
+          allDay: false,
+          isRecurring: true,
+          recurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
           organizer: { email: "alice@example.com", name: "alice" },
           attendees: [{ email: "bob@example.com" }],
         },
@@ -1981,23 +1981,23 @@ describe("calendarTools", () => {
 
     const EXISTING = {
       uid: "fwd-1",
-      calendar_id: "mailbox/Calendar",
+      calendarId: "mailbox/Calendar",
       title: "Old title",
       start: "2026-03-02T15:00:00.000Z",
       end: "2026-03-02T15:30:00.000Z",
-      all_day: false,
+      allDay: false,
       location: "Old room",
       description: "Old notes",
       status: null,
-      is_recurring: true,
-      occurrence_date: null,
+      isRecurring: true,
+      occurrenceDate: null,
       url: null,
       availability: null,
       attendees: [],
       organizer: { email: "me@example.com", name: null },
-      recurrence_rule: "FREQ=WEEKLY;BYDAY=MO",
+      recurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
       created: null,
-      last_modified: null,
+      lastModified: null,
       alarms: [],
       categories: [],
       geo: null,
@@ -2068,7 +2068,7 @@ describe("calendarTools", () => {
           calendar: "mailbox/Calendar",
           uid: "fwd-1",
           span: "this",
-          occurrence_date: "2026-03-09T15:00:00.000Z",
+          occurrenceDate: "2026-03-09T15:00:00.000Z",
           ...ALL_FIELDS,
         },
         mockService as any,
@@ -2100,7 +2100,7 @@ describe("calendarTools", () => {
           calendar: "mailbox/Calendar",
           uid: "fwd-1",
           span: "this",
-          occurrence_date: "2026-03-09T15:00:00.000Z",
+          occurrenceDate: "2026-03-09T15:00:00.000Z",
           title: "Only title",
         },
         mockService as any,
@@ -2116,14 +2116,14 @@ describe("calendarTools", () => {
   describe("one provider unreachable (#127)", () => {
     const NEXTCLOUD_DOWN = { provider: "nextcloud", error: "fetch failed" };
     const MAILBOX_WORK = {
-      calendar_id: "mailbox/Work",
-      display_name: "Work",
+      calendarId: "mailbox/Work",
+      displayName: "Work",
       color: null,
       description: null,
       timezone: null,
       order: null,
       source: "mailbox",
-      read_only: false,
+      readOnly: false,
       url: "/cal/work/",
     };
 
@@ -2144,7 +2144,7 @@ describe("calendarTools", () => {
       expect(result.isError).toBeFalsy();
       expect(result.structuredContent).toEqual({
         calendars: [MAILBOX_WORK],
-        unavailable_providers: [NEXTCLOUD_DOWN],
+        unavailableProviders: [NEXTCLOUD_DOWN],
       });
       expect(() => v.parse(calendarListSchema, result.structuredContent)).not.toThrow();
     });
@@ -2163,7 +2163,7 @@ describe("calendarTools", () => {
         "2026-03-01",
         "2026-03-31",
       );
-      expect(result.structuredContent.unavailable_providers).toEqual([NEXTCLOUD_DOWN]);
+      expect(result.structuredContent.unavailableProviders).toEqual([NEXTCLOUD_DOWN]);
       expect(() => v.parse(eventListSchema, result.structuredContent)).not.toThrow();
     });
 
@@ -2171,20 +2171,20 @@ describe("calendarTools", () => {
       nextcloudDown();
       mockService.listEvents.mockResolvedValue([]);
       const search = await handleCalendarTool("search_events", { query: "x" }, mockService as any);
-      expect(search.structuredContent.unavailable_providers).toEqual([NEXTCLOUD_DOWN]);
+      expect(search.structuredContent.unavailableProviders).toEqual([NEXTCLOUD_DOWN]);
 
       nextcloudDown();
       const today = await handleCalendarTool("get_today_events", {}, mockService as any);
-      expect(today.structuredContent.unavailable_providers).toEqual([NEXTCLOUD_DOWN]);
+      expect(today.structuredContent.unavailableProviders).toEqual([NEXTCLOUD_DOWN]);
     });
 
-    it("omits unavailable_providers when every provider answered", async () => {
+    it("omits unavailableProviders when every provider answered", async () => {
       mockService.listReachableCalendars.mockResolvedValueOnce({
         calendars: [MAILBOX_WORK],
         unavailable: [],
       });
       const result = await handleCalendarTool("list_calendars", {}, mockService as any);
-      expect(result.structuredContent).not.toHaveProperty("unavailable_providers");
+      expect(result.structuredContent).not.toHaveProperty("unavailableProviders");
     });
 
     it("get_free_busy across all calendars fails rather than report the provider's time as free", async () => {
@@ -2236,7 +2236,7 @@ describe("caller mistakes are reported as such, not as INTERNAL_ERROR (#150)", (
   beforeEach(() => {
     vi.clearAllMocks();
     mockService.getEventWithMeta.mockResolvedValue({
-      event: { uid: "weekly", is_recurring: true, all_day: false, occurrence_date: null },
+      event: { uid: "weekly", isRecurring: true, allDay: false, occurrenceDate: null },
       meta: { url: "/cal/weekly.ics", etag: '"etag-1"' },
     });
     mockService.fetchRawCalendarObject.mockResolvedValue({
@@ -2249,7 +2249,7 @@ describe("caller mistakes are reported as such, not as INTERNAL_ERROR (#150)", (
   it("import_ics reports unparseable content as INVALID_ICS", async () => {
     const result = await handleCalendarTool(
       "import_ics",
-      { calendar: "prov/Cal", ics_content: "not ics" },
+      { calendar: "prov/Cal", icsContent: "not ics" },
       mockService as any,
     );
     expect(result.isError).toBe(true);
@@ -2291,7 +2291,7 @@ describe("caller mistakes are reported as such, not as INTERNAL_ERROR (#150)", (
   );
 
   it.each(["update_event", "delete_event"])(
-    "%s span=this rejects an unparseable occurrence_date before writing",
+    "%s span=this rejects an unparseable occurrenceDate before writing",
     async (name) => {
       const result = await handleCalendarTool(
         name,
@@ -2299,7 +2299,7 @@ describe("caller mistakes are reported as such, not as INTERNAL_ERROR (#150)", (
           calendar: "prov/Cal",
           uid: "weekly",
           span: "this",
-          occurrence_date: "garbage",
+          occurrenceDate: "garbage",
           title: "x",
         },
         mockService as any,

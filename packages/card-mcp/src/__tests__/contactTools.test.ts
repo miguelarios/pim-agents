@@ -141,7 +141,7 @@ describe("CONTACT_TOOLS definitions", () => {
   });
 });
 
-describe("contactTools detail_level wiring", () => {
+describe("contactTools detailLevel wiring", () => {
   it("list_contacts passes detailLevel to service (default summary)", async () => {
     const fetchSpy = vi.fn().mockResolvedValue([]);
     const fakeService = {
@@ -153,14 +153,14 @@ describe("contactTools detail_level wiring", () => {
     expect(fetchSpy).toHaveBeenCalledWith("book1", { detailLevel: "summary" });
   });
 
-  it("list_contacts respects explicit detail_level=full", async () => {
+  it("list_contacts respects explicit detailLevel=full", async () => {
     const fetchSpy = vi.fn().mockResolvedValue([]);
     const fakeService = {
       listAddressBooks: vi.fn().mockResolvedValue([{ url: "book1", displayName: "x" }]),
       fetchContacts: fetchSpy,
       searchContacts: vi.fn().mockResolvedValue([]),
     };
-    await callTool("list_contacts", { detail_level: "full" }, fakeService);
+    await callTool("list_contacts", { detailLevel: "full" }, fakeService);
     expect(fetchSpy).toHaveBeenCalledWith("book1", { detailLevel: "full" });
   });
 
@@ -180,7 +180,7 @@ describe("contactTools detail_level wiring", () => {
       listAddressBooks: vi.fn().mockResolvedValue([{ url: "book1", displayName: "x" }]),
       fetchContacts: fetchSpy,
     };
-    await callTool("get_contact", { uid: "u1", detail_level: "full" }, fakeService);
+    await callTool("get_contact", { uid: "u1", detailLevel: "full" }, fakeService);
     expect(fetchSpy).toHaveBeenCalledWith("book1", { detailLevel: "full" });
   });
 });
@@ -862,7 +862,7 @@ describe("list_contacts and groups", () => {
   });
 
   it("includes groups on request", async () => {
-    const res = await callTool("list_contacts", { include_groups: true }, service());
+    const res = await callTool("list_contacts", { includeGroups: true }, service());
     expect(res.structuredContent.contacts.map((c: any) => c.uid)).toEqual(["p", "g"]);
   });
 });

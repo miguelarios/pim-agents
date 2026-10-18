@@ -53,7 +53,7 @@ const ORDER_PROP = {
 
 type CreateArgs = {
   provider?: string;
-  display_name: string;
+  displayName: string;
   description?: string;
   color?: string;
   timezone?: string;
@@ -62,7 +62,7 @@ type CreateArgs = {
 };
 type UpdateArgs = {
   calendar: string;
-  display_name?: string;
+  displayName?: string;
   description?: string;
   color?: string;
   timezone?: string;
@@ -109,7 +109,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
           description:
             "Provider/account to create on — the prefix half of a calendar ID (e.g. 'mailbox' in mailbox/Work). Optional when only one account is configured; required otherwise. Call list_calendars to see the configured providers.",
         },
-        display_name: { type: "string", description: "Display name for the new calendar" },
+        displayName: { type: "string", description: "Display name for the new calendar" },
         description: { type: "string", description: "Optional calendar description" },
         color: COLOR_PROP,
         timezone: TIMEZONE_PROP,
@@ -117,17 +117,17 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
         slug: {
           type: "string",
           description:
-            "Optional URL path segment (lowercase letters, digits, hyphens). Derived from display_name when omitted.",
+            "Optional URL path segment (lowercase letters, digits, hyphens). Derived from displayName when omitted.",
         },
       },
-      required: ["display_name"],
+      required: ["displayName"],
     },
     outputSchema: calendarWriteResultSchema,
     handler: (args: CreateArgs, service) =>
       run(async () => {
         const created = await service.createCalendar({
           provider: args.provider,
-          displayName: args.display_name,
+          displayName: args.displayName,
           description: args.description,
           color: args.color,
           timezone: args.timezone,
@@ -136,9 +136,9 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
         });
         return structured({
           status: "created" as const,
-          calendar_id: created.calendar_id,
+          calendarId: created.calendarId,
           url: created.url,
-          display_name: created.display_name,
+          displayName: created.displayName,
         });
       }),
   },
@@ -157,7 +157,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
       type: "object",
       properties: {
         calendar: TARGET_CALENDAR_PROP,
-        display_name: {
+        displayName: {
           type: "string",
           description: "New display name. Changes the calendar's ID.",
         },
@@ -172,7 +172,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
     handler: (args: UpdateArgs, service) =>
       run(async () => {
         const updated = await service.updateCalendarMeta(args.calendar, {
-          displayName: args.display_name,
+          displayName: args.displayName,
           description: args.description,
           color: args.color,
           timezone: args.timezone,
@@ -180,9 +180,9 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
         });
         return structured({
           status: "updated" as const,
-          calendar_id: updated.calendar_id,
+          calendarId: updated.calendarId,
           url: updated.url,
-          display_name: updated.display_name,
+          displayName: updated.displayName,
         });
       }),
   },
@@ -206,7 +206,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
     },
     outputSchema: calendarWriteResultSchema,
     handler: async (args: DeleteArgs, service, ctx) => {
-      let entry: { calendar_id: string; display_name: string; url: string; provider: string };
+      let entry: { calendarId: string; displayName: string; url: string; provider: string };
       let count: number | undefined;
       try {
         // Resolved and counted before the gate so the confirmation names what
@@ -223,7 +223,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
       const gate = confirmDestructive(
         ctx,
         "confirm_delete_calendar",
-        `Permanently delete calendar "${entry.display_name}" on provider "${entry.provider}" (${entry.url}) and ${eventsClause}? This cannot be undone.`,
+        `Permanently delete calendar "${entry.displayName}" on provider "${entry.provider}" (${entry.url}) and ${eventsClause}? This cannot be undone.`,
       );
       if (gate.status === "interrupt") return gate.result;
 
@@ -231,9 +231,9 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
         const deleted = await service.deleteCalendar(args.calendar);
         return structured({
           status: "deleted" as const,
-          calendar_id: deleted.calendar_id,
+          calendarId: deleted.calendarId,
           url: deleted.url,
-          display_name: deleted.display_name,
+          displayName: deleted.displayName,
         });
       });
     },
@@ -253,7 +253,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
     handler: (args: { calendar: string }, service) =>
       run(async () =>
         structured({
-          calendar_id: args.calendar,
+          calendarId: args.calendar,
           ...(await service.getCalendarSharing(args.calendar)),
         }),
       ),
@@ -297,7 +297,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
       if (gate.status === "interrupt") return gate.result;
       return run(async () =>
         structured({
-          calendar_id: args.calendar,
+          calendarId: args.calendar,
           ...(await service.changeCalendarShare(
             args.calendar,
             args.sharee,
@@ -334,7 +334,7 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalendarBackend>> 
       if (gate.status === "interrupt") return gate.result;
       return run(async () =>
         structured({
-          calendar_id: args.calendar,
+          calendarId: args.calendar,
           ...(await service.changeCalendarShare(args.calendar, args.sharee, null)),
         }),
       );

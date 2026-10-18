@@ -31,6 +31,15 @@ A change to any of the following needs a **major** version, unless the
 | **Runtime** | Raising the Node.js floor in `engines`. |
 | **Resources** | Changing the shape of an `imap://` URI the server hands out, removing or renaming a resource template, or changing the `mimeType` a resource is served as. |
 
+### Naming
+
+Tool names are `snake_case` (`list_events`). Every input parameter and every
+`structuredContent` field, at any depth, is `camelCase` (`occurrenceDate`,
+`calendarId`), in all three servers; each server's `roundtrip.test.ts` checks
+the advertised schemas. Enum *values* keep their own spelling (`"read-write"`,
+`"moved_to_trash"`). A key that breaks the rule is a bug, but renaming it after
+1.0 is still a rename, under the input- and output-schema rows above.
+
 ### pim-core
 
 Its contract is the JavaScript API exported from `@miguelarios/pim-core`,
@@ -43,6 +52,13 @@ core's behaviour straight to clients (every server returns core's
 confirmation codes, and the confirmation gate itself lives in core), so a core
 change that alters a server-visible code, result or gate is a breaking change
 for those servers too, and needs their major bump as well as core's.
+
+## Before tagging 1.0
+
+- pim-core reaches 1.0 in the same release wave as the servers, so no stable
+  server depends on a `0.x` core. cal-mcp passes core's `/ics` types through
+  as they are, so its pim-core range must move with every core release that
+  renames them.
 
 ## Allowed in a minor or patch
 
@@ -68,11 +84,3 @@ for those servers too, and needs their major bump as well as core's.
 Model-facing text is free to change, but it still steers behaviour: a
 description edit that tells the model to use a tool differently gets a
 changelog entry, even though it needs no major bump.
-
-## Before tagging 1.0
-
-These parts of the surface are inconsistent today and become hard to change
-after 1.0:
-
-- pim-core should reach 1.0 in the same release wave as the servers, so three
-  stable servers do not depend on a `0.x` core.

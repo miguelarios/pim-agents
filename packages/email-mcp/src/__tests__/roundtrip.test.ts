@@ -155,6 +155,24 @@ const connect = async (...args: Parameters<typeof open>) => {
   return session;
 };
 
+/**
+ * Every property name declared anywhere in a JSON Schema, nested objects and
+ * array items included, so a naming rule covers the whole advertised surface.
+ */
+function schemaKeys(schema: unknown, out = new Set<string>()): Set<string> {
+  if (Array.isArray(schema)) {
+    for (const s of schema) schemaKeys(s, out);
+  } else if (schema && typeof schema === "object") {
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === "properties" && value && typeof value === "object") {
+        for (const name of Object.keys(value)) out.add(name);
+      }
+      schemaKeys(value, out);
+    }
+  }
+  return out;
+}
+
 describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (era) => {
   it("negotiates the expected protocol era", async () => {
     const { client } = await connect(era, fakeServices());
@@ -175,6 +193,19 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
         idempotentHint: expect.any(Boolean),
         openWorldHint: expect.any(Boolean),
       });
+    }
+  });
+
+  it("names every input parameter and output field in camelCase (#150)", async () => {
+    const { client } = await connect(era, fakeServices());
+    const { tools } = await client.listTools();
+
+    for (const tool of tools) {
+      const keys = [...schemaKeys(tool.inputSchema), ...schemaKeys(tool.outputSchema)];
+      expect(
+        keys.filter((k) => !/^[a-z][a-zA-Z0-9]*$/.test(k)),
+        tool.name,
+      ).toEqual([]);
     }
   });
 

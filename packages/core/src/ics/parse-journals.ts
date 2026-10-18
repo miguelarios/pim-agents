@@ -48,7 +48,7 @@ export function parseIcsJournals(icsContent: string): ParsedJournal[] {
         categories: parseCategories(vjournal),
         status: typeof status === "string" ? status.toLowerCase() : null,
         created: created instanceof ICAL.Time ? created.toJSDate().toISOString() : null,
-        last_modified:
+        lastModified:
           lastModified instanceof ICAL.Time ? lastModified.toJSDate().toISOString() : null,
       });
     } catch {

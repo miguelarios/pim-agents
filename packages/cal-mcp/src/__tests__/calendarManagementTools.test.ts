@@ -27,27 +27,27 @@ const notFound = (message: string) => new CalendarError(message, ErrorCode.CALEN
 const fakeService = () => ({
   listProviders: vi.fn().mockReturnValue(["mailbox", "nextcloud"]),
   findCalendarEntry: vi.fn().mockResolvedValue({
-    calendar_id: "mailbox/Work",
-    display_name: "Work",
+    calendarId: "mailbox/Work",
+    displayName: "Work",
     url: "/caldav/work/",
     provider: "mailbox",
   }),
   countCalendarObjects: vi.fn().mockResolvedValue(214),
   createCalendar: vi.fn().mockResolvedValue({
-    calendar_id: "mailbox/Team",
-    display_name: "Team",
+    calendarId: "mailbox/Team",
+    displayName: "Team",
     url: "/caldav/team/",
     provider: "mailbox",
   }),
   updateCalendarMeta: vi.fn().mockResolvedValue({
-    calendar_id: "mailbox/Team",
-    display_name: "Team",
+    calendarId: "mailbox/Team",
+    displayName: "Team",
     url: "/caldav/work/",
     provider: "mailbox",
   }),
   deleteCalendar: vi.fn().mockResolvedValue({
-    calendar_id: "mailbox/Work",
-    display_name: "Work",
+    calendarId: "mailbox/Work",
+    displayName: "Work",
     url: "/caldav/work/",
     provider: "mailbox",
   }),
@@ -89,7 +89,7 @@ describe("CALENDAR_MANAGEMENT_TOOLS definitions", () => {
 
   it("requires the target on every write tool — no first-calendar fallback", () => {
     for (const [name, required] of [
-      ["create_calendar", "display_name"],
+      ["create_calendar", "displayName"],
       ["update_calendar", "calendar"],
       ["delete_calendar", "calendar"],
     ] as const) {
@@ -105,13 +105,13 @@ describe("CALENDAR_MANAGEMENT_TOOLS definitions", () => {
 });
 
 describe("create_calendar", () => {
-  it("passes snake_case args through as the service's camelCase options", async () => {
+  it("passes the tool arguments through as the service options", async () => {
     const service = fakeService();
     const res = await callTool(
       "create_calendar",
       {
         provider: "mailbox",
-        display_name: "Team",
+        displayName: "Team",
         description: "Shared",
         color: "#3B82F6",
         slug: "team",
@@ -127,15 +127,15 @@ describe("create_calendar", () => {
     });
     expect(res.structuredContent).toEqual({
       status: "created",
-      calendar_id: "mailbox/Team",
+      calendarId: "mailbox/Team",
       url: "/caldav/team/",
-      display_name: "Team",
+      displayName: "Team",
     });
   });
 
   it("forwards an absent provider rather than inventing one", async () => {
     const service = fakeService();
-    await callTool("create_calendar", { display_name: "Team" }, service);
+    await callTool("create_calendar", { displayName: "Team" }, service);
     expect(service.createCalendar).toHaveBeenCalledWith(
       expect.objectContaining({ provider: undefined }),
     );
@@ -146,7 +146,7 @@ describe("create_calendar", () => {
     service.createCalendar.mockRejectedValue(
       new ValidationError('Invalid color "blue" — use #RRGGBB or #RRGGBBAA (e.g. #3B82F6)'),
     );
-    const res = await callTool("create_calendar", { display_name: "Team", color: "blue" }, service);
+    const res = await callTool("create_calendar", { displayName: "Team", color: "blue" }, service);
     expect(res.isError).toBe(true);
     const parsed = JSON.parse(res.content[0].text);
     expect(parsed.error).toBe("VALIDATION_FAILED");
@@ -155,11 +155,11 @@ describe("create_calendar", () => {
 });
 
 describe("update_calendar", () => {
-  it("returns the post-rename calendar_id, not the one it was given", async () => {
+  it("returns the post-rename calendarId, not the one it was given", async () => {
     const service = fakeService();
     const res = await callTool(
       "update_calendar",
-      { calendar: "mailbox/Work", display_name: "Team" },
+      { calendar: "mailbox/Work", displayName: "Team" },
       service,
     );
     expect(service.updateCalendarMeta).toHaveBeenCalledWith("mailbox/Work", {
@@ -167,7 +167,7 @@ describe("update_calendar", () => {
       description: undefined,
       color: undefined,
     });
-    expect(res.structuredContent.calendar_id).toBe("mailbox/Team");
+    expect(res.structuredContent.calendarId).toBe("mailbox/Team");
     expect(res.structuredContent.status).toBe("updated");
   });
 
@@ -175,7 +175,7 @@ describe("update_calendar", () => {
     const service = fakeService();
     service.updateCalendarMeta.mockRejectedValue(
       new ValidationError(
-        "Nothing to change — provide a display_name, color, description, timezone and/or order",
+        "Nothing to change — provide a displayName, color, description, timezone and/or order",
       ),
     );
     const res = await callTool("update_calendar", { calendar: "mailbox/Work" }, service);
@@ -232,9 +232,9 @@ describe("delete_calendar", () => {
     expect(service.deleteCalendar).toHaveBeenCalledWith("mailbox/Work");
     expect(res.structuredContent).toEqual({
       status: "deleted",
-      calendar_id: "mailbox/Work",
+      calendarId: "mailbox/Work",
       url: "/caldav/work/",
-      display_name: "Work",
+      displayName: "Work",
     });
   });
 
@@ -262,8 +262,8 @@ describe("delete_calendar", () => {
 
 describe("calendar sharing tools (#47)", () => {
   const SHARED = {
-    can_be_shared: true,
-    can_be_published: true,
+    canBeShared: true,
+    canBePublished: true,
     protocol: "calendarserver" as const,
     shares: [
       {
@@ -285,7 +285,7 @@ describe("calendar sharing tools (#47)", () => {
     const service = sharingService();
     const res = await callTool("get_calendar_sharing", { calendar: "mailbox/Work" }, service);
     expect(res.inputRequests).toBeUndefined();
-    expect(res.structuredContent).toEqual({ calendar_id: "mailbox/Work", ...SHARED });
+    expect(res.structuredContent).toEqual({ calendarId: "mailbox/Work", ...SHARED });
   });
 
   it("share_calendar asks first, naming the sharee, the access and the invitation", async () => {
@@ -317,7 +317,7 @@ describe("calendar sharing tools (#47)", () => {
       "read",
       "Hi",
     );
-    expect(res.structuredContent.calendar_id).toBe("mailbox/Work");
+    expect(res.structuredContent.calendarId).toBe("mailbox/Work");
   });
 
   it("unshare_calendar asks first, then revokes with a null access", async () => {

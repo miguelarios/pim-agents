@@ -38,8 +38,8 @@ export interface CalendarShare {
 
 export interface CalendarSharing {
   /** False when the server reports no sharing support for this calendar. */
-  can_be_shared: boolean;
-  can_be_published: boolean;
+  canBeShared: boolean;
+  canBePublished: boolean;
   /** Which dialect the shares were read from; null when none was reported. */
   protocol: SharingProtocol | null;
   shares: CalendarShare[];
@@ -176,7 +176,7 @@ function webdavShares(invite: Node): CalendarShare[] {
 export function parseSharing(xml: string): CalendarSharing {
   const doc = xml2js(xml, { compact: false }) as Element;
   const top = (doc.elements ?? []).find((e) => e.type === "element");
-  if (!top) return { can_be_shared: false, can_be_published: false, protocol: null, shares: [] };
+  if (!top) return { canBeShared: false, canBePublished: false, protocol: null, shares: [] };
   const props = okProps(resolve(top, {}));
   const prop = (ns: string, local: string) =>
     props.map((p) => kid(p, ns, local)).find((n) => n !== undefined);
@@ -202,8 +202,8 @@ export function parseSharing(xml: string): CalendarSharing {
   return {
     // A server that answers any invite property supports sharing even when it
     // leaves allowed-sharing-modes out.
-    can_be_shared: modes ? !!kid(modes, NS.CS, "can-be-shared") : protocol !== null,
-    can_be_published: modes ? !!kid(modes, NS.CS, "can-be-published") : false,
+    canBeShared: modes ? !!kid(modes, NS.CS, "can-be-shared") : protocol !== null,
+    canBePublished: modes ? !!kid(modes, NS.CS, "can-be-published") : false,
     protocol,
     shares,
   };

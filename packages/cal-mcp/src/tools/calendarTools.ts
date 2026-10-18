@@ -48,13 +48,13 @@ interface EventInput {
   title: string;
   start: string;
   end: string;
-  all_day?: boolean;
+  allDay?: boolean;
   location?: string;
   description?: string;
   attendees?: Attendee[];
   alarms?: Alarm[];
   categories?: string[];
-  recurrence_rule?: string;
+  recurrenceRule?: string;
   availability?: "busy" | "free";
 }
 
@@ -68,7 +68,7 @@ const UPDATABLE_FIELDS = [
   "title",
   "start",
   "end",
-  "all_day",
+  "allDay",
   "location",
   "description",
   "attendees",
@@ -106,7 +106,7 @@ function selectedCalendars(args: CalendarSelection): string[] {
 
 /** Spread into a listing result: the providers it skipped, when there were any. */
 function unavailableField(unavailable: UnavailableProvider[]) {
-  return unavailable.length > 0 ? { unavailable_providers: unavailable } : {};
+  return unavailable.length > 0 ? { unavailableProviders: unavailable } : {};
 }
 
 /**
@@ -127,7 +127,7 @@ async function fetchEvents(
   let unavailable: UnavailableProvider[] = [];
   if (calendarIds.length === 0) {
     const reachable = await service.listReachableCalendars();
-    calendarIds = reachable.calendars.map((cal) => cal.calendar_id);
+    calendarIds = reachable.calendars.map((cal) => cal.calendarId);
     unavailable = reachable.unavailable;
   }
   const results = await Promise.all(
@@ -171,7 +171,7 @@ function checkRange(start: string, end: string): CallToolResult | undefined {
 }
 
 /**
- * A `VALIDATION_FAILED` result unless `occurrence_date` parses. Checked before
+ * A `VALIDATION_FAILED` result unless `occurrenceDate` parses. Checked before
  * anything is written: an unparseable date reaches the ICS helpers as `NaN`,
  * and `addExdateToIcs` would store `EXDATE:NaN-aNNaN…` on the server.
  */
@@ -179,7 +179,7 @@ function checkOccurrenceDate(occurrenceDate: string): CallToolResult | undefined
   if (Number.isNaN(new Date(occurrenceDate).getTime())) {
     return calFail(
       ErrorCode.VALIDATION_FAILED,
-      `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
+      `Invalid occurrenceDate "${occurrenceDate}" — use an ISO 8601 date-time`,
     );
   }
   return undefined;
@@ -210,11 +210,11 @@ function toResponseAttendee(attendee: Attendee) {
   };
 }
 
-/** Widens an alarm from the tool's input shape by rendering `trigger_human`. */
+/** Widens an alarm from the tool's input shape by rendering `triggerHuman`. */
 function toResponseAlarm(alarm: Alarm) {
   return {
     ...alarm,
-    trigger_human:
+    triggerHuman:
       alarm.type === "absolute"
         ? new Date(alarm.trigger).toISOString()
         : formatTriggerHuman(Number(alarm.trigger)),
@@ -328,13 +328,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         calendars: CALENDARS_PROP("query"),
         start: { type: "string", description: "Start of date range (ISO 8601)" },
         end: { type: "string", description: "End of date range (ISO 8601)" },
-        detail_level: DETAIL_LEVEL_PROP,
+        detailLevel: DETAIL_LEVEL_PROP,
       },
       required: ["start", "end"],
     },
     outputSchema: eventListSchema,
     handler: (
-      args: CalendarSelection & { start: string; end: string; detail_level?: DetailLevel },
+      args: CalendarSelection & { start: string; end: string; detailLevel?: DetailLevel },
       service,
     ) =>
       run(async () => {
@@ -345,7 +345,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           args,
           args.start,
           args.end,
-          args.detail_level ?? "summary",
+          args.detailLevel ?? "summary",
         );
         return ok({ events, ...unavailableField(unavailable) });
       }),
@@ -363,11 +363,11 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           description: "Provider-prefixed calendar ID. If omitted, queries all calendars.",
         },
         calendars: CALENDARS_PROP("query"),
-        detail_level: DETAIL_LEVEL_PROP,
+        detailLevel: DETAIL_LEVEL_PROP,
       },
     },
     outputSchema: eventListSchema,
-    handler: (args: CalendarSelection & { detail_level?: DetailLevel }, service) =>
+    handler: (args: CalendarSelection & { detailLevel?: DetailLevel }, service) =>
       run(async () => {
         const tz = getTimezone();
         const { year, month, day } = getLocalDateParts(new Date(), tz);
@@ -378,7 +378,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           args,
           todayStart,
           todayEnd,
-          args.detail_level ?? "summary",
+          args.detailLevel ?? "summary",
         );
         return ok({ events, ...unavailableField(unavailable) });
       }),
@@ -405,7 +405,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           type: "string",
           description: "Range end (ISO 8601). Defaults to 90 days ahead.",
         },
-        detail_level: DETAIL_LEVEL_PROP,
+        detailLevel: DETAIL_LEVEL_PROP,
       },
       required: ["query"],
     },
@@ -415,13 +415,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         query: string;
         start?: string;
         end?: string;
-        detail_level?: DetailLevel;
+        detailLevel?: DetailLevel;
       },
       service,
     ) =>
       run(async () => {
         const query = args.query.toLowerCase();
-        const detailLevel = args.detail_level ?? "summary";
+        const detailLevel = args.detailLevel ?? "summary";
         const now = new Date();
         const start = args.start ?? new Date(now.getTime() - 90 * 86400000).toISOString();
         const end = args.end ?? new Date(now.getTime() + 90 * 86400000).toISOString();
@@ -443,14 +443,14 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
     name: "get_event",
     title: "Get Event",
     description:
-      "Get full details of a single event by calendar and UID. For a recurring event, pass occurrence_date to get one occurrence as it will actually happen — including any changes made to just that occurrence — instead of the master series.",
+      "Get full details of a single event by calendar and UID. For a recurring event, pass occurrenceDate to get one occurrence as it will actually happen — including any changes made to just that occurrence — instead of the master series.",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
       properties: {
         calendar: CALENDAR_PROP,
         uid: { type: "string", description: "Event UID" },
-        occurrence_date: {
+        occurrenceDate: {
           type: "string",
           description:
             "ISO 8601 date-time of one occurrence of a recurring event, as returned in list_events results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master.",
@@ -459,9 +459,9 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       required: ["calendar", "uid"],
     },
     outputSchema: singleEventSchema,
-    handler: (args: { calendar: string; uid: string; occurrence_date?: string }, service) =>
+    handler: (args: { calendar: string; uid: string; occurrenceDate?: string }, service) =>
       run(async () =>
-        ok({ event: await service.getEvent(args.calendar, args.uid, args.occurrence_date) }),
+        ok({ event: await service.getEvent(args.calendar, args.uid, args.occurrenceDate) }),
       ),
   },
   {
@@ -481,13 +481,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         title: { type: "string", description: "Event title" },
         start: { type: "string", description: "Start time (ISO 8601)" },
         end: { type: "string", description: "End time (ISO 8601)" },
-        all_day: { type: "boolean", description: "All-day event flag (default: false)" },
+        allDay: { type: "boolean", description: "All-day event flag (default: false)" },
         location: { type: "string", description: "Event location" },
         description: { type: "string", description: "Event description" },
         attendees: ATTENDEES_PROP("List of attendee email addresses to invite."),
         alarms: ALARMS_PROP,
         categories: CATEGORIES_PROP,
-        recurrence_rule: {
+        recurrenceRule: {
           type: "string",
           description:
             "RFC 5545 RRULE string for a recurring event (e.g., 'FREQ=WEEKLY;BYDAY=MO,WE,FR' or 'FREQ=MONTHLY;BYDAY=+3FR;COUNT=12'). Accepted with or without the 'RRULE:' prefix. FREQ is required.",
@@ -515,13 +515,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             title: args.title,
             start: args.start,
             end: args.end,
-            all_day: args.all_day ?? false,
+            allDay: args.allDay ?? false,
             location: args.location,
             description: args.description,
             attendees: args.attendees,
             alarms: args.alarms,
             categories: args.categories,
-            recurrence_rule: args.recurrence_rule,
+            recurrenceRule: args.recurrenceRule,
             organizer,
             availability: args.availability,
             timezone: getTimezone(),
@@ -556,13 +556,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         title: { type: "string", description: "New event title" },
         start: { type: "string", description: "New start time (ISO 8601)" },
         end: { type: "string", description: "New end time (ISO 8601)" },
-        all_day: { type: "boolean", description: "All-day event flag" },
+        allDay: { type: "boolean", description: "All-day event flag" },
         location: { type: "string", description: "New location" },
         description: { type: "string", description: "New description" },
         attendees: ATTENDEES_PROP("New attendee list (replaces existing)."),
         alarms: ALARMS_PROP,
         categories: CATEGORIES_PROP,
-        occurrence_date: {
+        occurrenceDate: {
           type: "string",
           description:
             "ISO 8601 date of the specific occurrence to modify. Required when span is 'this' or 'future' on a recurring event. Get this value from list_events results.",
@@ -587,7 +587,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       args: UpdateFields & {
         calendar: string;
         uid: string;
-        occurrence_date?: string;
+        occurrenceDate?: string;
         span?: Span;
       },
       service,
@@ -598,14 +598,14 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         const { event: existing } = await service.getEventWithMeta(args.calendar, args.uid);
 
         // span="this" on a recurring event: create exception VEVENT
-        if (existing.is_recurring && span === "this") {
-          if (!args.occurrence_date) {
+        if (existing.isRecurring && span === "this") {
+          if (!args.occurrenceDate) {
             return calFail(
               ErrorCode.VALIDATION_FAILED,
-              "occurrence_date is required when span is 'this' on a recurring event",
+              "occurrenceDate is required when span is 'this' on a recurring event",
             );
           }
-          const occurrenceDate = args.occurrence_date;
+          const occurrenceDate = args.occurrenceDate;
           const invalidDate = checkOccurrenceDate(occurrenceDate);
           if (invalidDate) return invalidDate;
           const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
@@ -625,7 +625,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             "vevent",
             occurrenceDate,
             overrides,
-            existing.all_day,
+            existing.allDay,
           );
           const combinedIcs = combineIcsComponents(rawObj.data, exceptionVevent);
 
@@ -648,7 +648,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
               end:
                 overrides.end ??
                 new Date(new Date(occurrenceDate).getTime() + occDuration).toISOString(),
-              all_day: overrides.all_day ?? existing.all_day,
+              allDay: overrides.allDay ?? existing.allDay,
               location: overrides.location ?? existing.location,
               description: overrides.description ?? existing.description,
               attendees: overrides.attendees
@@ -659,8 +659,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
                 ? { name: overrides.organizer.name ?? null, email: overrides.organizer.email }
                 : existing.organizer,
               categories: overrides.categories ?? existing.categories,
-              occurrence_date: occurrenceDate,
-              recurrence_rule: null,
+              occurrenceDate: occurrenceDate,
+              recurrenceRule: null,
             },
           });
         }
@@ -682,20 +682,20 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         // (new UID) carries the remaining pattern with the changes applied.
         // A cut at the first occurrence has nothing to keep behind it, so it
         // falls through to the whole-series edit below (#38).
-        if (existing.is_recurring && span === "future") {
-          if (!args.occurrence_date) {
+        if (existing.isRecurring && span === "future") {
+          if (!args.occurrenceDate) {
             return calFail(
               ErrorCode.VALIDATION_FAILED,
-              "occurrence_date is required when span is 'future' on a recurring event",
+              "occurrenceDate is required when span is 'future' on a recurring event",
             );
           }
-          const occurrenceDate = args.occurrence_date;
+          const occurrenceDate = args.occurrenceDate;
           const invalidDate = checkOccurrenceDate(occurrenceDate);
           if (invalidDate) return invalidDate;
           const newUid = `${randomUUID()}@pim-core`;
           let split: ReturnType<typeof splitRecurrenceIcs>;
           try {
-            split = splitRecurrenceIcs(rawObj.data, occurrenceDate, existing.all_day, newUid);
+            split = splitRecurrenceIcs(rawObj.data, occurrenceDate, existing.allDay, newUid);
           } catch (err) {
             if (err instanceof Error && err.message.startsWith("No occurrence at")) {
               return calFail(ErrorCode.VALIDATION_FAILED, err.message);
@@ -763,19 +763,19 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       properties: {
         calendar: CALENDAR_PROP,
         uid: { type: "string", description: "Event UID to move" },
-        target_calendar: {
+        targetCalendar: {
           type: "string",
           description: "Destination provider-prefixed calendar ID, on the same account",
         },
       },
-      required: ["calendar", "uid", "target_calendar"],
+      required: ["calendar", "uid", "targetCalendar"],
     },
     outputSchema: singleEventSchema,
-    handler: (args: { calendar: string; uid: string; target_calendar: string }, service) =>
+    handler: (args: { calendar: string; uid: string; targetCalendar: string }, service) =>
       run(async () => {
         const { meta } = await service.getEventWithMeta(args.calendar, args.uid);
         return ok({
-          event: await service.moveEvent(args.calendar, args.uid, args.target_calendar, meta),
+          event: await service.moveEvent(args.calendar, args.uid, args.targetCalendar, meta),
         });
       }),
   },
@@ -795,7 +795,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       properties: {
         calendar: CALENDAR_PROP,
         uid: { type: "string", description: "Event UID to delete" },
-        occurrence_date: {
+        occurrenceDate: {
           type: "string",
           description:
             "ISO 8601 date of the specific occurrence to delete. Required when span is 'this' or 'future' on a recurring event. Get this value from list_events results.",
@@ -811,7 +811,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
     },
     outputSchema: deleteResultSchema,
     handler: async (
-      args: { calendar: string; uid: string; occurrence_date?: string; span?: Span },
+      args: { calendar: string; uid: string; occurrenceDate?: string; span?: Span },
       service,
       ctx,
     ) => {
@@ -827,23 +827,23 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             args.calendar,
             args.uid,
           );
-          if (!existing.is_recurring) {
+          if (!existing.isRecurring) {
             return calFail(
               ErrorCode.VALIDATION_FAILED,
               `Event "${args.uid}" is not recurring — use span 'all' to delete it`,
             );
           }
-          if (!args.occurrence_date) {
+          if (!args.occurrenceDate) {
             return calFail(
               ErrorCode.VALIDATION_FAILED,
-              "occurrence_date is required when span is 'future' on a recurring event",
+              "occurrenceDate is required when span is 'future' on a recurring event",
             );
           }
-          const occurrenceDate = args.occurrence_date;
+          const occurrenceDate = args.occurrenceDate;
           const invalidDate = checkOccurrenceDate(occurrenceDate);
           if (invalidDate) return invalidDate;
           const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
-          const truncated = truncateRecurrenceIcs(rawObj.data, occurrenceDate, existing.all_day);
+          const truncated = truncateRecurrenceIcs(rawObj.data, occurrenceDate, existing.allDay);
 
           // Nothing would remain: the cut is at or before the first occurrence,
           // so this is a whole-series delete and is treated as one.
@@ -887,24 +887,24 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             args.uid,
           );
 
-          if (existing.is_recurring) {
-            if (!args.occurrence_date) {
+          if (existing.isRecurring) {
+            if (!args.occurrenceDate) {
               return calFail(
                 ErrorCode.VALIDATION_FAILED,
-                "occurrence_date is required when span is 'this' on a recurring event",
+                "occurrenceDate is required when span is 'this' on a recurring event",
               );
             }
-            const occurrenceDate = args.occurrence_date;
+            const occurrenceDate = args.occurrenceDate;
             const invalidDate = checkOccurrenceDate(occurrenceDate);
             if (invalidDate) return invalidDate;
             const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
 
-            let updatedIcs = addExdateToIcs(rawObj.data, occurrenceDate, existing.all_day);
+            let updatedIcs = addExdateToIcs(rawObj.data, occurrenceDate, existing.allDay);
 
             // Remove any existing exception VEVENT/VTODO for this occurrence,
             // matching by resolved instant (handles both UTC and TZID-form
             // RECURRENCE-ID) rather than a literal-text regex.
-            updatedIcs = removeExceptionFromIcs(updatedIcs, occurrenceDate, existing.all_day);
+            updatedIcs = removeExceptionFromIcs(updatedIcs, occurrenceDate, existing.allDay);
 
             await service.updateEvent(args.calendar, args.uid, updatedIcs, {
               url: rawObj.url,
@@ -963,7 +963,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
               title: { type: "string", description: "Event title" },
               start: { type: "string", description: "Start time (ISO 8601)" },
               end: { type: "string", description: "End time (ISO 8601)" },
-              all_day: { type: "boolean", description: "All-day event flag (default: false)" },
+              allDay: { type: "boolean", description: "All-day event flag (default: false)" },
               location: { type: "string", description: "Event location" },
               description: { type: "string", description: "Event description" },
               attendees: ATTENDEES_PROP("List of attendee email addresses to invite."),
@@ -987,7 +987,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
                 description: "Event reminders/alarms",
               },
               categories: CATEGORIES_PROP,
-              recurrence_rule: {
+              recurrenceRule: {
                 type: "string",
                 description:
                   "RFC 5545 RRULE string for a recurring event (e.g., 'FREQ=WEEKLY;BYDAY=MO'). FREQ is required.",
@@ -1047,16 +1047,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       type: "object",
       properties: {
         calendar: CALENDAR_PROP,
-        ics_content: { type: "string", description: "Raw iCalendar content string" },
+        icsContent: { type: "string", description: "Raw iCalendar content string" },
       },
-      required: ["calendar", "ics_content"],
+      required: ["calendar", "icsContent"],
     },
     outputSchema: importResultSchema,
-    handler: (args: { calendar: string; ics_content: string }, service) =>
+    handler: (args: { calendar: string; icsContent: string }, service) =>
       run(async () => {
         let groups: ReturnType<typeof splitIcsByUid>;
         try {
-          groups = splitIcsByUid(args.ics_content);
+          groups = splitIcsByUid(args.icsContent);
         } catch (err) {
           if (err instanceof IcsParseError) return calFail(ErrorCode.INVALID_ICS, err.message);
           throw err;
@@ -1105,12 +1105,12 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         },
         start: { type: "string", description: "Start of range (ISO 8601)" },
         end: { type: "string", description: "End of range (ISO 8601)" },
-        include_all_day_as_busy: {
+        includeAllDayAsBusy: {
           type: "boolean",
           description:
             "Treat all-day events as busy when computing from events (default: false). A server-side answer decides this itself.",
         },
-        ignore_tentative: {
+        ignoreTentative: {
           type: "boolean",
           description: "If true, tentative periods are left out (default: false)",
         },
@@ -1123,8 +1123,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         calendars?: string[];
         start: string;
         end: string;
-        include_all_day_as_busy?: boolean;
-        ignore_tentative?: boolean;
+        includeAllDayAsBusy?: boolean;
+        ignoreTentative?: boolean;
       },
       service,
     ) =>
@@ -1133,11 +1133,11 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         if (invalid) return invalid;
         let calendarIds = args.calendars;
         if (!calendarIds || calendarIds.length === 0) {
-          calendarIds = (await service.listCalendars()).map((c) => c.calendar_id);
+          calendarIds = (await service.listCalendars()).map((c) => c.calendarId);
         }
         const { busy, sources } = await service.getFreeBusy(calendarIds, args.start, args.end, {
-          includeAllDayAsBusy: args.include_all_day_as_busy ?? false,
-          ignoreTentative: args.ignore_tentative ?? false,
+          includeAllDayAsBusy: args.includeAllDayAsBusy ?? false,
+          ignoreTentative: args.ignoreTentative ?? false,
         });
         return ok({
           start: new Date(args.start).toISOString(),
@@ -1166,24 +1166,24 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         start: { type: "string", description: "Start of search range (ISO 8601)" },
         end: { type: "string", description: "End of search range (ISO 8601)" },
         duration: { type: "number", description: "Minimum slot duration in minutes" },
-        preferred_start: {
+        preferredStart: {
           type: "string",
           description: "Preferred earliest time (HH:MM, e.g., 08:00)",
         },
-        preferred_end: {
+        preferredEnd: {
           type: "string",
           description: "Preferred latest time (HH:MM, e.g., 17:00)",
         },
-        exclude_calendars: {
+        excludeCalendars: {
           type: "array",
           items: { type: "string", description: "Provider-prefixed calendar ID to exclude" },
           description: "Calendar IDs to exclude from busy time calculation",
         },
-        include_all_day_as_busy: {
+        includeAllDayAsBusy: {
           type: "boolean",
           description: "Treat all-day events as busy (default: false)",
         },
-        ignore_tentative: {
+        ignoreTentative: {
           type: "boolean",
           description: "If true, tentative events don't block slots (default: false)",
         },
@@ -1197,11 +1197,11 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         start: string;
         end: string;
         duration: number;
-        preferred_start?: string;
-        preferred_end?: string;
-        exclude_calendars?: string[];
-        include_all_day_as_busy?: boolean;
-        ignore_tentative?: boolean;
+        preferredStart?: string;
+        preferredEnd?: string;
+        excludeCalendars?: string[];
+        includeAllDayAsBusy?: boolean;
+        ignoreTentative?: boolean;
       },
       service,
     ) =>
@@ -1211,7 +1211,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         let calendarIds = args.calendars;
         if (!calendarIds || calendarIds.length === 0) {
           const allCals = await service.listCalendars();
-          calendarIds = allCals.map((c: { calendar_id: string }) => c.calendar_id);
+          calendarIds = allCals.map((c: { calendarId: string }) => c.calendarId);
         }
         const slots = await service.findFreeSlots(
           calendarIds,
@@ -1219,11 +1219,11 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           args.end,
           args.duration,
           {
-            preferredStart: args.preferred_start,
-            preferredEnd: args.preferred_end,
-            ignoreTentative: args.ignore_tentative ?? false,
-            excludeCalendars: args.exclude_calendars,
-            includeAllDayAsBusy: args.include_all_day_as_busy ?? false,
+            preferredStart: args.preferredStart,
+            preferredEnd: args.preferredEnd,
+            ignoreTentative: args.ignoreTentative ?? false,
+            excludeCalendars: args.excludeCalendars,
+            includeAllDayAsBusy: args.includeAllDayAsBusy ?? false,
           },
         );
         return ok({ slots, count: slots.length });

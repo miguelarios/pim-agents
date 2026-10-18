@@ -5,8 +5,8 @@
 import type { FreeBusyPeriod, ParsedAlarm } from "@miguelarios/pim-core/ics";
 
 export interface CalendarInfo {
-  calendar_id: string;
-  display_name: string;
+  calendarId: string;
+  displayName: string;
   color: string | null;
   description: string | null;
   /** IANA zone the calendar defaults to (`calendar-timezone`), when the provider reports one. */
@@ -14,30 +14,30 @@ export interface CalendarInfo {
   /** Sort position among the account's calendars (Apple `calendar-order`), when reported. */
   order: number | null;
   source: string;
-  read_only: boolean;
+  readOnly: boolean;
   url: string;
   ctag?: string;
 }
 
 /** A calendar collection as the management tools name it. */
 export interface CalendarCollection {
-  calendar_id: string;
-  display_name: string;
+  calendarId: string;
+  displayName: string;
   url: string;
   provider: string;
 }
 
 export interface EventSummary {
   uid: string;
-  calendar_id: string;
+  calendarId: string;
   title: string;
   start: string;
   end: string;
-  all_day: boolean;
+  allDay: boolean;
   location: string | null;
   status: string | null;
-  is_recurring: boolean;
-  occurrence_date: string | null;
+  isRecurring: boolean;
+  occurrenceDate: string | null;
 }
 
 export interface EventFull extends EventSummary {
@@ -52,9 +52,9 @@ export interface EventFull extends EventSummary {
     type: string;
   }>;
   organizer: { name: string | null; email: string } | null;
-  recurrence_rule: string | null;
+  recurrenceRule: string | null;
   created: string | null;
-  last_modified: string | null;
+  lastModified: string | null;
   alarms: ParsedAlarm[];
   categories: string[];
   geo: { latitude: number; longitude: number } | null;

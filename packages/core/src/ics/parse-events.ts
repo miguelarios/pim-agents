@@ -46,7 +46,7 @@ function buildBaseEvent(component: ICAL.Component): Omit<ParsedEvent, "start" | 
   return {
     uid: typeof uid === "string" ? uid : "",
     title: typeof summary === "string" ? summary : "",
-    all_day: false, // overwritten below per-instance
+    allDay: false, // overwritten below per-instance
     location: nullIfEmpty(location),
     description: nullIfEmpty(description),
     status: typeof status === "string" ? status.toLowerCase() : null,
@@ -56,13 +56,13 @@ function buildBaseEvent(component: ICAL.Component): Omit<ParsedEvent, "start" | 
     categories: parseCategories(component),
     geo: parseGeo(component),
     organizer: parseOrganizer(component),
-    recurrence_rule: rrule ? rrule.toString() : null,
+    recurrenceRule: rrule ? rrule.toString() : null,
     rdates: rdates.length > 0 ? rdates : null,
     created: created instanceof ICAL.Time ? created.toJSDate().toISOString() : null,
-    last_modified: lastModified instanceof ICAL.Time ? lastModified.toJSDate().toISOString() : null,
-    is_recurring: !!rrule || rdates.length > 0,
+    lastModified: lastModified instanceof ICAL.Time ? lastModified.toJSDate().toISOString() : null,
+    isRecurring: !!rrule || rdates.length > 0,
     alarms: parseAlarms(component),
-    occurrence_date: null,
+    occurrenceDate: null,
   };
 }
 
@@ -127,7 +127,7 @@ function timeToEventIsoWithTz(time: ICAL.Time, timezone?: string): string {
  * null when there is no series to speak of (an override stored on its own,
  * as an invitation to a single occurrence is).
  */
-type SeriesContext = Pick<ParsedEvent, "recurrence_rule" | "rdates"> | "expanded" | null;
+type SeriesContext = Pick<ParsedEvent, "recurrenceRule" | "rdates"> | "expanded" | null;
 
 function emitNonExpanded(
   component: ICAL.Component,
@@ -152,10 +152,10 @@ function emitNonExpanded(
   return [
     {
       ...base,
-      all_day: allDay,
+      allDay: allDay,
       start: startIso,
       end: endIso,
-      occurrence_date: occDate,
+      occurrenceDate: occDate,
       // A RECURRENCE-ID makes this an occurrence of a series even without an
       // RRULE of its own: a detached override never carries one, and a server
       // that honours calendar-query <expand> (SabreDAV/Nextcloud) returns
@@ -163,9 +163,9 @@ function emitNonExpanded(
       // not when there is no series behind it: an override stored on its own
       // has no master to edit, and calling it recurring would send writes
       // down the per-occurrence paths that assume one.
-      is_recurring: base.is_recurring || (occDate !== null && series !== null),
+      isRecurring: base.isRecurring || (occDate !== null && series !== null),
       ...(series && series !== "expanded"
-        ? { recurrence_rule: series.recurrence_rule, rdates: series.rdates }
+        ? { recurrenceRule: series.recurrenceRule, rdates: series.rdates }
         : {}),
     },
   ];
@@ -177,7 +177,7 @@ function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string)
   const rangeEnd = ICAL.Time.fromJSDate(new Date(range.end), true);
   // Series-level fields belong to the master. An override VEVENT carries no
   // RRULE of its own, so building them from it made a moved occurrence report
-  // is_recurring: false and no rule while its siblings reported both (#99).
+  // isRecurring: false and no rule while its siblings reported both (#99).
   const series = buildBaseEvent(event.component);
   const it = event.iterator();
   // event.iterator().next() returns null/undefined when the series is exhausted
@@ -195,17 +195,17 @@ function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string)
     const allDay = details.startDate.isDate;
     out.push({
       ...base,
-      recurrence_rule: series.recurrence_rule,
+      recurrenceRule: series.recurrenceRule,
       rdates: series.rdates,
-      is_recurring: true,
-      all_day: allDay,
+      isRecurring: true,
+      allDay: allDay,
       start: timeToEventIsoWithTz(details.startDate, timezone),
       end: timeToEventIsoWithTz(details.endDate, timezone),
-      // occurrence_date is the original RRULE-generated slot (RECURRENCE-ID).
+      // occurrenceDate is the original RRULE-generated slot (RECURRENCE-ID).
       // For ordinary occurrences this equals startDate; for exception overrides
       // it is the original time the occurrence was supposed to fire, which is
       // what consumers need to reconcile overrides back to the master series.
-      occurrence_date: timeToEventIsoWithTz(details.recurrenceId, timezone),
+      occurrenceDate: timeToEventIsoWithTz(details.recurrenceId, timezone),
     });
   }
   return out;

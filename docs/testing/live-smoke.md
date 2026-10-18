@@ -48,13 +48,13 @@ serialization) can differ between the two.
 1. **Create** a timed event (title: synthetic, e.g. `"Smoke: timed event"`) → **get** it
    back → **update** the title only (default `span`) → confirm the update succeeded
    without requiring an `RRULE` on a non-recurring event.
-2. **Create** a recurring weekly event with `recurrence_rule: "FREQ=WEEKLY;BYDAY=MO"` →
-   **update** the title with `span: "all"` → **get** and verify `recurrence_rule` is
+2. **Create** a recurring weekly event with `recurrenceRule: "FREQ=WEEKLY;BYDAY=MO"` →
+   **update** the title with `span: "all"` → **get** and verify `recurrenceRule` is
    still present and unchanged on the master event. This is the regression check for the
    `fix/cal-master-update` fix (PR #7) — the old behavior regenerated the ICS body on
    update and silently dropped `RRULE`/exception overrides.
 3. On the same recurring event, **update one occurrence** with `span: "this"` plus an
-   `occurrence_date` → **list** events across the range and verify the exception
+   `occurrenceDate` → **list** events across the range and verify the exception
    (recurrence override) is present with the updated title, and the other occurrences
    are unaffected.
 4. **Delete one occurrence** with `span: "this"` on the same series → **list** again and
@@ -65,7 +65,7 @@ serialization) can differ between the two.
    the regression check for `fix/cal-import-and-exceptions` (PR #9, `splitIcsByUid`).
 6. **Create** an all-day event → **get** it back → verify the all-day round-trip (date-only
    `DTSTART`/`DTEND`, no spurious time-of-day or timezone shift).
-7. Call `find_free_slots` with `preferred_start: "09:00"` and verify the returned slot
+7. Call `find_free_slots` with `preferredStart: "09:00"` and verify the returned slot
    boundaries land on 9 AM **local** time, not shifted by the host's UTC offset. This is
    the regression check for `fix/cal-timezones` (PR #8, `PIM_TIMEZONE`-aware boundaries).
 8. **Delete everything created** in steps 1–7 for this provider before moving to the next
@@ -78,7 +78,7 @@ every call — the parameter takes the display name directly; omitting it falls 
 first address book the account lists, which may not be `PIM-Test`.
 
 0. **Address book lifecycle** (run first, in its own scratch book):
-   1. `list_address_books` with `include_counts: true` — verify `PIM-Test` appears with a
+   1. `list_address_books` with `includeCounts: true` — verify `PIM-Test` appears with a
       plausible count.
    2. `create_address_book` `PIM-Test-Books` — verify it appears in a fresh listing, and
       that creating it a second time is refused naming the existing URL.
@@ -150,7 +150,7 @@ a third party as part of this matrix.
 Use function-call syntax with `--output json` for structured, parseable output:
 
 ```bash
-mcporter call 'calendars.create_event(calendar: "mailbox/PIM-Test", title: "Smoke recurring", start: "2026-07-13T09:00:00", end: "2026-07-13T09:30:00", recurrence_rule: "FREQ=WEEKLY;BYDAY=MO")' --output json
+mcporter call 'calendars.create_event(calendar: "mailbox/PIM-Test", title: "Smoke recurring", start: "2026-07-13T09:00:00", end: "2026-07-13T09:30:00", recurrenceRule: "FREQ=WEEKLY;BYDAY=MO")' --output json
 
 mcporter call 'contacts.list_contacts(query: "Alice Smith", addressBook: "https://example.com/remote.php/dav/addressbooks/users/example/PIM-Test/")' --output json
 
@@ -161,7 +161,7 @@ General pattern: `mcporter call '<server>.<tool>(<arg>: <value>, ...)' --output 
 Quote the whole call in single quotes so the shell doesn't interpret the parentheses;
 use double-quoted string values inside. Timestamps are ISO 8601; omit the trailing `Z`
 for provider-local times where a tool expects local time (e.g. `find_free_slots`
-`preferred_start`).
+`preferredStart`).
 
 ## 7. Protocol conformance spot-checks
 

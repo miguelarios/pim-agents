@@ -76,7 +76,7 @@ Every `addressBook` parameter takes a display name (e.g. `Work`) as well as a UR
 
 | Tool | Description |
 |------|-------------|
-| `list_contacts` | List and search contacts by name, email, phone, org (groups hidden unless `include_groups`) |
+| `list_contacts` | List and search contacts by name, email, phone, org (groups hidden unless `includeGroups`) |
 | `get_contact` | Get full contact details by UID |
 | `create_contact` | Create a new contact with typed fields |
 | `update_contact` | Update an existing contact (merge-based) |
