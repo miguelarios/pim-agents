@@ -1458,13 +1458,16 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           // A link, not the bytes: base64 for a payload this size would be a
           // third larger again, and most clients put a tool result straight
           // into the model's context. The bytes stay one resources/read away.
+          // A download the ceiling cut short only knows the part is larger.
+          const howBig = attachment.sizeIsLowerBound
+            ? `larger than the ${formatBytes(limit)} inline limit`
+            : `${formatBytes(attachment.size)}, over the ${formatBytes(limit)} inline limit`;
           return {
             content: [
               {
                 type: "text",
                 text:
-                  `${attachment.filename} is ${formatBytes(attachment.size)}, over the ` +
-                  `${formatBytes(limit)} inline limit, so it was not embedded. Fetch the bytes ` +
+                  `${attachment.filename} is ${howBig}, so it was not embedded. Fetch the bytes ` +
                   `with resources/read on ${uri}, or raise EMAIL_MAX_INLINE_BYTES.`,
               },
               {
@@ -1472,7 +1475,8 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
                 uri,
                 name: attachment.filename,
                 mimeType: attachment.contentType,
-                size: attachment.size,
+                // A size the download cut short is only a lower bound; leave it out.
+                ...(attachment.sizeIsLowerBound ? {} : { size: attachment.size }),
               },
             ],
             structuredContent,

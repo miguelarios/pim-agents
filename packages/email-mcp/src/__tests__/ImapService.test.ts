@@ -2021,48 +2021,117 @@ describe("ImapService", () => {
       };
     };
 
-    it("leaves an oversized attachment on the server instead of draining it", async () => {
-      const { state, stream } = countingStream(Buffer.from("x".repeat(4096)));
+    /**
+     * imapflow's download meta.expectedSize is the message's RFC822.SIZE, not
+     * the part's (#131), so these mocks give it a whole-message value and the
+     * part's own size only through BODYSTRUCTURE, as a real server does.
+     */
+    const MESSAGE_SIZE = 50_000_000;
+    const structureWith = (part: { size?: number; encoding?: string }) => ({
+      uid: 12345,
+      bodyStructure: {
+        type: "multipart/mixed",
+        childNodes: [
+          { part: "1", type: "text/plain", size: 120, encoding: "7bit" },
+          {
+            type: "multipart/mixed",
+            part: "2",
+            childNodes: [{ part: "2.1", type: "application/pdf", ...part }],
+          },
+        ],
+      },
+    });
+
+    it("reports the decoded length, not the whole message's size (#131)", async () => {
+      const { stream } = countingStream(Buffer.from("x".repeat(70)));
       mockDownload.mockResolvedValueOnce({
-        meta: { contentType: "application/pdf", filename: "big.pdf", expectedSize: 4096 },
+        meta: { contentType: "text/plain", filename: "smoke.txt", expectedSize: 3455 },
         content: stream,
       });
 
-      const result = await service.downloadAttachment("INBOX", 12345, "2", 1024);
+      const result = await service.downloadAttachment("INBOX", 12345, "2");
 
-      expect(result).toMatchObject({ oversized: true, size: 4096, filename: "big.pdf" });
-      expect(result.content).toBeUndefined();
-      expect(state.drained).toBe(false);
-      expect(state.destroyed).toBe(true);
+      expect(result.size).toBe(70);
     });
 
-    it("returns the bytes when the attachment fits under the ceiling", async () => {
+    it("embeds a small attachment of a large message under the ceiling (#131)", async () => {
+      mockFetchOne.mockResolvedValueOnce(structureWith({ size: 98, encoding: "base64" }));
       const { state, stream } = countingStream(Buffer.from("small"));
       mockDownload.mockResolvedValueOnce({
-        meta: { contentType: "text/plain", filename: "note.txt", expectedSize: 5 },
+        meta: { contentType: "text/plain", filename: "note.txt", expectedSize: MESSAGE_SIZE },
         content: stream,
       });
 
-      const result = await service.downloadAttachment("INBOX", 12345, "2", 1024);
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
 
-      expect(result).toMatchObject({ oversized: false });
+      expect(result).toMatchObject({ oversized: false, size: 5 });
       expect(result.content?.toString()).toBe("small");
       expect(state.drained).toBe(true);
+      // imapflow's own limiter stops fetching once one byte past the ceiling arrives.
+      expect(mockDownload).toHaveBeenCalledWith("12345", "2.1", { uid: true, maxBytes: 1025 });
     });
 
-    it("still enforces the ceiling when the server withholds the expected size", async () => {
-      // Only the network saving is lost here — the context saving is not, so
-      // the oversized verdict has to survive a missing BODYSTRUCTURE size.
-      const { state, stream } = countingStream(Buffer.from("x".repeat(4096)));
+    it("leaves an attachment whose BODYSTRUCTURE size is over the ceiling on the server", async () => {
+      // 8000 base64 bytes decode to at least floor(8000 * 8 / 11) - 2 = 5816 bytes.
+      mockFetchOne.mockResolvedValueOnce(structureWith({ size: 8000, encoding: "base64" }));
+      mockDownload.mockClear();
+
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
+
+      expect(result).toMatchObject({ oversized: true, size: 5816 });
+      expect(result.content).toBeUndefined();
+      expect(mockDownload).not.toHaveBeenCalled();
+    });
+
+    it("refuses what the limiter caught when BODYSTRUCTURE under-estimated it", async () => {
+      // Pre-check says it fits; the decoded stream says otherwise. The stream wins.
+      mockFetchOne.mockResolvedValueOnce(structureWith({ size: 1000, encoding: "base64" }));
+      const { stream } = countingStream(Buffer.from("x".repeat(1025)));
+      mockDownload.mockResolvedValueOnce({
+        meta: { contentType: "application/pdf", filename: "big.pdf", expectedSize: MESSAGE_SIZE },
+        content: stream,
+      });
+
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
+
+      expect(result).toMatchObject({ oversized: true });
+      expect(result.content).toBeUndefined();
+    });
+
+    it("still enforces the ceiling when the server gives no BODYSTRUCTURE size", async () => {
+      mockFetchOne.mockResolvedValueOnce(structureWith({}));
+      const { stream } = countingStream(Buffer.from("x".repeat(1025)));
       mockDownload.mockResolvedValueOnce({
         meta: { contentType: "application/pdf", filename: "big.pdf" },
         content: stream,
       });
 
-      const result = await service.downloadAttachment("INBOX", 12345, "2", 1024);
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
 
-      expect(result).toMatchObject({ oversized: true, size: 4096 });
-      expect(state.drained).toBe(true);
+      expect(result).toMatchObject({ oversized: true, size: 1025, sizeIsLowerBound: true });
+    });
+
+    it("does not pre-refuse a quoted-printable part whose encoded size is over but decoded fits", async () => {
+      // QP inflates non-ASCII text up to 3x, so its encoded size is no lower bound.
+      mockFetchOne.mockResolvedValueOnce(
+        structureWith({ size: 3000, encoding: "quoted-printable" }),
+      );
+      const { stream } = countingStream(Buffer.from("é".repeat(400))); // 800 decoded bytes
+      mockDownload.mockResolvedValueOnce({
+        meta: { contentType: "text/calendar", filename: "invite.ics", expectedSize: MESSAGE_SIZE },
+        content: stream,
+      });
+
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
+
+      expect(result).toMatchObject({ oversized: false, size: 800 });
+      expect(mockDownload).toHaveBeenCalled();
+    });
+
+    it("reports an exact size, not a lower bound, when the pre-check refuses", async () => {
+      mockFetchOne.mockResolvedValueOnce(structureWith({ size: 8000, encoding: "base64" }));
+      const result = await service.downloadAttachment("INBOX", 12345, "2.1", 1024);
+      expect(result.oversized && result.sizeIsLowerBound).toBeFalsy();
     });
   });
 
