@@ -1,3 +1,4 @@
+import { CalendarError, ErrorCode, ValidationError } from "@miguelarios/pim-core";
 import type { ServerContext } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
 import { CALENDAR_MANAGEMENT_TOOLS } from "../tools/calendarManagementTools.js";
@@ -21,12 +22,7 @@ function callTool(
   return tool.handler(args as any, service as any, ctx) as Promise<any>;
 }
 
-class FakeValidationError extends Error {
-  code = "VALIDATION_FAILED";
-}
-class FakeNotFoundError extends Error {
-  code = "CALENDAR_NOT_FOUND";
-}
+const notFound = (message: string) => new CalendarError(message, ErrorCode.CALENDAR_NOT_FOUND);
 
 const fakeService = () => ({
   listProviders: vi.fn().mockReturnValue(["mailbox", "nextcloud"]),
@@ -145,15 +141,15 @@ describe("create_calendar", () => {
     );
   });
 
-  it("reports a caller-fixable failure as validation_error, not backend_error", async () => {
+  it("reports a caller-fixable failure as VALIDATION_FAILED, not a server error", async () => {
     const service = fakeService();
     service.createCalendar.mockRejectedValue(
-      new FakeValidationError('Invalid color "blue" — use #RRGGBB or #RRGGBBAA (e.g. #3B82F6)'),
+      new ValidationError('Invalid color "blue" — use #RRGGBB or #RRGGBBAA (e.g. #3B82F6)'),
     );
     const res = await callTool("create_calendar", { display_name: "Team", color: "blue" }, service);
     expect(res.isError).toBe(true);
     const parsed = JSON.parse(res.content[0].text);
-    expect(parsed.error).toBe("validation_error");
+    expect(parsed.error).toBe("VALIDATION_FAILED");
     expect(parsed.message).toContain("#RRGGBB");
   });
 });
@@ -175,30 +171,28 @@ describe("update_calendar", () => {
     expect(res.structuredContent.status).toBe("updated");
   });
 
-  it("surfaces an empty update as validation_error", async () => {
+  it("surfaces an empty update as VALIDATION_FAILED", async () => {
     const service = fakeService();
     service.updateCalendarMeta.mockRejectedValue(
-      new FakeValidationError(
+      new ValidationError(
         "Nothing to change — provide a display_name, color, description, timezone and/or order",
       ),
     );
     const res = await callTool("update_calendar", { calendar: "mailbox/Work" }, service);
     expect(res.isError).toBe(true);
-    expect(JSON.parse(res.content[0].text).error).toBe("validation_error");
+    expect(JSON.parse(res.content[0].text).error).toBe("VALIDATION_FAILED");
   });
 
-  it("surfaces an unknown calendar as not_found", async () => {
+  it("surfaces an unknown calendar as CALENDAR_NOT_FOUND", async () => {
     const service = fakeService();
-    service.updateCalendarMeta.mockRejectedValue(
-      new FakeNotFoundError('Calendar "Nope" not found'),
-    );
+    service.updateCalendarMeta.mockRejectedValue(notFound('Calendar "Nope" not found'));
     const res = await callTool(
       "update_calendar",
       { calendar: "mailbox/Nope", color: "#000000" },
       service,
     );
     expect(res.isError).toBe(true);
-    expect(JSON.parse(res.content[0].text).error).toBe("not_found");
+    expect(JSON.parse(res.content[0].text).error).toBe("CALENDAR_NOT_FOUND");
   });
 });
 
@@ -259,9 +253,9 @@ describe("delete_calendar", () => {
 
   it("fails before the gate when the calendar cannot be resolved", async () => {
     const service = fakeService();
-    service.findCalendarEntry.mockRejectedValue(new FakeNotFoundError('Calendar "Nope" not found'));
+    service.findCalendarEntry.mockRejectedValue(notFound('Calendar "Nope" not found'));
     const res = await callTool("delete_calendar", { calendar: "mailbox/Nope" }, service);
-    expect(JSON.parse(res.content[0].text).error).toBe("not_found");
+    expect(JSON.parse(res.content[0].text).error).toBe("CALENDAR_NOT_FOUND");
     expect(service.deleteCalendar).not.toHaveBeenCalled();
   });
 });
@@ -362,12 +356,10 @@ describe("calendar sharing tools (#47)", () => {
     expect(service.changeCalendarShare).not.toHaveBeenCalled();
   });
 
-  it("reports a Nextcloud email sharee as a validation_error", async () => {
+  it("reports a Nextcloud email sharee as VALIDATION_FAILED", async () => {
     const service = sharingService();
     service.changeCalendarShare.mockRejectedValue(
-      new FakeValidationError(
-        "This server (Nextcloud) shares with users and groups, not addresses",
-      ),
+      new ValidationError("This server (Nextcloud) shares with users and groups, not addresses"),
     );
     const res = await callTool(
       "share_calendar",
@@ -375,6 +367,6 @@ describe("calendar sharing tools (#47)", () => {
       service,
       accept("confirm_share_calendar"),
     );
-    expect(JSON.parse(res.content[0].text).error).toBe("validation_error");
+    expect(JSON.parse(res.content[0].text).error).toBe("VALIDATION_FAILED");
   });
 });

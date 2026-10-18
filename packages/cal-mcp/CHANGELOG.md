@@ -3,6 +3,13 @@
 ## Unreleased
 
 - **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
+- **Breaking: errors use pim-core's `ErrorCode` values**, the same vocabulary as card-mcp and email-mcp (#150). The `message` and `retryable` fields are unchanged.
+
+  | Was | Now |
+  |---|---|
+  | `validation_error` | `VALIDATION_FAILED`, or `INVALID_ICS` when `import_ics` content has no events |
+  | `not_found` | `CALENDAR_NOT_FOUND` or `EVENT_NOT_FOUND` |
+  | `backend_error` | `WRITE_FAILED`, `OPERATION_FAILED`, `CONNECTION_FAILED`, `CONNECTION_TIMEOUT`, `AUTH_FAILED` or `INTERNAL_ERROR` |
 
 ## 0.21.0 (2026-10-18)
 

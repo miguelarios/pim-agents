@@ -1,3 +1,4 @@
+import { CalendarError, ErrorCode, ValidationError } from "@miguelarios/pim-core";
 import { dispatchTool } from "@miguelarios/pim-core/mcp";
 import type { ServerContext } from "@modelcontextprotocol/server";
 import * as v from "valibot";
@@ -174,6 +175,21 @@ describe("calendarTools", () => {
     expect(payload.imported).toBe(2); // unique UIDs, not 3 ParsedEvents
   });
 
+  it("import_ics reports content with no events as INVALID_ICS", async () => {
+    const result = await handleCalendarTool(
+      "import_ics",
+      {
+        calendar: "mailbox/PIM-Test",
+        ics_content: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nEND:VCALENDAR",
+      },
+      mockService as any,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toBe("INVALID_ICS");
+    expect(mockService.createEvent).not.toHaveBeenCalled();
+  });
+
   it("find_free_slots schema has new params", () => {
     const tool = CALENDAR_TOOLS.find((t) => t.name === "find_free_slots")!;
     const props = (tool.inputSchema as any).properties;
@@ -305,17 +321,15 @@ describe("calendarTools", () => {
       );
     });
 
-    it("get_event maps a validation failure to validation_error (#39)", async () => {
-      mockService.getEvent.mockRejectedValueOnce(
-        Object.assign(new Error("not recurring"), { code: "VALIDATION_FAILED" }),
-      );
+    it("get_event reports a validation failure as VALIDATION_FAILED (#39)", async () => {
+      mockService.getEvent.mockRejectedValueOnce(new ValidationError("not recurring"));
       const result = await handleCalendarTool(
         "get_event",
         { calendar: "prov/Cal", uid: "one-off", occurrence_date: "2026-03-09T15:00:00Z" },
         mockService as any,
       );
       expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text).error).toBe("validation_error");
+      expect(JSON.parse(result.content[0].text).error).toBe("VALIDATION_FAILED");
     });
 
     it("get_event wraps in { event } envelope", async () => {
@@ -432,7 +446,8 @@ describe("calendarTools", () => {
       const result = await handleCalendarTool("list_calendars", {}, mockService as any);
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.error).toBe("backend_error");
+      expect(parsed.error).toBe("CONNECTION_FAILED");
+      expect(parsed.retryable).toBe(true);
       expect(parsed.message).toContain("Connection failed");
     });
 
@@ -661,7 +676,7 @@ describe("calendarTools", () => {
         mockService as any,
       );
       expect(bad.isError).toBe(true);
-      expect(JSON.parse(bad.content[0].text).error).toBe("validation_error");
+      expect(JSON.parse(bad.content[0].text).error).toBe("VALIDATION_FAILED");
     });
 
     it("find_free_slots wraps in { slots, count } envelope", async () => {
@@ -797,11 +812,12 @@ describe("calendarTools", () => {
       expect(mockService.listEvents).toHaveBeenCalledWith("prov/Only", "2026-03-01", "2026-03-31");
     });
 
-    it("list_events reports an unknown calendar in `calendars` as not_found (#49)", async () => {
+    it("list_events reports an unknown calendar in `calendars` as CALENDAR_NOT_FOUND (#49)", async () => {
       mockService.listEvents.mockRejectedValueOnce(
-        Object.assign(new Error('Calendar "Nope" not found on provider "prov"'), {
-          code: "CALENDAR_NOT_FOUND",
-        }),
+        new CalendarError(
+          'Calendar "Nope" not found on provider "prov"',
+          ErrorCode.CALENDAR_NOT_FOUND,
+        ),
       );
 
       const result = await handleCalendarTool(
@@ -811,7 +827,7 @@ describe("calendarTools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text).error).toBe("not_found");
+      expect(JSON.parse(result.content[0].text).error).toBe("CALENDAR_NOT_FOUND");
     });
 
     it("get_today_events and search_events honour `calendars` (#49)", async () => {
@@ -1401,7 +1417,7 @@ describe("calendarTools", () => {
         mockService as any,
       );
       expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text).error).toBe("validation_error");
+      expect(JSON.parse(result.content[0].text).error).toBe("VALIDATION_FAILED");
       expect(mockService.createEvent).not.toHaveBeenCalled();
     });
 
@@ -1426,7 +1442,7 @@ describe("calendarTools", () => {
         mockService as any,
       );
       expect(past.isError).toBe(true);
-      expect(JSON.parse(past.content[0].text).error).toBe("validation_error");
+      expect(JSON.parse(past.content[0].text).error).toBe("VALIDATION_FAILED");
       expect(mockService.createEvent).not.toHaveBeenCalled();
       expect(mockService.updateEvent).not.toHaveBeenCalled();
     });
@@ -1589,7 +1605,7 @@ describe("calendarTools", () => {
         confirmed("confirm_delete_event"),
       );
       expect(result.isError).toBe(true);
-      expect(JSON.parse(result.content[0].text).error).toBe("validation_error");
+      expect(JSON.parse(result.content[0].text).error).toBe("VALIDATION_FAILED");
       expect(mockService.deleteEvent).not.toHaveBeenCalled();
       expect(mockService.updateEvent).not.toHaveBeenCalled();
     });

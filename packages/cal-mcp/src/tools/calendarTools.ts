@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getLocalDateParts, getTimezone, zonedTimeToUtc } from "@miguelarios/pim-core";
+import { ErrorCode, getLocalDateParts, getTimezone, zonedTimeToUtc } from "@miguelarios/pim-core";
 import {
   type ExceptionOverrides,
   type MasterEventUpdates,
@@ -151,26 +151,17 @@ function ok<T>(payload: T): CallToolResult {
   return { ...structured(payload), ...debugMeta() };
 }
 
-function calFail(code: string, message: string, retryable = false): CallToolResult {
+function calFail(code: ErrorCode, message: string, retryable = false): CallToolResult {
   return { ...fail(code, message, retryable), ...debugMeta() };
 }
 
 /**
- * Preserves this server's external error vocabulary (`not_found`,
- * `validation_error`, `backend_error`) while letting the underlying
- * `PimError` message through.
+ * Reports a thrown error with its pim-core `ErrorCode` (`CALENDAR_NOT_FOUND`,
+ * `VALIDATION_FAILED`, `CONNECTION_FAILED`, …), the same vocabulary card-mcp
+ * and email-mcp return.
  */
 function mapError(err: unknown): CallToolResult {
-  if (err && typeof err === "object" && "code" in err) {
-    const code = (err as { code: unknown }).code;
-    if (code === "CALENDAR_NOT_FOUND" || code === "EVENT_NOT_FOUND") {
-      return { ...toolError(err, () => "not_found"), ...debugMeta() };
-    }
-    if (code === "VALIDATION_FAILED") {
-      return { ...toolError(err, () => "validation_error"), ...debugMeta() };
-    }
-  }
-  return { ...toolError(err, () => "backend_error"), ...debugMeta() };
+  return { ...toolError(err), ...debugMeta() };
 }
 
 /**
@@ -506,7 +497,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           return ok({ event: await service.createEvent(args.calendar, icsString, uid) });
         } catch (err) {
           if (err instanceof Error && err.message.startsWith("Invalid recurrence_rule:")) {
-            return calFail("validation_error", err.message);
+            return calFail(ErrorCode.VALIDATION_FAILED, err.message);
           }
           throw err;
         }
@@ -576,7 +567,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         if (existing.is_recurring && span === "this") {
           if (!args.occurrence_date) {
             return calFail(
-              "validation_error",
+              ErrorCode.VALIDATION_FAILED,
               "occurrence_date is required when span is 'this' on a recurring event",
             );
           }
@@ -658,14 +649,14 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         if (existing.is_recurring && span === "future") {
           if (!args.occurrence_date) {
             return calFail(
-              "validation_error",
+              ErrorCode.VALIDATION_FAILED,
               "occurrence_date is required when span is 'future' on a recurring event",
             );
           }
           const occurrenceDate = args.occurrence_date;
           if (Number.isNaN(new Date(occurrenceDate).getTime())) {
             return calFail(
-              "validation_error",
+              ErrorCode.VALIDATION_FAILED,
               `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
             );
           }
@@ -675,7 +666,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             split = splitRecurrenceIcs(rawObj.data, occurrenceDate, existing.all_day, newUid);
           } catch (err) {
             if (err instanceof Error && err.message.startsWith("No occurrence at")) {
-              return calFail("validation_error", err.message);
+              return calFail(ErrorCode.VALIDATION_FAILED, err.message);
             }
             throw err;
           }
@@ -806,20 +797,20 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           );
           if (!existing.is_recurring) {
             return calFail(
-              "validation_error",
+              ErrorCode.VALIDATION_FAILED,
               `Event "${args.uid}" is not recurring — use span 'all' to delete it`,
             );
           }
           if (!args.occurrence_date) {
             return calFail(
-              "validation_error",
+              ErrorCode.VALIDATION_FAILED,
               "occurrence_date is required when span is 'future' on a recurring event",
             );
           }
           const occurrenceDate = args.occurrence_date;
           if (Number.isNaN(new Date(occurrenceDate).getTime())) {
             return calFail(
-              "validation_error",
+              ErrorCode.VALIDATION_FAILED,
               `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
             );
           }
@@ -871,7 +862,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           if (existing.is_recurring) {
             if (!args.occurrence_date) {
               return calFail(
-                "validation_error",
+                ErrorCode.VALIDATION_FAILED,
                 "occurrence_date is required when span is 'this' on a recurring event",
               );
             }
@@ -1005,7 +996,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           }
         } catch (err) {
           if (err instanceof Error && err.message.startsWith("Invalid recurrence_rule:")) {
-            return calFail("validation_error", err.message);
+            return calFail(ErrorCode.VALIDATION_FAILED, err.message);
           }
           throw err;
         }
@@ -1035,7 +1026,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       run(async () => {
         const groups = splitIcsByUid(args.ics_content);
         if (groups.length === 0) {
-          return calFail("validation_error", "No events found in ICS content");
+          return calFail(ErrorCode.INVALID_ICS, "No events found in ICS content");
         }
         const importedEvents = [];
         const failed: Array<{ uid: string; message: string }> = [];
@@ -1106,7 +1097,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         const endMs = new Date(args.end).getTime();
         if (Number.isNaN(startMs) || Number.isNaN(endMs) || startMs >= endMs) {
           return calFail(
-            "validation_error",
+            ErrorCode.VALIDATION_FAILED,
             "start and end must be ISO 8601 with start before end",
           );
         }

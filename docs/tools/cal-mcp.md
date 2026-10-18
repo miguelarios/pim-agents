@@ -113,7 +113,7 @@ Get full details of a single event by calendar and UID. For a recurring event, p
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
 | `uid` | string | yes | Event UID. |
-| `occurrence_date` | string | | ISO 8601 date-time of one occurrence of a recurring event, as returned in `list_events` results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master. `validation_error` on a non-recurring event; `not_found` if the series has no occurrence at that instant. |
+| `occurrence_date` | string | | ISO 8601 date-time of one occurrence of a recurring event, as returned in `list_events` results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master. `VALIDATION_FAILED` on a non-recurring event; `EVENT_NOT_FOUND` if the series has no occurrence at that instant. |
 
 **Output**
 
@@ -148,7 +148,7 @@ Create a new calendar event.
 { event: EventFull }
 ```
 
-Errors with `validation_error` on invalid `recurrence_rule`. ORGANIZER is auto-populated from the calendar account when attendees are present.
+Errors with `VALIDATION_FAILED` on invalid `recurrence_rule`. ORGANIZER is auto-populated from the calendar account when attendees are present.
 
 ## update_event
 
@@ -181,7 +181,7 @@ Update an existing event. Only provided fields are changed.
 
 When `span: "this"` is applied to a recurring event, the response reflects the modified occurrence (with `occurrence_date` set and `recurrence_rule: null`); the underlying series gets a RECURRENCE-ID exception.
 
-When `span: "future"` is applied to a recurring event, the series is split at the occurrence: the existing object is ended just before it (`UNTIL` on its `RRULE`, keeping earlier occurrences and their overrides), and a **new calendar object with a new UID** carries the remaining pattern with the changes applied — the response is that new series' event, so use its `uid` for later edits. A `COUNT` is reduced by the occurrences already consumed; `EXDATE`s and `RDATE`s are divided between the two halves; per-occurrence overrides at or after the cut are not carried over, and when there are any the user is asked to confirm first (`confirm_update_event`), since that is the one thing this update can lose. `occurrence_date` must be an occurrence the series actually generates (a rule instance or an `RDATE`), otherwise `validation_error`: a nearby date would silently become the new series' start and shift every later occurrence. A cut at the first occurrence is the same as `span: "all"`. The new series is written before the old one is cut, so a failure part-way leaves a visible duplicate tail rather than missing occurrences. Giving `start` without `end` keeps the series' duration.
+When `span: "future"` is applied to a recurring event, the series is split at the occurrence: the existing object is ended just before it (`UNTIL` on its `RRULE`, keeping earlier occurrences and their overrides), and a **new calendar object with a new UID** carries the remaining pattern with the changes applied — the response is that new series' event, so use its `uid` for later edits. A `COUNT` is reduced by the occurrences already consumed; `EXDATE`s and `RDATE`s are divided between the two halves; per-occurrence overrides at or after the cut are not carried over, and when there are any the user is asked to confirm first (`confirm_update_event`), since that is the one thing this update can lose. `occurrence_date` must be an occurrence the series actually generates (a rule instance or an `RDATE`), otherwise `VALIDATION_FAILED`: a nearby date would silently become the new series' start and shift every later occurrence. A cut at the first occurrence is the same as `span: "all"`. The new series is written before the old one is cut, so a failure part-way leaves a visible duplicate tail rather than missing occurrences. Giving `start` without `end` keeps the series' duration.
 
 ## move_event
 
@@ -216,7 +216,7 @@ Delete a calendar event by UID.
 | `occurrence_date` | string | | ISO 8601 date of the specific occurrence to delete. **Required** when `span` is `"this"` or `"future"` on a recurring event. Get this value from `list_events` results. |
 | `span` | `"this"` \| `"all"` \| `"future"` | | `this` deletes only this occurrence (adds EXDATE), `future` deletes this occurrence and every later one, `all` (default) deletes the entire series. |
 
-`span: "future"` sets `UNTIL` on the master `RRULE` to just before the occurrence (one second before for a timed series, the previous day for an all-day one), replacing any `COUNT`; overrides, `RDATE`s and `EXDATE`s at or after the cut are removed, earlier ones are kept. When the occurrence is the first one, nothing would remain, so the whole object is deleted instead. `validation_error` on a non-recurring event.
+`span: "future"` sets `UNTIL` on the master `RRULE` to just before the occurrence (one second before for a timed series, the previous day for an all-day one), replacing any `COUNT`; overrides, `RDATE`s and `EXDATE`s at or after the cut are removed, earlier ones are kept. When the occurrence is the first one, nothing would remain, so the whole object is deleted instead. `VALIDATION_FAILED` on a non-recurring event.
 
 **Output**
 
@@ -241,7 +241,7 @@ Create multiple events at once. Returns created event count.
 { created: number; events: EventFull[] }
 ```
 
-Events are created one at a time, in order. An invalid `recurrence_rule` returns `validation_error` and stops the batch, but events already created before it stay created.
+Events are created one at a time, in order. An invalid `recurrence_rule` returns `VALIDATION_FAILED` and stops the batch, but events already created before it stay created.
 
 ## import_ics
 
@@ -264,7 +264,7 @@ Import events from iCalendar (.ics) content into a calendar.
 }
 ```
 
-The content is split by UID (a recurring series and its overrides stay one calendar object) and each object is written separately, so one rejected event does not stop the rest: it is reported under `failed` with the server's reason. Errors with `validation_error` if no events parse from the ICS content.
+The content is split by UID (a recurring series and its overrides stay one calendar object) and each object is written separately, so one rejected event does not stop the rest: it is reported under `failed` with the server's reason. Errors with `INVALID_ICS` if no events parse from the ICS content.
 
 ## get_free_busy
 
@@ -458,13 +458,13 @@ Share a calendar with someone, or change the access of someone it is already sha
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
-| `sharee` | string | yes | An email address on CalendarServer servers (mailbox.org, Apple). On Nextcloud, a user or group principal (`principals/users/bob`, `principals/groups/family`): Nextcloud resolves an address only when exactly one local user has it and otherwise drops it silently, so an address is refused with a `validation_error` rather than risk a share that does nothing. Principals may be given as `principal:principals/users/<id>`, `principals/users/<id>`, or a full principal URL; user IDs containing `@` are fine. |
+| `sharee` | string | yes | An email address on CalendarServer servers (mailbox.org, Apple). On Nextcloud, a user or group principal (`principals/users/bob`, `principals/groups/family`): Nextcloud resolves an address only when exactly one local user has it and otherwise drops it silently, so an address is refused with `VALIDATION_FAILED` rather than risk a share that does nothing. Principals may be given as `principal:principals/users/<id>`, `principals/users/<id>`, or a full principal URL; user IDs containing `@` are fine. |
 | `access` | `"read"` \| `"read-write"` | yes | `read` lets them see events; `read-write` also lets them change them. |
 | `summary` | string | | Note included in the invitation, where the server sends one. |
 
 **Output**
 
-Same as `get_calendar_sharing`. A calendar whose server reports neither CalendarServer nor Nextcloud sharing is refused with a `validation_error` before anything is sent.
+Same as `get_calendar_sharing`. A calendar whose server reports neither CalendarServer nor Nextcloud sharing is refused with `VALIDATION_FAILED` before anything is sent.
 
 ## unshare_calendar
 
@@ -532,6 +532,20 @@ interface EventFull extends EventSummary {
 
 ## Errors
 
-All tools wrap errors as `{ error: <code>, message: <text>, retryable: <boolean> }` with `isError: true`. Codes: `validation_error`, `not_found`, `backend_error`.
+Errors are returned as a tool result with `isError: true` and a single text block holding `{ "error": <code>, "message": <text>, "retryable": <boolean> }`. `error` is the `PimError` code from `@miguelarios/pim-core`, the same vocabulary card-mcp and email-mcp use; `retryable` is `true` for transient failures (an unreachable or timed-out server).
+
+| Code | When |
+|---|---|
+| `VALIDATION_FAILED` | The arguments cannot work: an invalid `recurrence_rule`, a `span` without the `occurrence_date` it needs, an `occurrence_date` that is not an occurrence of the series, a bad colour or time zone, an inverted range, an unusable `sharee`, an ambiguous or unknown `provider`. |
+| `INVALID_ICS` | `import_ics` content contains no events. |
+| `CALENDAR_NOT_FOUND` | No calendar matches `calendar` (or an entry of `calendars`). |
+| `EVENT_NOT_FOUND` | No event with that `uid` in the calendar, or the series has no occurrence at `occurrence_date`. |
+| `WRITE_FAILED` | The server refused to store an event. |
+| `OPERATION_FAILED` | Any other request the server refused (calendar create/update/delete, sharing, a move). |
+| `CONNECTION_FAILED`, `CONNECTION_TIMEOUT` | The server could not be reached. Retryable. |
+| `AUTH_FAILED` | The server rejected the credentials. |
+| `INTERNAL_ERROR` | Anything unclassified. |
+
+The shared `CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED` and `UNKNOWN_TOOL` codes can come from any server. Before 0.22 (unreleased) this server used `validation_error`, `not_found` and `backend_error` instead; see the changelog.
 
 With `CAL_MCP_DEBUG=1`, event-tool results also carry CalDAV request timings in `_meta["com.miguelarios.cal-mcp/debug"]`, outside the validated payload.
