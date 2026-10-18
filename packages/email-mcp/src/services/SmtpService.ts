@@ -3,6 +3,18 @@ import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 
+/**
+ * The Message-ID header of an RFC 5322 message, from its header block only
+ * (up to the first blank line), with folded continuation lines unfolded.
+ */
+function headerMessageId(raw: Buffer): string | undefined {
+  const text = raw.toString("latin1");
+  const end = text.search(/\r?\n\r?\n/);
+  const headers = (end === -1 ? text : text.slice(0, end)).replace(/\r?\n[ \t]+/g, " ");
+  const match = /^message-id:[ \t]*(.+?)[ \t]*$/im.exec(headers);
+  return match?.[1] || undefined;
+}
+
 export interface SendEmailOptions {
   to: string[];
   cc?: string[];
@@ -184,7 +196,9 @@ export class SmtpService {
       });
 
       return {
-        messageId: info.messageId,
+        // nodemailer does not parse a `raw` message, so info.messageId is an
+        // id it invented and never sent (#130). Report the one on the wire.
+        messageId: headerMessageId(rawSource) ?? info.messageId,
         accepted: info.accepted as string[],
         rejected: info.rejected as string[],
       };

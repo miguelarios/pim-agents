@@ -260,5 +260,51 @@ describe("SmtpService", () => {
         raw,
       });
     });
+
+    describe("reports the Message-ID the raw message carries (#130)", () => {
+      // With `raw`, nodemailer never parses the message, so the id it reports
+      // is one it made up and did not send.
+      beforeEach(() => {
+        mockSendMail.mockResolvedValue({
+          messageId: "<nodemailer-invented@test.com>",
+          accepted: ["recipient@test.com"],
+          rejected: [],
+        });
+      });
+      const envelope = { from: "user@test.com", to: ["recipient@test.com"] };
+
+      it("returns the header's id, not nodemailer's", async () => {
+        const raw = Buffer.from(
+          "From: user@test.com\r\nMessage-ID: <real-1@test.com>\r\nSubject: Hi\r\n\r\nBody",
+        );
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe("<real-1@test.com>");
+      });
+
+      it("matches the header name case-insensitively and unfolds a folded value", async () => {
+        const raw = Buffer.from("message-id:\r\n <folded-1@test.com>\r\nSubject: Hi\r\n\r\nBody");
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe("<folded-1@test.com>");
+      });
+
+      it("ignores a Message-ID line in the body", async () => {
+        const raw = Buffer.from("Subject: Hi\r\n\r\nMessage-ID: <in-body@test.com>\r\n");
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe("<nodemailer-invented@test.com>");
+      });
+
+      it("returns the id composeRawMessage wrote, end to end", async () => {
+        const raw = await service.composeRawMessage({
+          from: "user@test.com",
+          to: ["recipient@test.com"],
+          subject: "Composed",
+          text: "Hello",
+        });
+        const written = /^Message-ID: (.+)$/im.exec(raw.toString())?.[1].trim();
+        expect(written).toMatch(/^<.+@.+>$/);
+        const result = await service.sendRawMessage(raw, envelope);
+        expect(result.messageId).toBe(written);
+      });
+    });
   });
 });
