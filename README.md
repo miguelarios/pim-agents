@@ -8,7 +8,7 @@ All three servers speak MCP revision **2026-07-28** over stdio or Streamable HTT
 
 Every tool declares a `title`, a full set of behaviour annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), and an `outputSchema`; results carry validated `structuredContent` alongside the serialized JSON.
 
-Irreversible operations ask the user to confirm before they run — `send_email`, `send_draft`, `forward_email`, a permanent `delete_email`, `delete_folder`; any `delete_event` that removes the calendar object, `delete_calendar`, and an `update_event` with `span: "future"` that would drop per-occurrence changes; `delete_contact`, `delete_group` and `delete_address_book`. They ask, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
+Irreversible operations ask the user to confirm before they run — `send_email`, `send_draft`, `forward_email`, a permanent `delete_email`, `delete_folder`; any `delete_event` that removes the calendar object, `delete_calendar`, `share_calendar`, `unshare_calendar`, and an `update_event` with `span: "future"` that would drop per-occurrence changes; `delete_contact`, `delete_group` and `delete_address_book`. They ask, using the spec's multi round-trip request pattern. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless or automated use.
 
 A client that does not support elicitation cannot answer the prompt, so those tools fail fast with `CONFIRMATION_UNSUPPORTED` and point at `PIM_MCP_CONFIRM=off` — rather than returning a question that never reaches anyone.
 
@@ -44,7 +44,7 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `get_email_raw` | Export email as raw .eml, as an embedded `message/rfc822` resource |
 | `get_folder_status` | Get total and unread message counts for a folder |
 
-### [Calendar (16 tools)](docs/tools/cal-mcp.md)
+### [Calendar (19 tools)](docs/tools/cal-mcp.md)
 
 | Tool | Description |
 |------|-------------|
@@ -64,6 +64,9 @@ A client that does not support elicitation cannot answer the prompt, so those to
 | `create_calendar` | Create a calendar on a provider, with colour and description |
 | `update_calendar` | Rename a calendar or change its colour/description |
 | `delete_calendar` | Delete a calendar and every event in it (confirms first) |
+| `get_calendar_sharing` | Who a calendar is shared with, at what access, and whether they accepted |
+| `share_calendar` | Share a calendar or change someone's access (confirms first) |
+| `unshare_calendar` | Remove someone's access to a calendar (confirms first) |
 
 ### [Contacts (17 tools)](docs/tools/card-mcp.md)
 

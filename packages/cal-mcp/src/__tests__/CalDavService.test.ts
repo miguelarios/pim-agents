@@ -2685,3 +2685,113 @@ describe("buildCanonicalHref", () => {
     expect(buildCanonicalHref("/caldav/work/", "")).toBeNull();
   });
 });
+
+describe("calendar sharing (#47)", () => {
+  const ox = (users: string) => `<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:"><D:response><D:href>/caldav/work/</D:href><D:propstat><D:prop>
+<allowed-sharing-modes xmlns="http://calendarserver.org/ns/"><can-be-shared/></allowed-sharing-modes>
+<invite xmlns="http://calendarserver.org/ns/" xmlns:CS="http://calendarserver.org/ns/">${users}</invite>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`;
+  const BOB = `<CS:user><D:href>mailto:bob@example.com</D:href><CS:invite-noresponse/><CS:access><CS:read/></CS:access></CS:user>`;
+  const reply = (status: number, text = "") =>
+    ({
+      status,
+      statusText: status === 207 ? "Multi-Status" : "X",
+      text: async () => text,
+    }) as unknown as Response;
+
+  let service: CalDavService;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service = new CalDavService(TEST_CONFIG);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads sharing with one Depth: 0 PROPFIND on the calendar's absolute URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply(207, ox(BOB)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const sharing = await service.getCalendarSharing("mailbox/Work");
+
+    expect(sharing.protocol).toBe("calendarserver");
+    expect(sharing.shares).toEqual([
+      { email: "bob@example.com", principal: null, name: null, access: "read", status: "pending" },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://dav.mailbox.org/caldav/work/");
+    expect(init.method).toBe("PROPFIND");
+    expect(init.headers.Depth).toBe("0");
+    expect(init.headers.Authorization).toMatch(/^Basic /);
+    expect(init.body).toContain("<cs:invite/>");
+  });
+
+  it("fails clearly when the server does not answer the PROPFIND with a multistatus", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply(403)));
+    await expect(service.getCalendarSharing("mailbox/Work")).rejects.toThrow(/403/);
+  });
+
+  it("shares in the dialect the server read in, then returns the re-read sharing", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(207, ox("")))
+      .mockResolvedValueOnce(reply(200))
+      .mockResolvedValueOnce(reply(207, ox(BOB)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const after = await service.changeCalendarShare(
+      "mailbox/Work",
+      "bob@example.com",
+      "read",
+      "Hi",
+    );
+
+    const post = fetchMock.mock.calls[1][1];
+    expect(post.method).toBe("POST");
+    expect(post.body).toContain("<CS:set><D:href>mailto:bob@example.com</D:href>");
+    expect(post.body).toContain("<CS:summary>Hi</CS:summary><CS:read/>");
+    expect(after.shares.map((s) => s.email)).toEqual(["bob@example.com"]);
+  });
+
+  it("unshares with a CS:remove", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(207, ox(BOB)))
+      .mockResolvedValueOnce(reply(200))
+      .mockResolvedValueOnce(reply(207, ox("")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const after = await service.changeCalendarShare("mailbox/Work", "bob@example.com", null);
+
+    expect(fetchMock.mock.calls[1][1].body).toContain("<CS:remove><D:href>mailto:bob@example.com");
+    expect(after.shares).toEqual([]);
+  });
+
+  it("refuses to write when the server reports no sharing dialect it can write", async () => {
+    const none = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat>
+      <d:prop><d:invite><d:sharee><d:href>/p/1</d:href><d:share-access>read</d:share-access></d:sharee></d:invite></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`;
+    const fetchMock = vi.fn().mockResolvedValue(reply(207, none));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      service.changeCalendarShare("mailbox/Work", "bob@example.com", "read"),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a refused share with its HTTP status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, ox("")))
+        .mockResolvedValueOnce(reply(403)),
+    );
+    await expect(
+      service.changeCalendarShare("mailbox/Work", "bob@example.com", "read"),
+    ).rejects.toThrow(/Sharing "mailbox\/Work" failed: 403/);
+  });
+});

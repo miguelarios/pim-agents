@@ -58,11 +58,14 @@ const fakeService = () => ({
 });
 
 describe("CALENDAR_MANAGEMENT_TOOLS definitions", () => {
-  it("defines the three tools with complete annotations", () => {
+  it("defines the management and sharing tools with complete annotations", () => {
     expect(CALENDAR_MANAGEMENT_TOOLS.map((t) => t.name)).toEqual([
       "create_calendar",
       "update_calendar",
       "delete_calendar",
+      "get_calendar_sharing",
+      "share_calendar",
+      "unshare_calendar",
     ]);
     for (const tool of CALENDAR_MANAGEMENT_TOOLS) {
       expect(tool.title, tool.name).toBeTruthy();
@@ -78,9 +81,14 @@ describe("CALENDAR_MANAGEMENT_TOOLS definitions", () => {
     }
   });
 
-  it("marks only delete_calendar destructive", () => {
+  it("marks only delete_calendar and unshare_calendar destructive", () => {
     const destructive = CALENDAR_MANAGEMENT_TOOLS.filter((t) => t.annotations.destructiveHint);
-    expect(destructive.map((t) => t.name)).toEqual(["delete_calendar"]);
+    expect(destructive.map((t) => t.name)).toEqual(["delete_calendar", "unshare_calendar"]);
+  });
+
+  it("marks get_calendar_sharing read-only and nothing else", () => {
+    const readOnly = CALENDAR_MANAGEMENT_TOOLS.filter((t) => t.annotations.readOnlyHint);
+    expect(readOnly.map((t) => t.name)).toEqual(["get_calendar_sharing"]);
   });
 
   it("requires the target on every write tool — no first-calendar fallback", () => {
@@ -255,5 +263,118 @@ describe("delete_calendar", () => {
     const res = await callTool("delete_calendar", { calendar: "mailbox/Nope" }, service);
     expect(JSON.parse(res.content[0].text).error).toBe("not_found");
     expect(service.deleteCalendar).not.toHaveBeenCalled();
+  });
+});
+
+describe("calendar sharing tools (#47)", () => {
+  const SHARED = {
+    can_be_shared: true,
+    can_be_published: true,
+    protocol: "calendarserver" as const,
+    shares: [
+      {
+        email: "bob@example.com",
+        principal: null,
+        name: "Bob Jones",
+        access: "read" as const,
+        status: "accepted" as const,
+      },
+    ],
+  };
+  const sharingService = () => ({
+    getCalendarSharing: vi.fn().mockResolvedValue(SHARED),
+    changeCalendarShare: vi.fn().mockResolvedValue(SHARED),
+  });
+  const accept = (key: string) => confirmCtx(key, { action: "accept", content: { confirm: true } });
+
+  it("get_calendar_sharing returns the shares under the calendar's ID, without asking", async () => {
+    const service = sharingService();
+    const res = await callTool("get_calendar_sharing", { calendar: "mailbox/Work" }, service);
+    expect(res.inputRequests).toBeUndefined();
+    expect(res.structuredContent).toEqual({ calendar_id: "mailbox/Work", ...SHARED });
+  });
+
+  it("share_calendar asks first, naming the sharee, the access and the invitation", async () => {
+    const service = sharingService();
+    const res = await callTool(
+      "share_calendar",
+      { calendar: "mailbox/Work", sharee: "carol@example.com", access: "read-write" },
+      service,
+    );
+    const message = res.inputRequests.confirm_share_calendar.params.message as string;
+    expect(message).toContain("carol@example.com");
+    expect(message).toContain("read-write");
+    expect(message).toContain('"mailbox/Work"');
+    expect(message).toContain("invitation");
+    expect(service.changeCalendarShare).not.toHaveBeenCalled();
+  });
+
+  it("share_calendar shares once confirmed, passing access and summary through", async () => {
+    const service = sharingService();
+    const res = await callTool(
+      "share_calendar",
+      { calendar: "mailbox/Work", sharee: "carol@example.com", access: "read", summary: "Hi" },
+      service,
+      accept("confirm_share_calendar"),
+    );
+    expect(service.changeCalendarShare).toHaveBeenCalledWith(
+      "mailbox/Work",
+      "carol@example.com",
+      "read",
+      "Hi",
+    );
+    expect(res.structuredContent.calendar_id).toBe("mailbox/Work");
+  });
+
+  it("unshare_calendar asks first, then revokes with a null access", async () => {
+    const service = sharingService();
+    const asked = await callTool(
+      "unshare_calendar",
+      { calendar: "mailbox/Work", sharee: "bob@example.com" },
+      service,
+    );
+    expect(asked.inputRequests.confirm_unshare_calendar.params.message).toContain(
+      "bob@example.com",
+    );
+    expect(service.changeCalendarShare).not.toHaveBeenCalled();
+
+    await callTool(
+      "unshare_calendar",
+      { calendar: "mailbox/Work", sharee: "bob@example.com" },
+      service,
+      accept("confirm_unshare_calendar"),
+    );
+    expect(service.changeCalendarShare).toHaveBeenCalledWith(
+      "mailbox/Work",
+      "bob@example.com",
+      null,
+    );
+  });
+
+  it("does not share when the user declines", async () => {
+    const service = sharingService();
+    await callTool(
+      "share_calendar",
+      { calendar: "mailbox/Work", sharee: "carol@example.com", access: "read" },
+      service,
+      confirmCtx("confirm_share_calendar", { action: "decline" }),
+    );
+    expect(service.changeCalendarShare).not.toHaveBeenCalled();
+  });
+
+  it("reports a Nextcloud email sharee as a validation_error", async () => {
+    const service = sharingService();
+    service.changeCalendarShare.mockRejectedValue(
+      new FakeValidationError(
+        "This server (Nextcloud) shares with users and groups, not addresses",
+      ),
+    );
+    const res = await callTool(
+      "share_calendar",
+      { calendar: "nextcloud/Work", sharee: "bob@example.com", access: "read" },
+      service,
+      accept("confirm_share_calendar"),
+    );
+    expect(JSON.parse(res.content[0].text).error).toBe("validation_error");
   });
 });

@@ -124,3 +124,20 @@ export const calendarWriteResultSchema = v.object({
   url: v.string(),
   display_name: v.optional(v.string()),
 });
+
+/** get_calendar_sharing, share_calendar and unshare_calendar (#47). */
+export const calendarSharingSchema = v.object({
+  calendar_id: v.string(),
+  can_be_shared: v.boolean(),
+  can_be_published: v.boolean(),
+  protocol: v.nullable(v.picklist(["calendarserver", "owncloud", "webdav"])),
+  shares: v.array(
+    v.object({
+      email: nullableString,
+      principal: nullableString,
+      name: nullableString,
+      access: v.picklist(["read", "read-write"]),
+      status: v.picklist(["accepted", "pending", "declined", "invalid"]),
+    }),
+  ),
+});
