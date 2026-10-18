@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SmtpService } from "../services/SmtpService.js";
+import { SmtpService, ensureMessageId } from "../services/SmtpService.js";
 
 const { mockSendMail, mockVerify } = vi.hoisted(() => ({
   mockSendMail: vi.fn(),
@@ -306,5 +306,19 @@ describe("SmtpService", () => {
         expect(result.messageId).toBe(written);
       });
     });
+  });
+});
+
+describe("ensureMessageId (#130)", () => {
+  it("leaves a message that has a Message-ID untouched", () => {
+    const raw = Buffer.from("Message-ID: <kept@test.com>\r\nSubject: Hi\r\n\r\nBody");
+    expect(ensureMessageId(raw, "user@test.com")).toBe(raw);
+  });
+
+  it("prepends one on the sender's domain when the message has none", () => {
+    const raw = Buffer.from("Subject: Hi\r\n\r\nMessage-ID: <in-body@test.com>\r\n");
+    const out = ensureMessageId(raw, "user@example.org").toString("latin1");
+    expect(out).toMatch(/^Message-ID: <[0-9a-f-]{36}@example\.org>\r\nSubject: Hi\r\n/);
+    expect(out.endsWith(raw.toString("latin1"))).toBe(true);
   });
 });

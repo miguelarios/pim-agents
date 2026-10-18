@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { type EmailConfig, toPimError } from "@miguelarios/pim-core";
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
@@ -13,6 +14,18 @@ function headerMessageId(raw: Buffer): string | undefined {
   const headers = (end === -1 ? text : text.slice(0, end)).replace(/\r?\n[ \t]+/g, " ");
   const match = /^message-id:[ \t]*(.+?)[ \t]*$/im.exec(headers);
   return match?.[1] || undefined;
+}
+
+/**
+ * The message as given when it already has a Message-ID, otherwise with one
+ * prepended on the sender's domain. A draft saved by another client may have
+ * none; giving it one before it is both sent and filed in Sent keeps the two
+ * copies, and the ID send_draft reports, the same.
+ */
+export function ensureMessageId(raw: Buffer, senderAddress: string): Buffer {
+  if (headerMessageId(raw)) return raw;
+  const domain = senderAddress.split("@")[1] || "localhost";
+  return Buffer.concat([Buffer.from(`Message-ID: <${randomUUID()}@${domain}>\r\n`, "latin1"), raw]);
 }
 
 export interface SendEmailOptions {

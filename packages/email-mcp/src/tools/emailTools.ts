@@ -14,7 +14,7 @@ import { htmlToMarkdown, sanitizeEmailHtml } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
 import type { EmailFull, ImapService } from "../services/ImapService.js";
-import type { ComposeOptions, SmtpService } from "../services/SmtpService.js";
+import { type ComposeOptions, type SmtpService, ensureMessageId } from "../services/SmtpService.js";
 import {
   attachmentSchema,
   copyResultSchema,
@@ -1613,8 +1613,12 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
       return run(async () => {
         const draftFolder = args.folder || (await imap.getSpecialUseFolder("\\Drafts"));
 
-        // Fetch raw source
-        const rawSource = await imap.fetchRawSource(draftFolder, args.uid);
+        // Fetch raw source. A draft another client saved may lack a Message-ID;
+        // add one so the sent copy, the Sent copy and the reported ID agree (#130).
+        const rawSource = ensureMessageId(
+          await imap.fetchRawSource(draftFolder, args.uid),
+          smtp.config.smtp.user,
+        );
 
         // Parse headers for SMTP envelope
         const parsed = await simpleParser(rawSource);
