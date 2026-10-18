@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 (2026-10-18)
+
+First stable release. The public contract, and what a minor or patch may change from here, is in [`docs/versioning.md`](../../docs/versioning.md).
 
 - **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
 - **Breaking: errors use pim-core's `ErrorCode` values**, the same vocabulary as card-mcp and email-mcp (#150). The `message` and `retryable` fields are unchanged.
@@ -38,6 +40,7 @@
   | `trigger_human` | `triggerHuman` |
   | `unavailable_providers` | `unavailableProviders` |
 - A CalDAV read's HTTP error is classified by its status rather than by words in the server's reply: a 500 whose page said "connection" was a retryable `CONNECTION_FAILED` (pim-core).
+- Bumped `@miguelarios/pim-core` to `^1.0.0`. cal-mcp needs it: it returns core's renamed `/ics` fields as they are, so with a 0.x core its events would fail validation.
 
 ## 0.21.0 (2026-10-18)
 

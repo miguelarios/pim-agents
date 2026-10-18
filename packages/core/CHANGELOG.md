@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 (2026-10-18)
+
+First stable release. The public contract, and what a minor or patch may change from here, is in [`docs/versioning.md`](../../docs/versioning.md).
 
 - **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
 - **Breaking: the `/ics` types use camelCase fields** (#150), so cal-mcp can return them as they are. `ParsedEvent`, `ParsedTodo`, `ParsedJournal`, `ParsedAlarm`, `EventCreateProps`, `ExceptionOverrides` and `MasterEventUpdates`: `all_day` → `allDay`, `is_recurring` → `isRecurring`, `occurrence_date` → `occurrenceDate`, `recurrence_rule` → `recurrenceRule`, `last_modified` → `lastModified`, `trigger_human` → `triggerHuman`, `percent_complete` → `percentComplete`. `generateEventIcs` reports a bad rule as `Invalid recurrenceRule: …`.
