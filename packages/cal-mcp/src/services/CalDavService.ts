@@ -606,7 +606,10 @@ export class CalDavService {
             url: cal.url,
             // tsdav parses a bare-integer <getctag> (Nextcloud) as a number. It
             // is still a valid change marker, so keep it, as the string it is typed as.
-            ...(cal.ctag != null ? { ctag: String(cal.ctag) } : {}),
+            // Anything else (xml2js yields {} for an empty <getctag/>) is dropped.
+            ...(typeof cal.ctag === "string" || typeof cal.ctag === "number"
+              ? { ctag: String(cal.ctag) }
+              : {}),
           });
         }
       } catch (error) {

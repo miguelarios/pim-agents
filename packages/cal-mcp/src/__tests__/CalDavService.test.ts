@@ -141,11 +141,13 @@ describe("CalDavService", () => {
         { displayName: "Work", url: "/cal/work/", ctag: 1305 },
         { displayName: "Zero", url: "/cal/zero/", ctag: 0 },
         { displayName: "None", url: "/cal/none/" },
+        { displayName: "Empty", url: "/dav/empty/", ctag: {} },
       ]);
       const calendars = await service.listCalendars();
       const mailbox = calendars.filter((c) => c.source === "mailbox");
-      expect(mailbox.map((c) => c.ctag)).toEqual(["1305", "0", undefined]);
+      expect(mailbox.map((c) => c.ctag)).toEqual(["1305", "0", undefined, undefined]);
       expect(mailbox[2]).not.toHaveProperty("ctag");
+      expect(mailbox[3]).not.toHaveProperty("ctag");
       expect(() => v.parse(calendarListSchema, { calendars })).not.toThrow();
     });
 
