@@ -1,6 +1,6 @@
 {
   "name": "@miguelarios/cal-mcp",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "MCP server for calendars via CalDAV — CRUD events, free/busy, multi-provider",
   "keywords": [
     "mcp",
@@ -32,7 +32,7 @@
     "start": "node dist/bin/cli.js"
   },
   "dependencies": {
-    "@miguelarios/pim-core": "^0.15.0",
+    "@miguelarios/pim-core": "^0.16.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "tsdav": "^2.1.0",
     "xml-js": "^1.6.11"

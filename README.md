@@ -287,13 +287,13 @@ x-mcp: &mcp
 services:
   email-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/email-mcp@0.17.0"]
+    command: ["npx", "-y", "@miguelarios/email-mcp@0.18.0"]
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
     volumes: [email-mcp-home:/home/node]
   cal-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/cal-mcp@0.20.0"]
+    command: ["npx", "-y", "@miguelarios/cal-mcp@0.21.0"]
     env_file: cal.env
     environment:
       <<: *http
@@ -302,7 +302,7 @@ services:
     volumes: [cal-mcp-home:/home/node]
   card-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/card-mcp@0.12.0"]
+    command: ["npx", "-y", "@miguelarios/card-mcp@0.13.0"]
     env_file: card.env
     ports: ["127.0.0.1:3003:3000"]
     volumes: [card-mcp-home:/home/node]

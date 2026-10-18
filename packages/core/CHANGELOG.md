@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.0 (2026-10-18)
+
+- **Recurring instances from a server that expands recurrences report `is_recurring: true`** (#99). Nextcloud/SabreDAV return each instance as a standalone `VEVENT` with a `RECURRENCE-ID` and no `RRULE`; those all came back `is_recurring: false`, so clients never offered `span: "this" | "future"` edits. An instance with a `RECURRENCE-ID` now counts as recurring when it comes from a ranged listing or sits beside its master. An override stored **without** its master (an invitation to one occurrence of someone else's series) stays a one-off, since there is no series to edit there.
+- A moved occurrence now reports the series' `is_recurring`, `recurrence_rule` and `rdates` from its master, on every provider, instead of `false` / `null`. An `RDATE`-only master is recurring on the unranged read too.
+- All-day `occurrence_date` values are UTC midnight on every host. On the server-expanded path they were host-local midnight (`…T05:00:00Z` on a CDT host).
+- **vCard `pref` is kept** (#144). `TypedValue` and `PostalAddress` gain `pref`, parsed from vCard 3 `TYPE=pref` or vCard 4 `PREF=1` and written back as `TYPE=<label>,pref`. Previously every rebuild dropped it, so any contact edit lost the preferred email, phone, address and URL.
+- **`toPimError` classifies network failures by their code.** It walks the cause chain for a socket code (undici's `fetch failed` hides it in `cause`), recognises nodemailer's `ECONNECTION` / `ESOCKET` / `EDNS` and imapflow's `NoConnection` / `ETIMEOUT` / `CONNECT_TIMEOUT` and similar, and returns a retryable `ConnectionError` (or `CONNECTION_TIMEOUT`) naming the code, e.g. `fetch failed (EHOSTUNREACH)`. Previously all of these were non-retryable `INTERNAL_ERROR`s. `isRetryableError` now agrees with it.
+- Requires Node.js 20.19.0 or newer (`engines` declared).
+
 ## 0.15.0 (2026-10-07)
 
 - Streamable HTTP serving next to stdio, on the `./mcp` subpath. `serve(factory, { name })` picks the transport from `PIM_MCP_TRANSPORT` (`stdio`, the default, or `http`) and logs where it started; `serveHttp` binds the endpoint to a Node HTTP server, `createHttpHandler` is the same endpoint as a web-standard `fetch` handler, and `loadTransportConfig` reads `PIM_MCP_HTTP_HOST` (default `127.0.0.1`), `PIM_MCP_HTTP_PORT` (default `3000`) and `PIM_MCP_HTTP_ALLOWED_ORIGINS`, failing with `ConfigurationError` on an unknown transport or a bad port.
