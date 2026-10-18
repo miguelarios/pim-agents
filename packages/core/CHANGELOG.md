@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
+
 ## 0.16.0 (2026-10-18)
 
 - **Recurring instances from a server that expands recurrences report `is_recurring: true`** (#99). Nextcloud/SabreDAV return each instance as a standalone `VEVENT` with a `RECURRENCE-ID` and no `RRULE`; those all came back `is_recurring: false`, so clients never offered `span: "this" | "future"` edits. An instance with a `RECURRENCE-ID` now counts as recurring when it comes from a ranged listing or sits beside its master. An override stored **without** its master (an invitation to one occurrence of someone else's series) stays a one-off, since there is no series to edit there.

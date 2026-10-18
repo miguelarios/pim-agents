@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
+
 ## 0.18.0 (2026-10-18)
 
 - **`send_email`, `forward_email` and `send_draft` return the `Message-ID` the sent message carries** (#130). They returned an ID nodemailer invented and never sent, so it matched neither the delivered copy nor the Sent copy. A draft from another client that has no `Message-ID` gets one before it is sent and filed.
