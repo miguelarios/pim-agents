@@ -616,8 +616,9 @@ export class ImapService {
   /**
    * MOVE, failing loudly. On a server without the MOVE extension imapflow
    * falls back to COPY then delete, and deletes even when the COPY was
-   * refused, so the destination is checked first there: otherwise a typo in
-   * the folder name expunges the messages.
+   * refused (a missing folder, a full quota, no permission), so that fallback
+   * is done here instead: the originals are deleted only after the copy
+   * succeeded.
    */
   private async moveOrThrow(
     client: ImapFlow,
@@ -625,13 +626,10 @@ export class ImapService {
     destination: string,
   ): Promise<void> {
     if (!client.capabilities.has("MOVE")) {
-      let exists: unknown;
-      try {
-        exists = await client.status(destination, { messages: true });
-      } catch (error) {
-        throw toImapError(error, destination);
-      }
-      if (!exists) throw await this.refusedTransfer(client, "Move", destination);
+      const copied = await client.messageCopy(uidRange, destination, { uid: true });
+      if (!copied) throw await this.refusedTransfer(client, "Move", destination);
+      await client.messageDelete(uidRange, { uid: true });
+      return;
     }
     const moved = await client.messageMove(uidRange, destination, { uid: true });
     if (!moved) throw await this.refusedTransfer(client, "Move", destination);
@@ -712,7 +710,7 @@ export class ImapService {
             : await client.messageFlagsRemove(uidRange, flags, { uid: true });
         if (!stored) {
           throw new EmailError(
-            `The server refused to ${action === "add" ? "set" : "clear"} ${flags.join(", ")} in ${folder}`,
+            `Could not ${action === "add" ? "set" : "clear"} ${flags.join(", ")} in ${folder}: the server refused, or the folder does not allow these flags (see its PERMANENTFLAGS)`,
             ErrorCode.OPERATION_FAILED,
           );
         }

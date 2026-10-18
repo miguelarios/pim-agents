@@ -923,6 +923,27 @@ describe("send_draft handler", () => {
     expect(result.content[0].text).toContain("not found");
   });
 
+  it("reports a send as sent even when deleting the draft afterwards fails", async () => {
+    mockFetchRawSource.mockResolvedValueOnce(
+      Buffer.from(
+        "From: alice@example.com\r\nTo: bob@example.com\r\nSubject: s\r\nMessage-ID: <d2@example.com>\r\n\r\nbody",
+      ),
+    );
+    mockDeleteEmails.mockRejectedValueOnce(new Error("Connection not available"));
+
+    const result = await handleEmailTool(
+      "send_draft",
+      { uid: 8 },
+      mockImapService,
+      mockSmtpService,
+    );
+
+    // An error here would invite the caller to send the message a second time.
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text).status).toBe("sent");
+    expect(mockSendRawMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("uses custom folder when provided", async () => {
     const rawDraft = Buffer.from(
       "From: user@test.com\r\nTo: r@test.com\r\nSubject: Test\r\nMessage-ID: <d@test.com>\r\n\r\nBody",
@@ -975,6 +996,17 @@ describe("uids guards", () => {
       expect(result.content[0].text).toMatch(/uids must be a non-empty array/);
     },
   );
+  it("mark_email rejects an empty flags array before connecting", async () => {
+    const result = await handleEmailTool(
+      "mark_email",
+      { uids: [1], flags: [] },
+      mockImapService,
+      mockSmtpService,
+    );
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toBe("INVALID_INPUT");
+    expect(mockMarkEmails).not.toHaveBeenCalled();
+  });
 });
 
 describe("delete_folder", () => {

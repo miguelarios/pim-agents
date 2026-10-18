@@ -226,6 +226,12 @@ describe("toPimError reads structured fields before text (misclassified errors, 
     expect(classify(tsdav(status))).toMatchObject({ code, retryable });
   });
 
+  it("reads tsdav's '<prop> returned <status>' form", () => {
+    expect(
+      toPimError(new Error("Calendar discovery failed: resourcetype returned 403 Forbidden")).code,
+    ).toBe(ErrorCode.OPERATION_FAILED);
+  });
+
   it.each([
     "Collection sync failed: 401 Unauthorized",
     "Collection status check failed: 401 ",
@@ -257,6 +263,30 @@ describe("toPimError reads structured fields before text (misclassified errors, 
     });
     expect(classify(err)).toMatchObject({ code: ErrorCode.AUTH_FAILED, retryable: false });
     expect(toPimError(err).message).toContain("Authentication failed.");
+  });
+
+  it.each([
+    ["NoConnection", ErrorCode.CONNECTION_FAILED],
+    ["ETIMEOUT", ErrorCode.CONNECTION_TIMEOUT],
+  ] as const)(
+    "a connection lost during LOGIN (%s) stays a retryable connection error",
+    (code, expected) => {
+      // imapflow sets authenticationFailed on any error from LOGIN, including a dropped socket.
+      const err = Object.assign(new Error("Connection not available"), {
+        code,
+        authenticationFailed: true,
+      });
+      expect(classify(err)).toMatchObject({ code: expected, retryable: true });
+    },
+  );
+
+  it("a temporary auth backend failure at LOGIN (UNAVAILABLE) is retryable, not AUTH_FAILED", () => {
+    const err = imapNo({
+      authenticationFailed: true,
+      responseText: "Temporary authentication failure.",
+      serverResponseCode: "UNAVAILABLE",
+    });
+    expect(classify(err)).toMatchObject({ code: ErrorCode.OPERATION_FAILED, retryable: true });
   });
 
   it("an imapflow AuthenticationFailure without the word is still AUTH_FAILED", () => {

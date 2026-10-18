@@ -19,10 +19,11 @@ interface ImapFlowError {
 /**
  * Server texts for a missing mailbox, for servers that send no RFC 5530 code:
  * Dovecot and Cyrus ("Mailbox doesn't exist" / "does not exist"), Courier,
- * Gmail ("Unknown Mailbox"), Exchange ("Folder not found").
+ * Gmail ("Unknown Mailbox"), Exchange ("Folder not found"). The RFC 5530
+ * code itself (`NONEXISTENT`) is read structurally, never as a word.
  */
 const MISSING_MAILBOX_TEXT =
-  /mailbox (?:doesn't|does not) exist|unknown mailbox|no such (?:mailbox|folder)|(?:mailbox|folder) not found|nonexistent/i;
+  /mailbox (?:doesn't|does not) exist|unknown mailbox|no such (?:mailbox|folder)|(?:mailbox|folder) not found/i;
 
 /** The response code inside a raw imapflow response object, when not lifted onto the error. */
 function rawResponseCode(response: unknown): string | undefined {
@@ -65,7 +66,11 @@ function isMissingMailbox(e: ImapFlowError): boolean {
  */
 export function toImapError(error: unknown, folder?: string): PimError {
   if (error instanceof PimError) return error;
-  const e = (error ?? {}) as ImapFlowError;
+  const e = (error ?? {}) as ImapFlowError & { authenticationFailed?: boolean };
+  // A refused LOGIN is about the account, whatever its text says.
+  if (e.authenticationFailed === true) {
+    return toPimError(error instanceof Error ? error : new Error(String(error)));
+  }
   const text = serverText(e);
 
   if (isMissingMailbox(e)) {

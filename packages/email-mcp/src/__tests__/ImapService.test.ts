@@ -102,6 +102,8 @@ describe("ImapService", () => {
     mockMessageFlagsAdd.mockResolvedValue(true);
     mockMessageFlagsRemove.mockResolvedValue(true);
     mockStatus.mockResolvedValue({ path: "INBOX", messages: 0 });
+    mockCapabilities.clear();
+    mockCapabilities.set("MOVE", true);
     service = new ImapService(testConfig);
   });
 
@@ -2428,6 +2430,22 @@ describe("IMAP failures name the condition (misclassified errors, #150 follow-up
     await expect(service.fetchEmail("Nope", 1)).rejects.toMatchObject({ code: "FOLDER_NOT_FOUND" });
   });
 
+  it("a NO that merely mentions 'nonexistent' is not FOLDER_NOT_FOUND", async () => {
+    mockGetMailboxLock.mockRejectedValueOnce(
+      commandFailed({ responseText: "Some messages nonexistent" }),
+    );
+    await expect(service.fetchEmail("INBOX", 1)).rejects.toMatchObject({
+      code: "OPERATION_FAILED",
+    });
+  });
+
+  it("a refused LOGIN is AUTH_FAILED even when its text reads like a missing mailbox", async () => {
+    mockGetMailboxLock.mockRejectedValueOnce(
+      commandFailed({ authenticationFailed: true, responseText: "Unknown mailbox user" }),
+    );
+    await expect(service.fetchEmail("INBOX", 1)).rejects.toMatchObject({ code: "AUTH_FAILED" });
+  });
+
   it("another refusal is OPERATION_FAILED with the server's text, not a bare 'Command failed'", async () => {
     mockGetMailboxLock.mockRejectedValueOnce(
       commandFailed({ responseText: "Permission denied", serverResponseCode: "NOPERM" }),
@@ -2466,15 +2484,30 @@ describe("IMAP failures name the condition (misclassified errors, #150 follow-up
     });
   });
 
-  it("without the MOVE extension, a missing destination never reaches the copy-then-delete fallback", async () => {
+  it.each([
+    ["a missing destination", { code: "NotFound" }],
+    ["a full quota", null],
+  ])("without the MOVE extension, %s never deletes the originals", async (_, statusError) => {
     mockCapabilities.delete("MOVE");
-    mockStatus.mockRejectedValueOnce(
-      Object.assign(new Error("Mailbox doesn't exist: Arhcive"), { code: "NotFound" }),
-    );
+    mockMessageCopy.mockResolvedValueOnce(false);
+    if (statusError) {
+      mockStatus.mockRejectedValueOnce(
+        Object.assign(new Error("Mailbox doesn't exist: Arhcive"), statusError),
+      );
+    }
     await expect(service.moveEmails("INBOX", [1], "Arhcive")).rejects.toMatchObject({
-      code: "FOLDER_NOT_FOUND",
+      code: statusError ? "FOLDER_NOT_FOUND" : "OPERATION_FAILED",
     });
-    // imapflow's fallback deletes the originals even when its COPY was refused.
+    // imapflow's own fallback deletes even when its COPY was refused.
+    expect(mockMessageMove).not.toHaveBeenCalled();
+    expect(mockMessageDelete).not.toHaveBeenCalled();
+  });
+
+  it("without the MOVE extension, a successful copy is followed by the delete", async () => {
+    mockCapabilities.delete("MOVE");
+    mockMessageCopy.mockResolvedValueOnce({ path: "INBOX", destination: "Archive" });
+    await service.moveEmails("INBOX", [1, 2], "Archive");
+    expect(mockMessageDelete).toHaveBeenCalledWith("1,2", { uid: true });
     expect(mockMessageMove).not.toHaveBeenCalled();
   });
 

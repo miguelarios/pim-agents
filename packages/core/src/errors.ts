@@ -161,7 +161,7 @@ const IMAP_TEMPORARY_RESPONSE_CODES = new Set(["UNAVAILABLE", "INUSE"]);
  * read, so the server's body (which tsdav includes) cannot steer the class.
  */
 const TSDAV_STATUS =
-  /^(?:Collection (?:query|sync|status check) failed|(?:Calendar|Address book) discovery failed|(?:VCard|Calendar object) fetch failed): (\d{3})\b/;
+  /^(?:Collection (?:query|sync|status check) failed|(?:Calendar|Address book) discovery failed|(?:VCard|Calendar object) fetch failed): (?:\w+ returned )?(\d{3})\b/;
 
 interface StructuredFields {
   code?: unknown;
@@ -236,14 +236,24 @@ export function toPimError(error: Error): PimError {
   // DEPTH_ZERO_SELF_SIGNED_CERT).
   if (code && !message.includes(code)) message = `${message} (${code})`;
 
-  if (chain.some((l) => l.authenticationFailed === true)) {
-    return new AuthenticationError(message);
-  }
-  if (code && AUTH_CODES.has(code)) return new AuthenticationError(message);
+  const response =
+    typeof imap?.serverResponseCode === "string" ? imap.serverResponseCode.toUpperCase() : "";
+
+  // Connection codes first: imapflow sets `authenticationFailed` on any error
+  // during LOGIN, including a socket that closed or timed out mid-command.
   if (code && UNREACHABLE_CODES.has(code)) return new ConnectionError(message);
   if (code && TIMEOUT_CODES.has(code)) {
     return new ConnectionError(message, ErrorCode.CONNECTION_TIMEOUT);
   }
+  if (chain.some((l) => l.authenticationFailed === true)) {
+    // Dovecot answers `NO [UNAVAILABLE] Temporary authentication failure`
+    // when its auth backend is down: the credentials were never judged.
+    if (IMAP_TEMPORARY_RESPONSE_CODES.has(response)) {
+      return new ClassifiedError(message, ErrorCode.OPERATION_FAILED, true, stack);
+    }
+    return new AuthenticationError(message);
+  }
+  if (code && AUTH_CODES.has(code)) return new AuthenticationError(message);
   if (code && SEND_CODES.has(code)) {
     // An SMTP 4xx is a temporary refusal; 5xx is final, and retrying a
     // rejected message only sends it at the same wall again.
@@ -258,8 +268,6 @@ export function toPimError(error: Error): PimError {
   }
 
   if (imap) {
-    const response =
-      typeof imap.serverResponseCode === "string" ? imap.serverResponseCode.toUpperCase() : "";
     if (IMAP_AUTH_RESPONSE_CODES.has(response)) return new AuthenticationError(message);
     // The server answered: neither unreachable nor our fault.
     return new ClassifiedError(
