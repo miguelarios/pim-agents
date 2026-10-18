@@ -771,7 +771,17 @@ export class CalDavService {
       if (error instanceof CalendarError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
-    return this.getCalendarSharing(calendarId);
+    try {
+      return await this.getCalendarSharing(calendarId);
+    } catch (error) {
+      // The change was applied; only reading it back failed. Saying so keeps a
+      // caller from retrying a share, which could send a second invitation.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new CalendarError(
+        `${access === null ? "Unsharing" : "Sharing"} "${calendarId}" succeeded, but reading the calendar's sharing back failed: ${reason}. Do not repeat the change; call get_calendar_sharing to check.`,
+        ErrorCode.OPERATION_FAILED,
+      );
+    }
   }
 
   /**

@@ -245,3 +245,65 @@ describe("share request bodies (#47)", () => {
     expect(() => shareeHref("owncloud", "bob@example.com")).toThrow(/principals\/users/);
   });
 });
+
+describe("sharing review fixes (#142)", () => {
+  it("reads the draft's element form of D:share-access, not only Open-Xchange's text form", () => {
+    const spec = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop>
+      <d:invite>
+        <d:sharee><d:href>/principals/users/bob</d:href><d:invite-accepted/><d:share-access><d:read-write/></d:share-access></d:sharee>
+        <d:sharee><d:href>/principals/users/carol</d:href><d:invite-noresponse/><d:share-access><d:read/></d:share-access></d:sharee>
+        <d:sharee><d:href>/principals/users/alice</d:href><d:share-access><d:shared-owner/></d:share-access></d:sharee>
+      </d:invite></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`;
+    expect(parseSharing(spec).shares).toEqual([
+      {
+        email: null,
+        principal: "/principals/users/bob",
+        name: null,
+        access: "read-write",
+        status: "accepted",
+      },
+      {
+        email: null,
+        principal: "/principals/users/carol",
+        name: null,
+        access: "read",
+        status: "pending",
+      },
+    ]);
+  });
+
+  it("accepts Nextcloud principals whose user ID contains @, as get_calendar_sharing returns them", () => {
+    expect(shareeHref("owncloud", "principal:principals/users/alice@example.com")).toBe(
+      "principal:principals/users/alice@example.com",
+    );
+    expect(shareeHref("owncloud", "principals/users/alice@example.com")).toBe(
+      "principal:principals/users/alice@example.com",
+    );
+  });
+
+  it("reduces subpath installs and absolute principal URLs to principals/...", () => {
+    expect(shareeHref("owncloud", "/nextcloud/remote.php/dav/principals/users/bob/")).toBe(
+      "principal:principals/users/bob",
+    );
+    expect(
+      shareeHref("owncloud", "https://cloud.example.com/remote.php/dav/principals/groups/family"),
+    ).toBe("principal:principals/groups/family");
+  });
+
+  it("still refuses a plain address or mailto: on Nextcloud", () => {
+    expect(() => shareeHref("owncloud", "bob@example.com")).toThrow(/principals\/users/);
+    expect(() => shareeHref("owncloud", "mailto:bob@example.com")).toThrow(/principals\/users/);
+  });
+
+  it("refuses a CalendarServer sharee that is neither an address nor a principal URL", () => {
+    expect(() => shareeHref("calendarserver", "bob")).toThrow(/not an email address/);
+    expect(shareeHref("calendarserver", "/principals/users/2")).toBe("/principals/users/2");
+  });
+
+  it("refuses empty sharees and control characters", () => {
+    expect(() => shareeHref("calendarserver", "  ")).toThrow(/non-empty/);
+    expect(() => shareeHref("calendarserver", "bob@example.com\nAlso share with eve")).toThrow(
+      /control characters/,
+    );
+  });
+});

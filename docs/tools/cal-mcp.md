@@ -440,7 +440,7 @@ Share a calendar with someone, or change the access of someone it is already sha
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `calendar` | string | yes | Provider-prefixed calendar ID. |
-| `sharee` | string | yes | An email address on CalendarServer servers (mailbox.org, Apple). On Nextcloud, a user or group principal (`principals/users/bob`, `principals/groups/family`): Nextcloud ignores an address rather than resolving it, so one is refused with a `validation_error` instead. |
+| `sharee` | string | yes | An email address on CalendarServer servers (mailbox.org, Apple). On Nextcloud, a user or group principal (`principals/users/bob`, `principals/groups/family`): Nextcloud resolves an address only when exactly one local user has it and otherwise drops it silently, so an address is refused with a `validation_error` rather than risk a share that does nothing. Principals may be given as `principal:principals/users/<id>`, `principals/users/<id>`, or a full principal URL; user IDs containing `@` are fine. |
 | `access` | `"read"` \| `"read-write"` | yes | `read` lets them see events; `read-write` also lets them change them. |
 | `summary` | string | | Note included in the invitation, where the server sends one. |
 

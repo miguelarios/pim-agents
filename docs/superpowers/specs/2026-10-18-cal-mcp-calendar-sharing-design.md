@@ -31,12 +31,14 @@ the dialect has to be chosen from what the PROPFIND returns, not from OPTIONS.
 - **Writes use the dialect the read came back in**: `CS:share` set/remove, or
   `oc:share` set/remove (where read-write is an element and read is its
   absence).
-- **Nextcloud gets principals, not addresses.** Its sharing backend ignores a
-  `mailto:` sharee instead of resolving it, so a share would "succeed" and do
-  nothing. The tool refuses an address there with a `validation_error` that
-  says what to pass. Resolving an address to a principal (a
-  `principal-property-search`) is a possible follow-up, not needed for the
-  first version.
+- **Nextcloud gets principals, not addresses.** Its sharing backend resolves a
+  `mailto:` sharee only when exactly one local user has that address, and
+  otherwise drops it, so a share can "succeed" and do nothing. The tool
+  refuses an address there with a `validation_error` that says what to pass.
+  Principals are accepted in any form that reduces to `principals/…` (with or
+  without `principal:`, a subpath install, a full URL), and user IDs may
+  contain `@`. Resolving an address to a principal (a
+  `principal-property-search`) is a possible follow-up.
 - **Raw requests, not tsdav.** tsdav's XML conversion strips namespace
   prefixes, which merges `D:invite` and `CS:invite`. Parsing uses xml-js (now a
   direct dependency; it was already installed through tsdav) with a small
@@ -47,7 +49,11 @@ the dialect has to be chosen from what the PROPFIND returns, not from OPTIONS.
   go through `confirmDestructive`. Only `unshare_calendar` is
   `destructiveHint: true`, since sharing grants rather than removes.
 - **Writes return the re-read sharing**, so the result is what the server now
-  reports rather than what was asked for.
+  reports rather than what was asked for. If that re-read fails after the
+  write succeeded, the error says the change was applied, so a caller does not
+  retry it and send a second invitation.
+- **WebDAV Resource Sharing** `D:share-access` is read in both the draft's
+  element form (`<D:read-write/>`) and Open-Xchange's text form.
 - **Out of scope:** publishing (public read-only URLs), raw WebDAV ACL editing
   (`D:acl` / ACL method), accepting or declining invitations shared *to* this
   account, and address books (card-mcp).

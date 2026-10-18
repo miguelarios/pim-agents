@@ -2795,6 +2795,20 @@ describe("calendar sharing (#47)", () => {
     ).rejects.toThrow(/Sharing "mailbox\/Work" failed: 403/);
   });
 
+  it("says the share was applied when only the read-back fails, so it is not retried", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, ox("")))
+        .mockResolvedValueOnce(reply(200))
+        .mockResolvedValueOnce(reply(503)),
+    );
+    await expect(
+      service.changeCalendarShare("mailbox/Work", "bob@example.com", "read"),
+    ).rejects.toThrow(/succeeded, but reading .* back failed.*Do not repeat/);
+  });
+
   describe("on Nextcloud (ownCloud sharing)", () => {
     const nc = (users: string) => `<?xml version="1.0"?>
 <d:multistatus xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:oc="http://owncloud.org/ns">

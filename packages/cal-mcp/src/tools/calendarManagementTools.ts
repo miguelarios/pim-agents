@@ -281,7 +281,8 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = 
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
+      // Repeating it can send the sharee another invitation.
+      idempotentHint: false,
       openWorldHint: true,
     },
     inputSchema: {

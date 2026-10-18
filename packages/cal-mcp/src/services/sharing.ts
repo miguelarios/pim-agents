@@ -8,8 +8,10 @@
  *   caldav-sharing.txt). Open-Xchange (mailbox.org) and Apple servers. Sharees
  *   are `mailto:` addresses.
  * - **ownCloud sharing** (`oc:invite` / `oc:share`). Nextcloud. Sharees are
- *   principals (`principal:principals/users/<id>`); Nextcloud ignores a
- *   `mailto:` sharee rather than resolving it.
+ *   principals (`principal:principals/users/<id>`). Nextcloud resolves a
+ *   `mailto:` sharee only when exactly one local user has that address and
+ *   otherwise drops it silently, so principals are required here for a
+ *   predictable result.
  * - **WebDAV Resource Sharing** (`D:invite` / `D:share-access`,
  *   draft-pot-webdav-resource-sharing). Open-Xchange reports it alongside
  *   CalendarServer; read here only as a fallback, since it carries principals
@@ -137,12 +139,26 @@ function userShares(invite: Node, ns: string): CalendarShare[] {
   });
 }
 
-/** D:sharee entries: access is text (`read`, `read-write`, `no-access`). */
+/**
+ * The access a D:share-access grants. The draft defines it as a child element
+ * (`<D:read/>`, `<D:read-write/>`, `<D:shared-owner/>`); Open-Xchange sends
+ * it as text. Both are read; anything that is not read or read-write (owner,
+ * no-access, not-shared) is not a share to report.
+ */
+function webdavAccess(shareAccess: Node | undefined): ShareAccess | undefined {
+  if (!shareAccess) return undefined;
+  if (kid(shareAccess, NS.DAV, "read-write")) return "read-write";
+  if (kid(shareAccess, NS.DAV, "read")) return "read";
+  const text = shareAccess.text.toLowerCase();
+  return text === "read" || text === "read-write" ? text : undefined;
+}
+
+/** D:sharee entries (WebDAV Resource Sharing). */
 function webdavShares(invite: Node): CalendarShare[] {
   const out: CalendarShare[] = [];
   for (const sharee of kids(invite, NS.DAV, "sharee")) {
-    const access = kid(sharee, NS.DAV, "share-access")?.text.toLowerCase();
-    if (access !== "read" && access !== "read-write") continue;
+    const access = webdavAccess(kid(sharee, NS.DAV, "share-access"));
+    if (!access) continue;
     out.push({
       ...hrefParts(kid(sharee, NS.DAV, "href")?.text),
       name: null,
@@ -203,25 +219,43 @@ function escapeXml(s: string): string {
 }
 
 /**
- * The sharee as the dialect expects it. CalendarServer takes an address;
- * ownCloud takes a principal, and an address is refused here rather than sent
- * for the server to drop silently.
+ * The sharee as the dialect expects it. CalendarServer takes an address (or a
+ * principal URL). ownCloud takes a principal: an address is refused here
+ * rather than sent for Nextcloud to resolve only when it is unambiguous.
+ * Throws with a message fit for the caller on anything unusable.
  */
 export function shareeHref(protocol: "calendarserver" | "owncloud", sharee: string): string {
   const s = sharee.trim();
+  if (!s || hasControlCharacter(s)) {
+    throw new Error("sharee must be a non-empty value without control characters");
+  }
   if (protocol === "calendarserver") {
-    if (/^mailto:/i.test(s)) return s;
-    if (s.includes("@")) return `mailto:${s}`;
-    return s; // a principal URL; CalendarServer servers accept those too
+    if (/^mailto:[^@\s]+@[^@\s]+$/i.test(s)) return s;
+    if (/^[^@\s/]+@[^@\s/]+$/.test(s)) return `mailto:${s}`;
+    if (/^(https?:\/\/|\/)/i.test(s)) return s; // a principal URL or path
+    throw new Error(`sharee "${s}" is not an email address or a principal URL`);
   }
-  if (s.includes("@") || /^mailto:/i.test(s)) {
-    throw new Error(
-      "This server (Nextcloud) shares with users and groups, not addresses: pass sharee as principals/users/<user-id> or principals/groups/<group-id>",
-    );
-  }
+  // Nextcloud user IDs may themselves contain "@", so only a value that is not
+  // a principal at all is treated as an address.
   if (s.startsWith("principal:")) return s;
-  const path = s.replace(/^\/?(remote\.php\/dav\/)?/, "");
-  return `principal:${path.replace(/\/$/, "")}`;
+  const at = s.indexOf("principals/");
+  if (at !== -1) {
+    // Reduce any form (absolute URL, a subpath install, a leading slash) to
+    // the principals/... path the sharing backend matches on.
+    return `principal:${s.slice(at).replace(/\/+$/, "")}`;
+  }
+  throw new Error(
+    "This server (Nextcloud) shares with users and groups: pass sharee as principals/users/<user-id> or principals/groups/<group-id>. It resolves an email address only when exactly one user has it, so addresses are not accepted.",
+  );
+}
+
+/** Whether a value contains a C0 control character or DEL (a newline, say). */
+function hasControlCharacter(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
 }
 
 const XML_DECL = '<?xml version="1.0" encoding="utf-8"?>';
