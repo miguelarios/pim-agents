@@ -14,7 +14,6 @@ import {
 } from "@miguelarios/pim-core";
 import {
   type FreeBusyPeriod,
-  type ParsedAlarm,
   type ParsedEvent,
   type TimeRange,
   generateVTimezoneIcs,

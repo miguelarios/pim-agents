@@ -3,15 +3,19 @@
  * concrete CardDavService (#53). See
  * docs/superpowers/specs/2026-10-18-multi-provider-backends-design.md.
  *
- * Contacts are already exchanged as pim-core's structured `Contact`, so unlike
- * cal-mcp the tool layer does not hand-edit vCard text. Two CardDAV traits
- * remain visible, and a non-CardDAV provider would treat them as opaque:
+ * Contact create, read and update are already exchanged as pim-core's
+ * structured `Contact`. Three CardDAV traits remain visible:
  *
  * - Address books are addressed by a URL string (`AddressBook.url`). For
  *   another provider it is whatever stable ID that provider gives a book.
  * - `LocatedContact` carries the stored object's location, version and raw
- *   `data`. Callers only pass a located contact back to the backend that
- *   produced it, as a lookup the backend can skip.
+ *   `data`, which callers mostly pass back to the backend as a lookup it
+ *   can skip.
+ * - **Groups are not opaque.** groupTools parses `located.data` and edits
+ *   the group as a `KIND:group` / `MEMBER` vCard itself, the contacts
+ *   counterpart of cal-mcp's iCalendar-level writes. A provider with its
+ *   own group model (Google `contactGroups`) needs semantic group
+ *   operations here first; see phase 2 of the design.
  */
 import type { Contact } from "@miguelarios/pim-core";
 import type {

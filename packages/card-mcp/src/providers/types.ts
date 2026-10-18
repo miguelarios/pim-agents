@@ -36,7 +36,7 @@ export interface ContactTransferOutcome {
 }
 
 /**
- * A contact found by {@link CardDavService.locateContact}: the book it lives
+ * A contact found by `ContactsBackend.locateContact`: the book it lives
  * in plus the vCard's own URL, etag and data. Passing it back to
  * `updateContact`/`deleteContact` as `located` lets the write reuse the read
  * that found it instead of fetching the book again.
