@@ -536,14 +536,14 @@ Errors are returned as a tool result with `isError: true` and a single text bloc
 
 | Code | When |
 |---|---|
-| `VALIDATION_FAILED` | The arguments cannot work: an invalid `recurrence_rule`, a `span` without the `occurrence_date` it needs, an `occurrence_date` that is not an occurrence of the series, a bad colour or time zone, an inverted range, an unusable `sharee`, an ambiguous or unknown `provider`. |
-| `INVALID_ICS` | `import_ics` content contains no events. |
-| `CALENDAR_NOT_FOUND` | No calendar matches `calendar` (or an entry of `calendars`). |
-| `EVENT_NOT_FOUND` | No event with that `uid` in the calendar, or the series has no occurrence at `occurrence_date`. |
-| `WRITE_FAILED` | The server refused to store an event. |
-| `OPERATION_FAILED` | Any other request the server refused (calendar create/update/delete, sharing, a move). |
+| `VALIDATION_FAILED` | The arguments cannot work: an unparseable or inverted `start`/`end`, an invalid `recurrence_rule`, an unparseable `occurrence_date` or a `span` without the one it needs, an `update_event` `span: "future"` cut that is not an occurrence of the series, a bad colour, time zone or order, an empty `display_name`, an unusable `sharee`, or an ambiguous or unknown `provider` on `create_calendar`. |
+| `INVALID_ICS` | `import_ics` content does not parse, or contains no events. |
+| `CALENDAR_NOT_FOUND` | No calendar matches `calendar` (or an entry of `calendars`), including a calendar ID with no `/` or an unconfigured provider prefix. |
+| `EVENT_NOT_FOUND` | No event with that `uid` in the calendar, or (`get_event`) the series has no occurrence at `occurrence_date`. |
+| `WRITE_FAILED` | The server refused to create, update, move or delete an event. Moving between providers also reports this. |
+| `OPERATION_FAILED` | Any other request that failed: calendar create, update or delete (including a name or slug already in use), sharing, counting objects. |
 | `CONNECTION_FAILED`, `CONNECTION_TIMEOUT` | The server could not be reached. Retryable. |
-| `AUTH_FAILED` | The server rejected the credentials. |
+| `AUTH_FAILED` | The server rejected the credentials when connecting. A 401 on a later write or sharing request is reported as `WRITE_FAILED` or `OPERATION_FAILED`, with the status in `message`. |
 | `INTERNAL_ERROR` | Anything unclassified. |
 
 The shared `CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED` and `UNKNOWN_TOOL` codes can come from any server. Before 0.22 (unreleased) this server used `validation_error`, `not_found` and `backend_error` instead; see the changelog.

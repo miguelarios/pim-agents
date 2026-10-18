@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { ErrorCode, getLocalDateParts, getTimezone, zonedTimeToUtc } from "@miguelarios/pim-core";
 import {
   type ExceptionOverrides,
+  IcsGenerateError,
+  IcsParseError,
   type MasterEventUpdates,
   addExdateToIcs,
   combineIcsComponents,
@@ -153,6 +155,34 @@ function ok<T>(payload: T): CallToolResult {
 
 function calFail(code: ErrorCode, message: string, retryable = false): CallToolResult {
   return { ...fail(code, message, retryable), ...debugMeta() };
+}
+
+/** A `VALIDATION_FAILED` result unless `start` and `end` parse and `start` comes first. */
+function checkRange(start: string, end: string): CallToolResult | undefined {
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || startMs >= endMs) {
+    return calFail(
+      ErrorCode.VALIDATION_FAILED,
+      "start and end must be ISO 8601 with start before end",
+    );
+  }
+  return undefined;
+}
+
+/**
+ * A `VALIDATION_FAILED` result unless `occurrence_date` parses. Checked before
+ * anything is written: an unparseable date reaches the ICS helpers as `NaN`,
+ * and `addExdateToIcs` would store `EXDATE:NaN-aNNaN…` on the server.
+ */
+function checkOccurrenceDate(occurrenceDate: string): CallToolResult | undefined {
+  if (Number.isNaN(new Date(occurrenceDate).getTime())) {
+    return calFail(
+      ErrorCode.VALIDATION_FAILED,
+      `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
+    );
+  }
+  return undefined;
 }
 
 /**
@@ -308,6 +338,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       service,
     ) =>
       run(async () => {
+        const invalid = checkRange(args.start, args.end);
+        if (invalid) return invalid;
         const { events, unavailable } = await fetchEvents(
           service,
           args,
@@ -393,6 +425,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         const now = new Date();
         const start = args.start ?? new Date(now.getTime() - 90 * 86400000).toISOString();
         const end = args.end ?? new Date(now.getTime() + 90 * 86400000).toISOString();
+        const invalid = checkRange(start, end);
+        if (invalid) return invalid;
 
         const { events, unavailable } = await fetchEvents(service, args, start, end, detailLevel);
         const matched = events.filter((e) => {
@@ -496,7 +530,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           const uid = uidMatch ? uidMatch[1].trim() : crypto.randomUUID();
           return ok({ event: await service.createEvent(args.calendar, icsString, uid) });
         } catch (err) {
-          if (err instanceof Error && err.message.startsWith("Invalid recurrence_rule:")) {
+          if (err instanceof IcsGenerateError) {
             return calFail(ErrorCode.VALIDATION_FAILED, err.message);
           }
           throw err;
@@ -572,6 +606,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             );
           }
           const occurrenceDate = args.occurrence_date;
+          const invalidDate = checkOccurrenceDate(occurrenceDate);
+          if (invalidDate) return invalidDate;
           const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
 
           const overrides: ExceptionOverrides = {};
@@ -654,12 +690,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             );
           }
           const occurrenceDate = args.occurrence_date;
-          if (Number.isNaN(new Date(occurrenceDate).getTime())) {
-            return calFail(
-              ErrorCode.VALIDATION_FAILED,
-              `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
-            );
-          }
+          const invalidDate = checkOccurrenceDate(occurrenceDate);
+          if (invalidDate) return invalidDate;
           const newUid = `${randomUUID()}@pim-core`;
           let split: ReturnType<typeof splitRecurrenceIcs>;
           try {
@@ -808,12 +840,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             );
           }
           const occurrenceDate = args.occurrence_date;
-          if (Number.isNaN(new Date(occurrenceDate).getTime())) {
-            return calFail(
-              ErrorCode.VALIDATION_FAILED,
-              `Invalid occurrence_date "${occurrenceDate}" — use an ISO 8601 date-time`,
-            );
-          }
+          const invalidDate = checkOccurrenceDate(occurrenceDate);
+          if (invalidDate) return invalidDate;
           const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
           const truncated = truncateRecurrenceIcs(rawObj.data, occurrenceDate, existing.all_day);
 
@@ -867,6 +895,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
               );
             }
             const occurrenceDate = args.occurrence_date;
+            const invalidDate = checkOccurrenceDate(occurrenceDate);
+            if (invalidDate) return invalidDate;
             const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
 
             let updatedIcs = addExdateToIcs(rawObj.data, occurrenceDate, existing.all_day);
@@ -995,7 +1025,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             createdEvents.push(await service.createEvent(args.calendar, icsString, uid));
           }
         } catch (err) {
-          if (err instanceof Error && err.message.startsWith("Invalid recurrence_rule:")) {
+          if (err instanceof IcsGenerateError) {
             return calFail(ErrorCode.VALIDATION_FAILED, err.message);
           }
           throw err;
@@ -1024,7 +1054,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
     outputSchema: importResultSchema,
     handler: (args: { calendar: string; ics_content: string }, service) =>
       run(async () => {
-        const groups = splitIcsByUid(args.ics_content);
+        let groups: ReturnType<typeof splitIcsByUid>;
+        try {
+          groups = splitIcsByUid(args.ics_content);
+        } catch (err) {
+          if (err instanceof IcsParseError) return calFail(ErrorCode.INVALID_ICS, err.message);
+          throw err;
+        }
         if (groups.length === 0) {
           return calFail(ErrorCode.INVALID_ICS, "No events found in ICS content");
         }
@@ -1093,14 +1129,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       service,
     ) =>
       run(async () => {
-        const startMs = new Date(args.start).getTime();
-        const endMs = new Date(args.end).getTime();
-        if (Number.isNaN(startMs) || Number.isNaN(endMs) || startMs >= endMs) {
-          return calFail(
-            ErrorCode.VALIDATION_FAILED,
-            "start and end must be ISO 8601 with start before end",
-          );
-        }
+        const invalid = checkRange(args.start, args.end);
+        if (invalid) return invalid;
         let calendarIds = args.calendars;
         if (!calendarIds || calendarIds.length === 0) {
           calendarIds = (await service.listCalendars()).map((c) => c.calendar_id);
@@ -1110,8 +1140,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           ignoreTentative: args.ignore_tentative ?? false,
         });
         return ok({
-          start: new Date(startMs).toISOString(),
-          end: new Date(endMs).toISOString(),
+          start: new Date(args.start).toISOString(),
+          end: new Date(args.end).toISOString(),
           busy,
           count: busy.length,
           sources,
@@ -1176,6 +1206,8 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       service,
     ) =>
       run(async () => {
+        const invalid = checkRange(args.start, args.end);
+        if (invalid) return invalid;
         let calendarIds = args.calendars;
         if (!calendarIds || calendarIds.length === 0) {
           const allCals = await service.listCalendars();

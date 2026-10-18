@@ -11,6 +11,9 @@
   | `not_found` | `CALENDAR_NOT_FOUND` or `EVENT_NOT_FOUND` |
   | `backend_error` | `WRITE_FAILED`, `OPERATION_FAILED`, `CONNECTION_FAILED`, `CONNECTION_TIMEOUT`, `AUTH_FAILED` or `INTERNAL_ERROR` |
 
+- Caller mistakes that reached the server as `backend_error` are now caught first and reported as such: an unparseable or inverted `start`/`end` on `list_events`, `search_events` and `find_free_slots`, an unparseable date on `create_event` / `create_events_batch` (`VALIDATION_FAILED`), and unparseable `import_ics` content (`INVALID_ICS`).
+- **`delete_event` with `span: "this"` no longer corrupts the series on an unparseable `occurrence_date`.** It wrote `EXDATE:NaN-aNNaN…` into the event and reported success; it now fails with `VALIDATION_FAILED` before anything is written, as does `update_event` with `span: "this"`.
+
 ## 0.21.0 (2026-10-18)
 
 - **Calendar sharing** (#47): `get_calendar_sharing` (who a calendar is shared with, at what access, and whether they accepted), `share_calendar` and `unshare_calendar` (both ask for confirmation). Reads CalendarServer sharing (mailbox.org / Open-Xchange, Apple), Nextcloud's ownCloud sharing, or WebDAV resource sharing, and writes in the dialect the server answered with. On Nextcloud the sharee is a principal such as `principals/users/bob`. See `docs/tools/cal-mcp.md`.
