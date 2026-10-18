@@ -11,10 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # The declared floor exactly (every package.json "engines": >=20.18.1,
-        # set by undici in email-mcp), plus the current LTS lines. A bare "20"
-        # resolves to the newest 20.x and would not catch a floor violation.
-        node-version: ["20.18.1", 22, 24]
+        # The declared floor exactly (every package.json "engines": >=20.19.0),
+        # plus the current LTS lines. The servers need 20.18.1 (undici, in
+        # email-mcp); the floor is 20.19.0 because the test toolchain (vite,
+        # under vitest) supports nothing older, and a floor that cannot run the
+        # tests is not one CI can check. A bare "20" would resolve to the newest
+        # 20.x and not test the floor at all.
+        node-version: ["20.19.0", 22, 24]
 
     steps:
       - uses: actions/checkout@v4
