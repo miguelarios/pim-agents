@@ -1,5 +1,7 @@
+import * as v from "valibot";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CalDavService, buildCanonicalHref, mergeFreeBusy } from "../services/CalDavService.js";
+import { calendarListSchema } from "../tools/calendarSchemas.js";
 
 // Mock tsdav — same pattern as card-mcp
 vi.mock("tsdav", () => {
@@ -130,6 +132,21 @@ describe("CalDavService", () => {
 
       const ncCals = calendars.filter((c) => c.calendar_id.startsWith("nextcloud/"));
       expect(ncCals).toHaveLength(2);
+    });
+
+    it("coerces a numeric ctag to a string (#94)", async () => {
+      // Nextcloud answers <getctag>1305</getctag>, which tsdav parses as a number.
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchCalendars.mockResolvedValueOnce([
+        { displayName: "Work", url: "/cal/work/", ctag: 1305 },
+        { displayName: "Zero", url: "/cal/zero/", ctag: 0 },
+        { displayName: "None", url: "/cal/none/" },
+      ]);
+      const calendars = await service.listCalendars();
+      const mailbox = calendars.filter((c) => c.source === "mailbox");
+      expect(mailbox.map((c) => c.ctag)).toEqual(["1305", "0", undefined]);
+      expect(mailbox[2]).not.toHaveProperty("ctag");
+      expect(() => v.parse(calendarListSchema, { calendars })).not.toThrow();
     });
 
     it("creates DAVClient with correct config per provider", async () => {
