@@ -106,10 +106,12 @@ describe("CardDavService", () => {
         { displayName: "Contacts", url: "/dav/a/contacts/", ctag: 1305 },
         { displayName: "PIM-Test", url: "/dav/a/pim-test/", ctag: 0 },
         { displayName: "No ctag", url: "/dav/a/none/" },
+        { displayName: "Empty", url: "/dav/empty/", ctag: {} },
       ]);
       const books = await service.listAddressBooks();
-      expect(books.map((b) => b.ctag)).toEqual(["1305", "0", undefined]);
+      expect(books.map((b) => b.ctag)).toEqual(["1305", "0", undefined, undefined]);
       expect(books[2]).not.toHaveProperty("ctag");
+      expect(books[3]).not.toHaveProperty("ctag");
       expect(() =>
         v.parse(addressBookListSchema, { addressBooks: books, count: books.length }),
       ).not.toThrow();
