@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0 (2026-10-18)
+
+- **Editing a contact keeps its preferred email, phone, address and URL** (#144). Contacts expose `pref` on those values, and `create_contact` / `update_contact` accept it. Previously every update, even a title-only one, dropped `TYPE=pref` from the stored card.
+- `delete_contact`'s confirmation names the contact (or group) and its address book, e.g. *Permanently delete contact "Alice Smith" (…) from address book "PIM-Test"?*, instead of only a UID. An unknown UID now fails with `CONTACT_NOT_FOUND` before any prompt.
+- `list_address_books` works on servers that send a numeric `getctag`, such as Nextcloud with older tsdav (#93).
+- An unreachable server is reported as a retryable `CONNECTION_FAILED` naming the cause, instead of `INTERNAL_ERROR: fetch failed`.
+- Bumped `@miguelarios/pim-core` to `^0.16.0`. Requires Node.js 20.19.0 or newer.
+
 ## 0.12.0 (2026-10-07)
 
 - Runs over Streamable HTTP as well as stdio: set `PIM_MCP_TRANSPORT=http` (see the README's "Over Streamable HTTP"). stdio stays the default and is unchanged on the wire.

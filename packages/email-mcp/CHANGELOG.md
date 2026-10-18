@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.0 (2026-10-18)
+
+- **`send_email`, `forward_email` and `send_draft` return the `Message-ID` the sent message carries** (#130). They returned an ID nodemailer invented and never sent, so it matched neither the delivered copy nor the Sent copy. A draft from another client that has no `Message-ID` gets one before it is sent and filed.
+- **`download_attachment` sizes and caps the attachment, not the whole email** (#131). It reported the message's size as the attachment's and applied `EMAIL_MAX_INLINE_BYTES` to it, so a small attachment in a large email was refused. The part's size now comes from `BODYSTRUCTURE` (a lower bound for base64), and the download itself is capped one byte past the limit.
+- IMAP and SMTP connection failures are classified as retryable connection errors, naming the code (pim-core 0.16.0).
+- **Requires Node.js 20.19.0 or newer** (was 20.18.1), the oldest version the test toolchain supports.
+- Bumped `@miguelarios/pim-core` to `^0.16.0`.
+
 ## 0.17.0 (2026-10-07)
 
 - Runs over Streamable HTTP as well as stdio: set `PIM_MCP_TRANSPORT=http` (see the README's "Over Streamable HTTP"). stdio stays the default and is unchanged on the wire.

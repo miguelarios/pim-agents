@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0 (2026-10-18)
+
+- **Calendar sharing** (#47): `get_calendar_sharing` (who a calendar is shared with, at what access, and whether they accepted), `share_calendar` and `unshare_calendar` (both ask for confirmation). Reads CalendarServer sharing (mailbox.org / Open-Xchange, Apple), Nextcloud's ownCloud sharing, or WebDAV resource sharing, and writes in the dialect the server answered with. On Nextcloud the sharee is a principal such as `principals/users/bob`. See `docs/tools/cal-mcp.md`.
+- **One unreachable provider no longer fails every all-calendars read** (#127). `list_calendars`, and `list_events` / `search_events` / `get_today_events` without a calendar, return the reachable providers' results plus `unavailable_providers: [{ provider, error }]`. `get_free_busy` and `find_free_slots` across all calendars still fail, now naming the provider, because skipping one would report its busy time as free.
+- `list_calendars` works on servers that send a numeric `getctag` (#94).
+- Recurring events from Nextcloud report `is_recurring` correctly, and moved occurrences carry the series rule (pim-core 0.16.0, #99).
+- An unreachable server is reported as retryable, naming the cause (`fetch failed (EHOSTUNREACH)`).
+- Bumped `@miguelarios/pim-core` to `^0.16.0`. Requires Node.js 20.19.0 or newer.
+
 ## 0.20.0 (2026-10-07)
 
 - Runs over Streamable HTTP as well as stdio: set `PIM_MCP_TRANSPORT=http` (see the README's "Over Streamable HTTP"). stdio stays the default and is unchanged on the wire.
