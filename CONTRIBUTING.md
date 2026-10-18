@@ -22,7 +22,7 @@ can be agreed before you write the code.
 
 ## Setup
 
-Node.js **20.19.0 or newer**, and npm.
+Node.js **22.12.0 or newer**, and npm.
 
 ```bash
 git clone https://github.com/miguelarios/pim-agents.git

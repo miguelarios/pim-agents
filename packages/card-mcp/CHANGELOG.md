@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
+
 ## 0.13.0 (2026-10-18)
 
 - **Editing a contact keeps its preferred email, phone, address and URL** (#144). Contacts expose `pref` on those values, and `create_contact` / `update_contact` accept it. Previously every update, even a title-only one, dropped `TYPE=pref` from the stored card.

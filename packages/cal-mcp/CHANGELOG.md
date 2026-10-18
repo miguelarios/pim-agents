@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking: requires Node.js 22.12.0 or newer** (was 20.19.0). Node 20 reached end of life in April 2026, and raising the floor after 1.0 would need a major release (#150).
+
 ## 0.21.0 (2026-10-18)
 
 - **Calendar sharing** (#47): `get_calendar_sharing` (who a calendar is shared with, at what access, and whether they accepted), `share_calendar` and `unshare_calendar` (both ask for confirmation). Reads CalendarServer sharing (mailbox.org / Open-Xchange, Apple), Nextcloud's ownCloud sharing, or WebDAV resource sharing, and writes in the dialect the server answered with. On Nextcloud the sharee is a principal such as `principals/users/bob`. See `docs/tools/cal-mcp.md`.

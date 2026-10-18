@@ -81,9 +81,5 @@ after 1.0:
   `CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED` and `UNKNOWN_TOOL`. Pick
   one vocabulary for the server-specific codes, or document both as the
   contract, before the servers reach 1.0.
-- **Every package declares `engines`.** The Runtime row binds only packages that
-  declare a floor (on `main` today only email-mcp does; #134 adds the rest).
-- **Node.js 20 is past end of life.** Raising the floor to 22 costs a major
-  bump after 1.0, and nothing before it.
 - pim-core should reach 1.0 in the same release wave as the servers, so three
   stable servers do not depend on a `0.x` core.

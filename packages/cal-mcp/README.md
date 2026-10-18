@@ -9,7 +9,7 @@ Every tool declares a `title`, all four behaviour annotations, and an `outputSch
 
 `delete_event` asks the user to confirm whenever it removes the calendar object — `span: "all"`, and `span: "this"` on a non-recurring event. Excluding one occurrence of a recurring event is recoverable and is not gated. `delete_calendar` always asks, and so does an `update_event` with `span: "future"` that would drop per-occurrence changes. Set `PIM_MCP_CONFIRM=off` to skip confirmation in headless use.
 
-Requires Node.js **20.19.0 or newer**.
+Requires Node.js **22.12.0 or newer**.
 
 ## Usage
 
