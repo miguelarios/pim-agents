@@ -505,18 +505,25 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<CardDavService>> = [
         const found = await locateBookFor(args.uid, args.addressBook, service);
         bookUrl = found.bookUrl;
         label = found.label;
+        if (args.addressBook) {
+          // locateBookFor labels an explicit book with the caller's own text,
+          // which may be a URL; the prompt names the book as it is called.
+          const entry = await service.findAddressBookEntry(args.addressBook);
+          label = entry.displayName || entry.url;
+        }
         located =
-          found.located ??
-          (await service.locateContact(args.uid, [{ url: found.bookUrl, label: found.label }]));
+          found.located ?? (await service.locateContact(args.uid, [{ url: found.bookUrl, label }]));
       } catch (err) {
         return toolError(err);
       }
 
-      const name = parseVCard(located.data).fullName;
+      const card = parseVCard(located.data);
+      const name = card.fullName.trim();
+      const kind = isGroup(card) ? "group" : "contact";
       const gate = confirmDestructive(
         ctx,
         "confirm_delete_contact",
-        `Permanently delete contact ${name ? `"${name}" (${args.uid})` : args.uid} from address book "${label}"? This cannot be undone.`,
+        `Permanently delete ${kind} ${name ? `"${name}" (${args.uid})` : args.uid} from address book "${label}"? This cannot be undone.`,
       );
       if (gate.status === "interrupt") return gate.result;
 

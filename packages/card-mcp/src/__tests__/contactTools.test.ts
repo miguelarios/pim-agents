@@ -399,6 +399,7 @@ describe("delete_contact confirmation gate", () => {
   const fakeService = () => ({
     listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "x" }]),
     findAddressBook: vi.fn().mockResolvedValue("b"),
+    findAddressBookEntry: vi.fn().mockResolvedValue({ displayName: "PIM-Test", url: "b" }),
     locateContact: vi
       .fn()
       .mockResolvedValue({ bookUrl: "b", url: "b/u1.vcf", etag: '"e"', data: CARD }),
@@ -413,6 +414,31 @@ describe("delete_contact confirmation gate", () => {
     expect(message).toContain("u1");
     expect(message).toContain('"PIM-Test"');
     expect(message).toContain("cannot be undone");
+  });
+
+  it("names an explicitly given book by its display name, even when given as a URL", async () => {
+    const service = fakeService();
+    const res = await callTool(
+      "delete_contact",
+      { uid: "u1", addressBook: "https://dav.example.com/books/pim-test/" },
+      service,
+    );
+    const message = res.inputRequests.confirm_delete_contact.params.message as string;
+    expect(message).toContain('from address book "PIM-Test"');
+    expect(message).not.toContain("https://");
+  });
+
+  it("calls a group a group, and trims the name", async () => {
+    const service = fakeService();
+    service.locateContact.mockResolvedValue({
+      bookUrl: "b",
+      url: "b/g1.vcf",
+      data: "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:g1\r\nFN:  Book Club \r\nX-ADDRESSBOOKSERVER-KIND:group\r\nEND:VCARD",
+    });
+    const res = await callTool("delete_contact", { uid: "g1", addressBook: "PIM-Test" }, service);
+    expect(res.inputRequests.confirm_delete_contact.params.message).toContain(
+      'Permanently delete group "Book Club" (g1)',
+    );
   });
 
   it("reports an unknown UID without asking to delete it", async () => {
