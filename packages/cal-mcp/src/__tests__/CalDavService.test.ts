@@ -2794,4 +2794,78 @@ describe("calendar sharing (#47)", () => {
       service.changeCalendarShare("mailbox/Work", "bob@example.com", "read"),
     ).rejects.toThrow(/Sharing "mailbox\/Work" failed: 403/);
   });
+
+  describe("on Nextcloud (ownCloud sharing)", () => {
+    const nc = (users: string) => `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:oc="http://owncloud.org/ns">
+<d:response><d:href>/remote.php/dav/calendars/alice/work/</d:href>
+<d:propstat><d:prop><oc:invite>${users}</oc:invite>
+<cs:allowed-sharing-modes><cs:can-be-shared/></cs:allowed-sharing-modes></d:prop>
+<d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+<d:propstat><d:prop><cs:invite/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>
+</d:response></d:multistatus>`;
+    const BOB_RW = `<oc:user><d:href>principal:principals/users/bob</d:href><oc:invite-accepted/><oc:access><oc:read-write/></oc:access></oc:user>`;
+
+    it("shares with an oc:share POST to the principal, read-write as an element", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, nc("")))
+        .mockResolvedValueOnce(reply(200))
+        .mockResolvedValueOnce(reply(207, nc(BOB_RW)));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const after = await service.changeCalendarShare(
+        "nextcloud/Work",
+        "principals/users/bob",
+        "read-write",
+      );
+
+      const post = fetchMock.mock.calls[1][1];
+      expect(post.method).toBe("POST");
+      expect(post.body).toContain('<oc:share xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">');
+      expect(post.body).toContain(
+        "<oc:set><d:href>principal:principals/users/bob</d:href><oc:read-write/></oc:set>",
+      );
+      expect(after.protocol).toBe("owncloud");
+      expect(after.shares).toEqual([
+        {
+          email: null,
+          principal: "principal:principals/users/bob",
+          name: null,
+          access: "read-write",
+          status: "accepted",
+        },
+      ]);
+    });
+
+    it("unshares with an oc:remove", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(reply(207, nc(BOB_RW)))
+        .mockResolvedValueOnce(reply(200))
+        .mockResolvedValueOnce(reply(207, nc("")));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await service.changeCalendarShare("nextcloud/Work", "principal:principals/users/bob", null);
+
+      expect(fetchMock.mock.calls[1][1].body).toContain(
+        "<oc:remove><d:href>principal:principals/users/bob</d:href></oc:remove>",
+      );
+    });
+
+    it("refuses an address as a validation error on sharee, before any POST", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(reply(207, nc("")));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(
+        service.changeCalendarShare("nextcloud/Work", "bob@example.com", "read"),
+      ).rejects.toMatchObject({
+        code: "VALIDATION_FAILED",
+        field: "sharee",
+        message: expect.stringContaining("principals/users/"),
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1].method).toBe("PROPFIND");
+    });
+  });
 });
