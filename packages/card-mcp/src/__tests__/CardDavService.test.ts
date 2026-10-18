@@ -1,5 +1,7 @@
+import * as v from "valibot";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CardDavService } from "../services/CardDavService.js";
+import { addressBookListSchema } from "../tools/addressBookSchemas.js";
 
 // Mock tsdav
 vi.mock("tsdav", () => {
@@ -95,6 +97,22 @@ describe("CardDavService", () => {
       const [book] = await service.listAddressBooks();
       expect(book.description).toBe("Team contacts");
       expect(book.syncToken).toBe("sync-9");
+    });
+
+    it("coerces a numeric ctag to a string (#93)", async () => {
+      // Nextcloud answers <getctag>1305</getctag>, which tsdav parses as a number.
+      const { __mockClient } = (await import("tsdav")) as any;
+      __mockClient.fetchAddressBooks.mockResolvedValueOnce([
+        { displayName: "Contacts", url: "/dav/a/contacts/", ctag: 1305 },
+        { displayName: "PIM-Test", url: "/dav/a/pim-test/", ctag: 0 },
+        { displayName: "No ctag", url: "/dav/a/none/" },
+      ]);
+      const books = await service.listAddressBooks();
+      expect(books.map((b) => b.ctag)).toEqual(["1305", "0", undefined]);
+      expect(books[2]).not.toHaveProperty("ctag");
+      expect(() =>
+        v.parse(addressBookListSchema, { addressBooks: books, count: books.length }),
+      ).not.toThrow();
     });
 
     it("does not issue count PROPFINDs unless asked", async () => {

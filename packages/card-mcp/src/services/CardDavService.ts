@@ -372,7 +372,9 @@ export class CardDavService {
       const mapped: AddressBook[] = books.map((book) => ({
         displayName: typeof book.displayName === "string" ? book.displayName : "",
         url: book.url,
-        ctag: book.ctag,
+        // tsdav parses a bare-integer <getctag> (Nextcloud) as a number. It is
+        // still a valid change marker, so keep it, as the string it is typed as.
+        ...(book.ctag != null ? { ctag: String(book.ctag) } : {}),
         ...(typeof book.description === "string" ? { description: book.description } : {}),
         ...(typeof book.syncToken === "string" ? { syncToken: book.syncToken } : {}),
       }));
