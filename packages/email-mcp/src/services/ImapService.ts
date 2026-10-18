@@ -87,8 +87,39 @@ export interface FolderInfo {
 export interface AttachmentMeta {
   filename: string;
   contentType: string;
-  /** Size in bytes as the server reports it, falling back to the fetched length. */
+  /**
+   * Decoded size in bytes: the fetched length when the bytes were read, or an
+   * estimate from the part's BODYSTRUCTURE size when they were left on the
+   * server. When a ceiling cut the fetch short, it is a lower bound (just over
+   * the ceiling).
+   */
   size: number;
+}
+
+/** The fields of an imapflow BODYSTRUCTURE node this module reads. */
+interface BodyPartNode {
+  part?: string;
+  type?: string;
+  size?: number;
+  encoding?: string;
+  parameters?: Record<string, string>;
+  dispositionParameters?: Record<string, string>;
+  childNodes?: BodyPartNode[];
+}
+
+/**
+ * About how many bytes a part decodes to, from its encoded BODYSTRUCTURE size.
+ * Base64 carries 57 bytes per 78-byte line (76 characters plus CRLF), so this
+ * slightly under-estimates rather than refuse an attachment that would fit.
+ * The download limiter catches anything it under-estimates.
+ */
+function decodedSizeEstimate(node: BodyPartNode): number | undefined {
+  if (typeof node.size !== "number") return undefined;
+  return node.encoding?.toLowerCase() === "base64" ? Math.floor((node.size * 57) / 78) : node.size;
+}
+
+function partFilename(node: BodyPartNode): string | undefined {
+  return node.dispositionParameters?.filename || node.parameters?.name || undefined;
 }
 
 /** An attachment whose bytes were fetched. */
@@ -152,6 +183,17 @@ export class ImapService {
       },
       logger: false,
     });
+  }
+
+  /** One message's BODYSTRUCTURE node for `partId`, on an open, locked client. */
+  private async findBodyPart(
+    client: ImapFlow,
+    uid: number,
+    partId: string,
+  ): Promise<BodyPartNode | undefined> {
+    const msg = await client.fetchOne(String(uid), { bodyStructure: true }, { uid: true });
+    if (!msg) return undefined;
+    return findPartNode(msg.bodyStructure as BodyPartNode | undefined, partId);
   }
 
   async listFolders(): Promise<FolderInfo[]> {
@@ -732,7 +774,33 @@ export class ImapService {
       await client.connect();
       const lock = await client.getMailboxLock(folder);
       try {
-        const { meta, content } = await client.download(String(uid), partId, { uid: true });
+        // imapflow's download meta.expectedSize is the whole message's
+        // RFC822.SIZE, not this part's (#131), so it says nothing about
+        // whether the attachment fits. The part's own size is in BODYSTRUCTURE,
+        // which is one cheap FETCH and only worth it when there is a ceiling.
+        if (maxBytes !== undefined) {
+          const node = await this.findBodyPart(client, uid, partId);
+          const estimate = node ? decodedSizeEstimate(node) : undefined;
+          if (node && estimate !== undefined && estimate > maxBytes) {
+            // Over the ceiling before a byte of the body is read, which is
+            // precisely the transfer this ceiling exists to avoid.
+            return {
+              filename: partFilename(node) || `attachment-${partId}`,
+              contentType: node.type || "application/octet-stream",
+              size: estimate,
+              oversized: true,
+            };
+          }
+        }
+
+        // With a ceiling, imapflow's own limiter stops fetching once one byte
+        // past it has arrived, so even a size the server under-reported (or
+        // withheld) costs at most maxBytes + 1 bytes of transfer.
+        const { meta, content } = await client.download(
+          String(uid),
+          partId,
+          maxBytes === undefined ? { uid: true } : { uid: true, maxBytes: maxBytes + 1 },
+        );
         if (!content) {
           throw new EmailError(
             `Attachment ${partId} not found for email ${uid}`,
@@ -746,26 +814,13 @@ export class ImapService {
           contentType: meta.contentType || "application/octet-stream",
         };
 
-        if (maxBytes !== undefined && meta.expectedSize && meta.expectedSize > maxBytes) {
-          // The size came from BODYSTRUCTURE, so it is known before the body is
-          // read. Draining a stream we are about to discard is precisely the
-          // cost this ceiling exists to avoid, so the stream is dropped instead.
-          // Abandoning it mid-literal would leave the connection out of step,
-          // but `createClient` opens a fresh one per call and the `finally`
-          // below logs this one out, so it is never reused.
-          content.destroy?.();
-          return { ...attachment, size: meta.expectedSize, oversized: true };
-        }
-
         const chunks: Buffer[] = [];
         for await (const chunk of content) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         }
         const buffer = Buffer.concat(chunks);
-        const size = meta.expectedSize || buffer.length;
+        const size = buffer.length;
 
-        // A server that withheld the expected size is still held to the
-        // ceiling; only the network saving is lost, not the context saving.
         if (maxBytes !== undefined && size > maxBytes) {
           return { ...attachment, size, oversized: true };
         }
@@ -939,6 +994,17 @@ function compareSummaries(
 
 function hasAttachmentParts(bodyStructure: any): boolean {
   return collectAttachmentParts(bodyStructure).length > 0;
+}
+
+/** The BODYSTRUCTURE node whose part path is `partId`, searched depth-first. */
+function findPartNode(node: BodyPartNode | undefined, partId: string): BodyPartNode | undefined {
+  if (!node) return undefined;
+  if (node.part === partId) return node;
+  for (const child of node.childNodes ?? []) {
+    const found = findPartNode(child, partId);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 interface BodyStructureAttachment {
