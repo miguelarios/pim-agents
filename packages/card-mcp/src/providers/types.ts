@@ -15,6 +15,7 @@ export interface AddressBook {
 
 export type DetailLevel = "summary" | "full";
 
+/** One contact that reached the target book. `newUid` is set for copies only. */
 export interface ContactTransferred {
   uid: string;
   newUid?: string;
@@ -48,11 +49,13 @@ export interface LocatedContact {
   data: string;
 }
 
+/** One card of a book read by `ContactsBackend.fetchBook`: parsed, plus where it lives. */
 export interface BookEntry {
   contact: Contact;
   located: LocatedContact;
 }
 
+/** A book to search, with the label it is reported under in messages. */
 export interface BookToSearch {
   url: string;
   label: string;

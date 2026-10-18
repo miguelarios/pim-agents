@@ -74,12 +74,6 @@ const BOOK_DAV_CHECK = {
   failed: (message: string) => new ContactError(message, ErrorCode.OPERATION_FAILED),
 };
 
-/** One contact that reached the target book. `newUid` is set for copies only. */
-
-/** One card of a book read by {@link CardDavService.fetchBook}: parsed, plus where it lives. */
-
-/** A book to search, with the label it is reported under in messages. */
-
 /**
  * The one error every path reports a UID duplicated across books with, so
  * reads and writes name the books the same way — by whatever label the
