@@ -20,37 +20,45 @@ A change to any of the following needs a **major** version, unless the
 | Surface | Breaking |
 | --- | --- |
 | **Tool names** | Renaming or removing a tool. |
-| **Input schemas** | Removing a parameter, renaming one, making an optional one required, narrowing a type or an `enum`, tightening a format or range, or changing what a parameter's default means. |
-| **Output schemas** (`structuredContent`) | Removing or renaming a field, changing its type, making a required field optional or nullable, or changing what a value means (units, time zone, encoding, inclusive vs exclusive). Removing a value from an `enum` the server returns. |
-| **Annotations** | Changing `readOnlyHint` from `true` to `false`, `destructiveHint` from `false` to `true`, or `idempotentHint` from `true` to `false`. Clients use these to decide what to auto-approve, so tightening them changes what runs unattended. |
+| **Input schemas** | Adding a required parameter, removing or renaming one, making an optional one required, narrowing a type or an `enum`, tightening a format or range, rejecting properties that used to be ignored, or changing what a parameter's default means. |
+| **Output schemas** (`structuredContent`) | Removing or renaming a field, changing its type, making a required field optional or nullable, or changing what a value means (units, time zone, encoding, inclusive vs exclusive). Adding or removing a value of an `enum` the server returns (a client matching every value breaks on a new one). |
+| **Annotations** | Changing `readOnlyHint`, `destructiveHint` or `idempotentHint`, in either direction. Clients use them to decide what to auto-approve and what to retry, so either direction changes what runs unattended: tightening stops something that used to run, loosening lets something run that used to be held. `openWorldHint` is informational and may change in a minor. |
 | **Text result block** | Changing what the JSON text block carries. It mirrors `structuredContent` for clients that do not read structured output, and it is the *only* place an error's `{ error, message, retryable }` appears, since error results have no `structuredContent`. The output-schema and error-code rules apply to it. |
-| **Error codes** | Renaming or removing an `error` code, or reporting an existing condition under a different code. The `retryable` flag is part of this: flipping it for a condition changes client retry loops. |
-| **Confirmation** | Gating an operation that was not gated (a headless client that cannot answer the prompt starts failing), or no longer gating one that was. |
+| **Error codes** | Renaming or removing an `error` code, reporting an existing condition under a different code, or making a call that used to succeed fail. The `retryable` flag is part of this: flipping it for a condition changes client retry loops. This covers the codes every server shares through pim-core's MCP facade (`CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED`, `UNKNOWN_TOOL`) as well as each server's own. |
+| **Confirmation** | Gating an operation that was not gated (a headless client that cannot answer the prompt starts failing), or no longer gating one that was (it now runs without asking). The same stance as annotations: both directions are breaking. |
 | **Configuration** | Renaming or removing an environment variable, changing a default, or changing how a value is parsed. |
 | **Transports and protocol** | Dropping stdio or Streamable HTTP, or a supported MCP protocol revision. |
-| **Runtime** | Raising the Node.js floor in `engines`, which every package declares. |
-| **Resource URIs** | Changing the shape of an `imap://` URI the server hands out. |
+| **Runtime** | Raising the Node.js floor in `engines`. |
+| **Resources** | Changing the shape of an `imap://` URI the server hands out, removing or renaming a resource template, or changing the `mimeType` a resource is served as. |
 
 ### pim-core
 
 Its contract is the JavaScript API exported from `@miguelarios/pim-core`,
 `/ics` and `/mcp`: names, signatures, the shapes of returned objects, thrown
 error classes and their `code`s. Anything not exported from those entry points
-is internal. pim-core is versioned on its own, but a server's major bump never
-requires a pim-core major bump, nor the reverse.
+is internal. pim-core is versioned on its own, and a server's major bump never
+requires a pim-core one. The reverse does not hold: the servers pass some of
+core's behaviour straight to clients (email-mcp and card-mcp return core's
+`ErrorCode` values as their error codes, every server returns the facade's
+confirmation codes, and the confirmation gate itself lives in core), so a core
+change that alters a server-visible code, result or gate is a breaking change
+for those servers too, and needs their major bump as well as core's.
 
 ## Allowed in a minor or patch
 
 - **Minor:** adding a tool; adding an optional input parameter; adding an output
   field (a client must ignore fields it does not know); adding an `enum` value
-  to an *input*; adding an error code for a condition that previously
-  succeeded or never arose; adding an environment variable with a default that
-  preserves current behaviour; supporting a new protocol revision; loosening an
-  annotation (the opposite of the breaking direction above).
+  to an *input*; adding an error code for a condition that could not arise
+  before (a new tool's, a new parameter's); adding an environment variable with
+  a default that preserves current behaviour; supporting a new protocol
+  revision; changing `openWorldHint`.
 - **Patch:** a bug fix that makes behaviour match what the schema, description
   or docs already promise, even when a client relied on the wrong behaviour.
-  Correcting a misclassified error (an unreachable host reported as an internal
-  error) is a fix, not a change of contract.
+  That includes a misclassified error, with a test for "misclassified": the
+  condition had been reported under a code that names a *different* condition
+  (an unreachable host as `INTERNAL_ERROR`), and the fix reports it under the
+  code that names it, with that code's `retryable`. Moving a condition between
+  two codes that both fit it is a change of contract, not a fix.
 - **Free to change at any time:** tool `description` and `title` text, server
   `instructions`, the human-readable `message` of an error, the formatting
   (whitespace, key order) of the JSON text block, the order of tools in
@@ -66,13 +74,15 @@ changelog entry, even though it needs no major bump.
 These parts of the surface are inconsistent today and become hard to change
 after 1.0:
 
-- **Error codes differ between servers.** cal-mcp maps every failure to
-  `not_found`, `validation_error` or `backend_error`. email-mcp and card-mcp
+- **Error codes differ between servers.** cal-mcp maps its own failures to
+  `not_found`, `validation_error` or `backend_error`; email-mcp and card-mcp
   return pim-core's `ErrorCode` values directly (`CONNECTION_FAILED`,
-  `CONTACT_NOT_FOUND`, …). Pick one vocabulary for all three, or document both
-  as the contract, before the servers reach 1.0.
+  `CONTACT_NOT_FOUND`, …); and all three also return the facade's
+  `CONFIRMATION_DECLINED`, `CONFIRMATION_UNSUPPORTED` and `UNKNOWN_TOOL`. Pick
+  one vocabulary for the server-specific codes, or document both as the
+  contract, before the servers reach 1.0.
 - **Every package declares `engines`.** The Runtime row binds only packages that
-  declare a floor; on `main` today only email-mcp does.
+  declare a floor (on `main` today only email-mcp does; #134 adds the rest).
 - **Node.js 20 is past end of life.** Raising the floor to 22 costs a major
   bump after 1.0, and nothing before it.
 - pim-core should reach 1.0 in the same release wave as the servers, so three
