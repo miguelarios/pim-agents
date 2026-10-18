@@ -59,6 +59,11 @@ const TYPED_VALUE_ITEMS = (typeDesc: string, valueDesc: string) =>
     properties: {
       type: { type: "string", description: typeDesc },
       value: { type: "string", description: valueDesc },
+      pref: {
+        type: "boolean",
+        description:
+          "The preferred one of its kind (vCard TYPE=pref): the default that Apple clients and Nextcloud pick. Kept when an update leaves this list untouched.",
+      },
     },
     required: ["value"],
   }) as const;
@@ -72,6 +77,11 @@ const ADDRESS_ITEMS = {
     state: { type: "string", description: "State/province" },
     postalCode: { type: "string", description: "Postal/ZIP code" },
     country: { type: "string", description: "Country" },
+    pref: {
+      type: "boolean",
+      description:
+        "The preferred one of its kind (vCard TYPE=pref): the default that Apple clients and Nextcloud pick. Kept when an update leaves this list untouched.",
+    },
   },
 } as const;
 
