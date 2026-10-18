@@ -11,7 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20, 22]
+        # The declared floor exactly (every package.json "engines": >=20.18.1,
+        # set by undici in email-mcp), plus the current LTS lines. A bare "20"
+        # resolves to the newest 20.x and would not catch a floor violation.
+        node-version: ["20.18.1", 22, 24]
 
     steps:
       - uses: actions/checkout@v4
