@@ -1,5 +1,5 @@
 /**
- * Calendar collection lifecycle: create, update metadata, delete.
+ * Calendar collection lifecycle: create, update metadata, delete, and sharing.
  *
  * Events live in `calendarTools.ts`; this file is about the collections that
  * hold them. `list_calendars` is deliberately not here — it already exists on
@@ -13,7 +13,7 @@ import {
   toolError,
 } from "@miguelarios/pim-core/mcp";
 import type { CalDavService } from "../services/CalDavService.js";
-import { calendarWriteResultSchema } from "./calendarSchemas.js";
+import { calendarSharingSchema, calendarWriteResultSchema } from "./calendarSchemas.js";
 
 /**
  * Maps to this server's external error vocabulary, as `calendarTools` does —
@@ -84,6 +84,25 @@ type UpdateArgs = {
   order?: number;
 };
 type DeleteArgs = { calendar: string };
+type ShareArgs = {
+  calendar: string;
+  sharee: string;
+  access: "read" | "read-write";
+  summary?: string;
+};
+
+const SHAREE_PROP = {
+  type: "string",
+  description:
+    "Who to share with: an email address (mailbox.org/Open-Xchange, Apple), or a Nextcloud principal such as principals/users/bob or principals/groups/family.",
+} as const;
+
+const READ_ONLY_ANNOTATIONS = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+} as const;
 
 export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = [
   {
@@ -232,6 +251,108 @@ export const CALENDAR_MANAGEMENT_TOOLS: ReadonlyArray<ToolDef<CalDavService>> = 
           display_name: deleted.display_name,
         });
       });
+    },
+  },
+  {
+    name: "get_calendar_sharing",
+    title: "Get Calendar Sharing",
+    description:
+      "Who a calendar is shared with and at what access (read or read-write), and whether each person has accepted. Also says whether the calendar can be shared at all. Reads CalendarServer sharing (mailbox.org/Open-Xchange, Apple), Nextcloud sharing, or WebDAV resource sharing, whichever the server reports.",
+    annotations: READ_ONLY_ANNOTATIONS,
+    inputSchema: {
+      type: "object",
+      properties: { calendar: TARGET_CALENDAR_PROP },
+      required: ["calendar"],
+    },
+    outputSchema: calendarSharingSchema,
+    handler: (args: { calendar: string }, service) =>
+      run(async () =>
+        structured({
+          calendar_id: args.calendar,
+          ...(await service.getCalendarSharing(args.calendar)),
+        }),
+      ),
+  },
+  {
+    name: "share_calendar",
+    title: "Share Calendar",
+    description:
+      "Share a calendar with someone, or change their access. The server usually sends them an invitation, so this asks the user to confirm first. On CalendarServer servers (mailbox.org/Open-Xchange, Apple) the sharee is an email address; on Nextcloud it is a user or group principal such as principals/users/bob. Returns the calendar's sharing afterwards.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Repeating it can send the sharee another invitation.
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        calendar: TARGET_CALENDAR_PROP,
+        sharee: SHAREE_PROP,
+        access: {
+          type: "string",
+          enum: ["read", "read-write"],
+          description: "'read' lets them see events; 'read-write' also lets them change them.",
+        },
+        summary: {
+          type: "string",
+          description: "Optional note included in the invitation, where the server sends one.",
+        },
+      },
+      required: ["calendar", "sharee", "access"],
+    },
+    outputSchema: calendarSharingSchema,
+    handler: async (args: ShareArgs, service, ctx) => {
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_share_calendar",
+        `Give ${args.sharee} ${args.access === "read-write" ? "read-write" : "read-only"} access to calendar "${args.calendar}"? The server may send them an invitation.`,
+      );
+      if (gate.status === "interrupt") return gate.result;
+      return run(async () =>
+        structured({
+          calendar_id: args.calendar,
+          ...(await service.changeCalendarShare(
+            args.calendar,
+            args.sharee,
+            args.access,
+            args.summary,
+          )),
+        }),
+      );
+    },
+  },
+  {
+    name: "unshare_calendar",
+    title: "Unshare Calendar",
+    description:
+      "Remove someone's access to a calendar. Asks the user to confirm first. Pass the sharee as get_calendar_sharing reports it: an email address, or on Nextcloud a principal such as principals/users/bob. Returns the calendar's sharing afterwards.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: { calendar: TARGET_CALENDAR_PROP, sharee: SHAREE_PROP },
+      required: ["calendar", "sharee"],
+    },
+    outputSchema: calendarSharingSchema,
+    handler: async (args: { calendar: string; sharee: string }, service, ctx) => {
+      const gate = confirmDestructive(
+        ctx,
+        "confirm_unshare_calendar",
+        `Remove ${args.sharee}'s access to calendar "${args.calendar}"?`,
+      );
+      if (gate.status === "interrupt") return gate.result;
+      return run(async () =>
+        structured({
+          calendar_id: args.calendar,
+          ...(await service.changeCalendarShare(args.calendar, args.sharee, null)),
+        }),
+      );
     },
   },
 ];

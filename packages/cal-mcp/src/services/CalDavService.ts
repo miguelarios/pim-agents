@@ -24,6 +24,14 @@ import {
 } from "@miguelarios/pim-core/ics";
 import { DAVClient } from "tsdav";
 import {
+  type CalendarSharing,
+  SHARING_PROPFIND_BODY,
+  type ShareAccess,
+  buildShareBody,
+  buildUnshareBody,
+  parseSharing,
+} from "./sharing.js";
+import {
   deleteCachedObject,
   getCachedObject,
   moveCachedCalendar,
@@ -747,6 +755,111 @@ export class CalDavService {
     } catch (error) {
       if (error instanceof CalendarError) throw error;
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * One authenticated request to a calendar collection. Sharing uses raw
+   * requests rather than tsdav: tsdav's XML handling drops namespace prefixes,
+   * which collides `D:invite` with `CS:invite` (see sharing.ts).
+   */
+  private async collectionRequest(
+    calendarId: string,
+    method: "PROPFIND" | "POST",
+    body: string,
+    headers: Record<string, string> = {},
+  ): Promise<{ status: number; statusText: string; text: string; url: string }> {
+    const { account, calendarName } = this.resolveAccount(calendarId);
+    const client = await this.getClient(account);
+    const calendar = await this.findCalendar(client, calendarName, account.id);
+    const url = new URL((calendar as { url: string }).url, account.url).toString();
+    const response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${account.username}:${account.password}`).toString("base64")}`,
+        "Content-Type": "application/xml; charset=utf-8",
+        ...headers,
+      },
+      body,
+    });
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      text: await response.text(),
+      url,
+    };
+  }
+
+  /** Who a calendar is shared with, and at what access (#47). */
+  async getCalendarSharing(calendarId: string): Promise<CalendarSharing> {
+    try {
+      const res = await this.collectionRequest(calendarId, "PROPFIND", SHARING_PROPFIND_BODY, {
+        Depth: "0",
+      });
+      if (res.status !== 207) {
+        throw new CalendarError(
+          `Reading sharing for "${calendarId}" failed: ${res.status} ${res.statusText}`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+      return parseSharing(res.text);
+    } catch (error) {
+      if (error instanceof CalendarError || error instanceof ValidationError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Grants (`access` given) or revokes (`access` null) a sharee's access, in
+   * whichever sharing dialect the server answered the read with, then returns
+   * the calendar's sharing as the server now reports it.
+   */
+  async changeCalendarShare(
+    calendarId: string,
+    sharee: string,
+    access: ShareAccess | null,
+    summary?: string,
+  ): Promise<CalendarSharing> {
+    if (!sharee.trim()) throw new ValidationError("sharee is required", "sharee");
+    const before = await this.getCalendarSharing(calendarId);
+    const protocol = before.protocol;
+    if (!before.can_be_shared || (protocol !== "calendarserver" && protocol !== "owncloud")) {
+      throw new ValidationError(
+        `Calendar "${calendarId}" cannot be shared through this server: it reports neither CalendarServer nor Nextcloud sharing`,
+        "calendar",
+      );
+    }
+    let body: string;
+    try {
+      body =
+        access === null
+          ? buildUnshareBody(protocol, sharee)
+          : buildShareBody(protocol, sharee, access, summary);
+    } catch (error) {
+      throw new ValidationError(error instanceof Error ? error.message : String(error), "sharee");
+    }
+    try {
+      const res = await this.collectionRequest(calendarId, "POST", body);
+      if (res.status < 200 || res.status >= 300) {
+        throw new CalendarError(
+          `${access === null ? "Unsharing" : "Sharing"} "${calendarId}" failed: ${res.status} ${res.statusText}`,
+          ErrorCode.OPERATION_FAILED,
+        );
+      }
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      throw toPimError(error instanceof Error ? error : new Error(String(error)));
+    }
+    try {
+      return await this.getCalendarSharing(calendarId);
+    } catch (error) {
+      // The change was applied; only reading it back failed. Saying so keeps a
+      // caller from retrying a share, which could send a second invitation.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new CalendarError(
+        `${access === null ? "Unsharing" : "Sharing"} "${calendarId}" succeeded, but reading the calendar's sharing back failed: ${reason}. Do not repeat the change; call get_calendar_sharing to check.`,
+        ErrorCode.OPERATION_FAILED,
+      );
     }
   }
 

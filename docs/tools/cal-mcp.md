@@ -1,6 +1,6 @@
 # Calendar MCP Tools
 
-`@miguelarios/cal-mcp` — CalDAV calendar server with 16 tools.
+`@miguelarios/cal-mcp` — CalDAV calendar server with 19 tools.
 
 > Definitions are pulled directly from `packages/cal-mcp/src/tools/calendarTools.ts` (events) and `packages/cal-mcp/src/tools/calendarManagementTools.ts` (calendar collections). Output shapes from `packages/cal-mcp/src/tools/calendarSchemas.ts` and `packages/cal-mcp/src/services/CalDavService.ts`.
 
@@ -408,6 +408,80 @@ See [Collection results](#collection-results) — `status: "deleted"`.
 ```
 
 `calendar_id` is always usable directly by the event tools.
+
+## get_calendar_sharing
+
+Who a calendar is shared with, at what access, and whether each person has accepted. Read-only.
+
+Servers speak different sharing dialects. This reads whichever one the server reports, preferring the one that names people by address:
+
+| `protocol` | Servers | Sharees appear as |
+|---|---|---|
+| `calendarserver` | mailbox.org / Open-Xchange, Apple | `email` (and `name`) |
+| `owncloud` | Nextcloud | `principal`, e.g. `principal:principals/users/bob` |
+| `webdav` | Fallback (WebDAV Resource Sharing draft) | `principal` |
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID. |
+
+**Output**
+
+```ts
+{
+  calendar_id: string;
+  can_be_shared: boolean;      // false when the server reports no sharing support
+  can_be_published: boolean;
+  protocol: "calendarserver" | "owncloud" | "webdav" | null;
+  shares: Array<{
+    email: string | null;      // calendarserver
+    principal: string | null;  // owncloud / webdav
+    name: string | null;
+    access: "read" | "read-write";
+    status: "accepted" | "pending" | "declined" | "invalid";
+  }>;
+}
+```
+
+The calendar's owner (CalendarServer's organizer) is not listed as a share.
+
+## share_calendar
+
+Share a calendar with someone, or change the access of someone it is already shared with. Returns the calendar's sharing as the server reports it afterwards.
+
+> **Asks for confirmation.** The server usually emails the sharee an invitation, so this is not undone by unsharing: *"Give bob@example.com read-only access to calendar "mailbox/Work"? The server may send them an invitation."* Set `PIM_MCP_CONFIRM=off` to skip.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID. |
+| `sharee` | string | yes | An email address on CalendarServer servers (mailbox.org, Apple). On Nextcloud, a user or group principal (`principals/users/bob`, `principals/groups/family`): Nextcloud resolves an address only when exactly one local user has it and otherwise drops it silently, so an address is refused with a `validation_error` rather than risk a share that does nothing. Principals may be given as `principal:principals/users/<id>`, `principals/users/<id>`, or a full principal URL; user IDs containing `@` are fine. |
+| `access` | `"read"` \| `"read-write"` | yes | `read` lets them see events; `read-write` also lets them change them. |
+| `summary` | string | | Note included in the invitation, where the server sends one. |
+
+**Output**
+
+Same as `get_calendar_sharing`. A calendar whose server reports neither CalendarServer nor Nextcloud sharing is refused with a `validation_error` before anything is sent.
+
+## unshare_calendar
+
+Remove someone's access to a calendar. Returns the calendar's sharing afterwards.
+
+> **Asks for confirmation** — *"Remove bob@example.com's access to calendar "mailbox/Work"?"*
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `calendar` | string | yes | Provider-prefixed calendar ID. |
+| `sharee` | string | yes | The sharee as `get_calendar_sharing` reports it: an email address, or on Nextcloud a principal. |
+
+**Output**
+
+Same as `get_calendar_sharing`.
 
 ## Event shapes
 

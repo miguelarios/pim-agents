@@ -271,6 +271,45 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     ]);
   });
 
+  it("returns calendar sharing that validates against the wire schema, and gates sharing (#47)", async () => {
+    const sharing = {
+      can_be_shared: true,
+      can_be_published: false,
+      protocol: "calendarserver",
+      shares: [
+        {
+          email: "bob@example.com",
+          principal: null,
+          name: "Bob Jones",
+          access: "read-write",
+          status: "pending",
+        },
+      ],
+    };
+    const service = {
+      ...fakeService(),
+      getCalendarSharing: vi.fn().mockResolvedValue(sharing),
+      changeCalendarShare: vi.fn().mockResolvedValue(sharing),
+    };
+    const { client, elicitations } = await connect(era, service, { action: "decline" });
+    await client.listTools();
+
+    const read = await client.callTool({
+      name: "get_calendar_sharing",
+      arguments: { calendar: "mailbox/Work" },
+    });
+    expect(read.isError).toBeFalsy();
+    expect(read.structuredContent).toEqual({ calendar_id: "mailbox/Work", ...sharing });
+    expect(elicitations).toHaveLength(0);
+
+    await client.callTool({
+      name: "share_calendar",
+      arguments: { calendar: "mailbox/Work", sharee: "carol@example.com", access: "read" },
+    });
+    expect(elicitations).toHaveLength(1);
+    expect(service.changeCalendarShare).not.toHaveBeenCalled();
+  });
+
   it("returns typed busy periods from get_free_busy that validate against its schema (#48)", async () => {
     const { client } = await connect(era, fakeService());
     const result = await client.callTool({
