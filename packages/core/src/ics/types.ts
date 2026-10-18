@@ -40,10 +40,10 @@ export interface ParsedEvent {
   geo: ParsedGeo | null;
   organizer: ParsedOrganizer | null;
   /**
-   * The series' RRULE, when the parsed component carries one. A detached
-   * override or a server-expanded instance has none of its own, so this is
-   * null there even though `is_recurring` is true: the rule lives only on a
-   * master that is not in the payload.
+   * The series' RRULE. Every occurrence expanded from a master reports the
+   * master's rule, overrides included. An instance whose master is not in the
+   * payload (a server-expanded instance, an orphan override) has no rule to
+   * report, so this is null there even though `is_recurring` is true.
    */
   recurrence_rule: string | null;
   rdates: string[] | null;

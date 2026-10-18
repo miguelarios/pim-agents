@@ -159,6 +159,10 @@ function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string)
   const out: ParsedEvent[] = [];
   const rangeStart = ICAL.Time.fromJSDate(new Date(range.start), true);
   const rangeEnd = ICAL.Time.fromJSDate(new Date(range.end), true);
+  // Series-level fields belong to the master. An override VEVENT carries no
+  // RRULE of its own, so building them from it made a moved occurrence report
+  // is_recurring: false and no rule while its siblings reported both (#99).
+  const series = buildBaseEvent(event.component);
   const it = event.iterator();
   // event.iterator().next() returns null/undefined when the series is exhausted
   // (finite RRULEs with COUNT or UNTIL hit this branch). Range is half-open
@@ -175,6 +179,9 @@ function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string)
     const allDay = details.startDate.isDate;
     out.push({
       ...base,
+      recurrence_rule: series.recurrence_rule,
+      rdates: series.rdates,
+      is_recurring: true,
       all_day: allDay,
       start: timeToEventIsoWithTz(details.startDate, timezone),
       end: timeToEventIsoWithTz(details.endDate, timezone),
