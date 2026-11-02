@@ -58,6 +58,13 @@ function fakeServices() {
       deleteEmails: vi.fn().mockResolvedValue(undefined),
       getSpecialUseFolder: vi.fn().mockResolvedValue("Drafts"),
       appendMessage: vi.fn().mockResolvedValue({ uid: 100 }),
+      fetchDraft: vi.fn().mockResolvedValue({
+        source: Buffer.from(
+          "From: me@example.com\r\nTo: ada@example.com\r\nSubject: Plan\r\nMessage-ID: <d1@example.com>\r\n\r\nv1",
+        ),
+        flags: ["\\Draft", "\\Seen"],
+      }),
+      replaceDraft: vi.fn().mockResolvedValue({ uid: 101, previousRemoved: true, atomic: true }),
       downloadAttachment: vi.fn(
         async (_folder: string, _uid: number, _partId: string, maxBytes?: number) => {
           const meta = { filename: "report.pdf", contentType: "application/pdf", size: 4 };
@@ -82,7 +89,9 @@ function fakeServices() {
       formatFromHeader: vi.fn((address: string, displayName?: string) =>
         displayName ? `"${displayName}" <${address}>` : address,
       ),
-      composeRawMessage: vi.fn().mockResolvedValue(Buffer.from("raw")),
+      composeRawMessage: vi
+        .fn()
+        .mockResolvedValue(Buffer.from("Message-ID: <d2@example.com>\r\n\r\nraw")),
       sendRawMessage: vi.fn().mockResolvedValue({ messageId: "<sent@test.com>" }),
     },
   };
@@ -545,6 +554,43 @@ describe.each<Era>(["legacy", "modern"])("email-mcp over the wire (%s era)", (er
     expect(elicitations).toHaveLength(0);
     expect(result.isError).toBeFalsy();
     expect(services.smtp.sendRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("updates a draft without asking, through the advertised outputSchema", async () => {
+    const services = fakeServices();
+    const { client, elicitations } = await connect(era, services);
+    const result = await client.callTool({
+      name: "update_draft",
+      arguments: { uid: 7, subject: "Plan v2", text: "v2" },
+    });
+
+    expect(elicitations).toHaveLength(0);
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({
+      status: "updated",
+      uid: 101,
+      folder: "Drafts",
+      messageId: "<d2@example.com>",
+      previousUid: 7,
+      previousRemoved: true,
+    });
+    expect(services.imap.replaceDraft).toHaveBeenCalledWith(
+      "Drafts",
+      7,
+      expect.any(Buffer),
+      ["\\Draft", "\\Seen"],
+      "<d2@example.com>",
+    );
+    expect(services.smtp.sendRawMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects an update_draft with no uid without running the handler", async () => {
+    const services = fakeServices();
+    const { client } = await connect(era, services);
+    const result = await client.callTool({ name: "update_draft", arguments: { text: "v2" } });
+
+    expect(result.isError).toBe(true);
+    expect(services.imap.fetchDraft).not.toHaveBeenCalled();
   });
 
   it("moves to Trash without asking, but confirms a permanent delete", async () => {

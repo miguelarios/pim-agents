@@ -9,12 +9,22 @@ import {
   structured,
   toolError,
 } from "@miguelarios/pim-core/mcp";
-import { simpleParser } from "mailparser";
+import {
+  type AddressObject,
+  type Attachment as Attachment_,
+  type ParsedMail,
+  simpleParser,
+} from "mailparser";
 import { htmlToMarkdown, sanitizeEmailHtml } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
 import type { EmailFull, ImapService } from "../services/ImapService.js";
-import { type ComposeOptions, type SmtpService, ensureMessageId } from "../services/SmtpService.js";
+import {
+  type ComposeOptions,
+  type SmtpService,
+  ensureMessageId,
+  headerMessageId,
+} from "../services/SmtpService.js";
 import {
   attachmentSchema,
   copyResultSchema,
@@ -31,6 +41,7 @@ import {
   searchResultSchema,
   sendResultSchema,
   threadResultSchema,
+  updateDraftResultSchema,
 } from "./emailSchemas.js";
 
 /**
@@ -89,6 +100,8 @@ type ResolvedAttachment = {
   path?: string;
   content?: string | Buffer;
   contentType?: string;
+  cid?: string;
+  contentDisposition?: "attachment" | "inline";
 };
 
 /**
@@ -424,6 +437,127 @@ async function deliver(
   });
 }
 
+/**
+ * One parsed address as a header value nodemailer will parse back the same way.
+ * A display name is always quoted: "Doe, Jane" unquoted would split into two
+ * recipients.
+ */
+function headerAddress(entry: { name?: string; address?: string }): string | undefined {
+  const address = entry.address?.trim();
+  if (!address) return undefined;
+  return entry.name ? `"${entry.name.replace(/(["\\])/g, "\\$1")}" <${address}>` : address;
+}
+
+/** A parsed address header as header values, group members included. */
+function parsedAddresses(field: AddressObject | AddressObject[] | undefined): string[] {
+  const objects = Array.isArray(field) ? field : field ? [field] : [];
+  return objects
+    .flatMap((object) => object.value)
+    .flatMap((entry) => (entry.group ? entry.group : [entry]))
+    .map(headerAddress)
+    .filter((value): value is string => value !== undefined);
+}
+
+/** Flags a draft's new version carries over: the old ones, plus \Draft. */
+function draftFlags(previous: string[]): string[] {
+  // \Recent is server-set and \Deleted would have it expunged on arrival.
+  const kept = previous.filter((flag) => !/^\\(recent|deleted)$/i.test(flag));
+  return kept.some((flag) => flag.toLowerCase() === "\\draft") ? kept : [...kept, "\\Draft"];
+}
+
+/**
+ * A part's Content-Type with its parameters — a text attachment's charset, an
+ * invitation's METHOD — minus `name`, which nodemailer writes from the filename.
+ * mailparser's `contentType` is the bare type, and re-attaching with only that
+ * would turn a Latin-1 CSV into mojibake.
+ */
+function fullContentType(att: Attachment_): string {
+  const header = att.headers?.get("content-type") as
+    | { value?: string; params?: Record<string, string> }
+    | undefined;
+  const params = Object.entries(header?.params ?? {})
+    .filter(([key]) => key.toLowerCase() !== "name")
+    .map(([key, value]) => `; ${key}=${/^[\w.+-]+$/.test(value) ? value : JSON.stringify(value)}`);
+  return `${att.contentType}${params.join("")}`;
+}
+
+/**
+ * The draft's non-body parts: its attachments, and a calendar invitation if it
+ * carries one.
+ *
+ * An invitation is a text/calendar alternative with a METHOD and no filename.
+ * mailparser lists it among the attachments, and re-attaching it as one would
+ * turn a meeting request into a file called attachment-0, so it is handed back
+ * as an `icalEvent` instead. nodemailer writes an `invite.ics` copy beside
+ * every icalEvent; that copy is dropped here, or each update would add another.
+ */
+function parsedDraftParts(mail: ParsedMail): {
+  attachments: ResolvedAttachment[];
+  icalEvent?: { method?: string; content: string };
+} {
+  let icalEvent: { method?: string; content: string } | undefined;
+  const rest: Attachment_[] = [];
+  for (const att of mail.attachments) {
+    const header = att.headers?.get("content-type") as
+      | { params?: Record<string, string> }
+      | undefined;
+    const method = header?.params?.method;
+    if (!icalEvent && att.contentType === "text/calendar" && method && !att.filename) {
+      icalEvent = { method, content: att.content.toString("utf8") };
+    } else {
+      rest.push(att);
+    }
+  }
+  const attachments = rest
+    .filter(
+      (att) =>
+        !(
+          icalEvent &&
+          att.filename === "invite.ics" &&
+          att.content.toString("utf8") === icalEvent.content
+        ),
+    )
+    .map(
+      (att, index): ResolvedAttachment => ({
+        filename: att.filename || `attachment-${index}`,
+        content: att.content,
+        contentType: fullContentType(att),
+        ...(att.cid ? { cid: att.cid } : {}),
+        ...(att.contentDisposition === "inline" || att.contentDisposition === "attachment"
+          ? { contentDisposition: att.contentDisposition as "inline" | "attachment" }
+          : {}),
+      }),
+    );
+  return { attachments, ...(icalEvent ? { icalEvent } : {}) };
+}
+
+/**
+ * Headers a draft may carry that change how the sent message is handled —
+ * a read-receipt request, a priority — and that composing afresh would drop.
+ * Everything else is either rebuilt (From, To, threading…), regenerated
+ * (Message-ID, Date, MIME structure) or a client's private state.
+ */
+const CARRIED_HEADERS = new Set([
+  "disposition-notification-to",
+  "return-receipt-to",
+  "x-priority",
+  "x-msmail-priority",
+  "importance",
+  "priority",
+  "sensitivity",
+]);
+
+/** The draft's carried-over headers, verbatim as they were encoded. */
+function carriedHeaders(mail: ParsedMail): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  for (const { key, line } of mail.headerLines ?? []) {
+    if (!CARRIED_HEADERS.has(key.toLowerCase())) continue;
+    const colon = line.indexOf(":");
+    headers[line.slice(0, colon).trim()] = line.slice(colon + 1).replace(/^[ \t]+/, "");
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
 /** Runs a handler body, converting anything thrown into a tool execution error. */
 async function run(body: () => Promise<ToolResult>): Promise<ToolResult> {
   try {
@@ -444,6 +578,36 @@ const FOLDER_PROP = {
 
 const UIDS_PROP = (description: string) =>
   ({ type: "array", items: { type: "number" }, description }) as const;
+
+/** The attachments parameter, as send_email and update_draft take it. */
+const ATTACHMENTS_PROP = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      filename: { type: "string" },
+      path: {
+        type: "string",
+        description:
+          "File path to attach. Disabled unless the server has EMAIL_ATTACHMENT_DIR set to an allowed directory; the resolved path must be inside it. Use content instead if unavailable.",
+      },
+      content: { type: "string", description: "Content to attach, as a string." },
+      encoding: {
+        type: "string",
+        enum: ["base64", "utf8"],
+        description:
+          "How to read content. Use base64 to attach binary — a PDF or image, or an attachment fetched with download_attachment. Omitted or utf8 attaches content as text, which corrupts binary. Cannot be combined with path.",
+      },
+      contentType: {
+        type: "string",
+        description:
+          "MIME type, e.g. application/pdf. Defaults to a guess from filename, so set it when the filename has no extension or the guess would be wrong.",
+      },
+    },
+    required: ["filename"],
+  },
+  description: "File attachments.",
+} as const;
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -713,34 +877,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
         },
         text: { type: "string", description: "Plain text body." },
         html: { type: "string", description: "HTML body." },
-        attachments: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              filename: { type: "string" },
-              path: {
-                type: "string",
-                description:
-                  "File path to attach. Disabled unless the server has EMAIL_ATTACHMENT_DIR set to an allowed directory; the resolved path must be inside it. Use content instead if unavailable.",
-              },
-              content: { type: "string", description: "Content to attach, as a string." },
-              encoding: {
-                type: "string",
-                enum: ["base64", "utf8"],
-                description:
-                  "How to read content. Use base64 to attach binary — a PDF or image, or an attachment fetched with download_attachment. Omitted or utf8 attaches content as text, which corrupts binary. Cannot be combined with path.",
-              },
-              contentType: {
-                type: "string",
-                description:
-                  "MIME type, e.g. application/pdf. Defaults to a guess from filename, so set it when the filename has no extension or the guess would be wrong.",
-              },
-            },
-            required: ["filename"],
-          },
-          description: "File attachments.",
-        },
+        attachments: ATTACHMENTS_PROP,
         replyToUid: {
           type: "number",
           description:
@@ -1585,6 +1722,184 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     outputSchema: folderStatusSchema,
     handler: (args: { folder?: string }, { imap }) =>
       run(async () => structured(await imap.getFolderStatus(args.folder || "INBOX"))),
+  },
+  {
+    name: "update_draft",
+    title: "Update Draft",
+    description:
+      "Change an existing draft in place: its recipients, subject, body or attachments. Only the fields given change. The draft keeps its From, Reply-To, threading headers (a reply draft stays a reply), attachments, any calendar invitation, and read-receipt and priority headers; other headers a mail client added for its own use are not carried over. A new text or html replaces the whole body, so give both to keep both parts. The draft is saved as a new message under a new UID, which is returned, and the old copy is removed — atomically where the server supports IMAP REPLACE, otherwise only after the new version is safely saved. Use this rather than saving a new draft and deleting the old one. No confirmation is needed: nothing is sent, and no content is lost.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        uid: { type: "number", description: "UID of the draft to change." },
+        folder: {
+          type: "string",
+          description:
+            "IMAP folder containing the draft. Defaults to the server's Drafts folder. A message outside it must carry the \\Draft flag.",
+        },
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description: "New To list, replacing the draft's. Omit to keep it.",
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description: "New CC list, replacing the draft's. Omit to keep it; [] clears it.",
+        },
+        bcc: {
+          type: "array",
+          items: { type: "string" },
+          description: "New BCC list, replacing the draft's. Omit to keep it; [] clears it.",
+        },
+        subject: { type: "string", description: "New subject. Omit to keep it." },
+        text: {
+          type: "string",
+          description:
+            "New plain text body. Giving text or html replaces the whole body: a part not given is dropped rather than left saying something else.",
+        },
+        html: {
+          type: "string",
+          description: "New HTML body. See text: give both to keep a two-part body.",
+        },
+        attachments: {
+          ...ATTACHMENTS_PROP,
+          description:
+            "New attachments, replacing all of the draft's. Omit to keep them; [] removes them.",
+        },
+      },
+      required: ["uid"],
+    },
+    outputSchema: updateDraftResultSchema,
+    handler: (
+      args: {
+        uid: number;
+        folder?: string;
+        to?: string[] | string;
+        cc?: string[] | string;
+        bcc?: string[] | string;
+        subject?: string;
+        text?: string;
+        html?: string;
+        attachments?: Attachment[];
+      },
+      { imap, smtp },
+    ) =>
+      run(async () => {
+        const list = (value: string[] | string | undefined): string[] | undefined =>
+          value == null ? undefined : Array.isArray(value) ? value : [value];
+        const to = list(args.to);
+        const cc = list(args.cc);
+        const bcc = list(args.bcc);
+        const bodyGiven = args.text !== undefined || args.html !== undefined;
+
+        if (
+          [to, cc, bcc, args.subject, args.attachments].every((v) => v === undefined) &&
+          !bodyGiven
+        ) {
+          return invalid(
+            "nothing to change — pass at least one of to, cc, bcc, subject, text, html or attachments",
+          );
+        }
+
+        // Resolved before IMAP is touched: a bad attachment is the request
+        // being wrong, and should not cost a fetch to find out.
+        let attachments: ResolvedAttachment[] | undefined;
+        try {
+          attachments = args.attachments?.map((att) => {
+            const resolved = resolveAttachment(att);
+            if (resolved.path) assertAttachmentPathAllowed(resolved.path);
+            return resolved;
+          });
+        } catch (err) {
+          return invalid(err instanceof Error ? err.message : String(err));
+        }
+
+        const draftsFolder = await imap.getSpecialUseFolder("\\Drafts").catch(() => undefined);
+        const folder = args.folder || draftsFolder;
+        if (!folder) {
+          return fail("FOLDER_NOT_FOUND", "No Drafts folder found — pass folder explicitly");
+        }
+
+        const draft = await imap.fetchDraft(folder, args.uid);
+        // Rewriting a received message would drop its Received, DKIM and
+        // other headers for good. A draft is either flagged as one or lives in
+        // Drafts, where some clients save without the flag.
+        const isDraft = draft.flags.some((flag) => flag.toLowerCase() === "\\draft");
+        if (!isDraft && folder !== draftsFolder) {
+          return invalid(
+            `UID ${args.uid} in ${folder} is not a draft (no \\Draft flag, and ${folder} is not the Drafts folder) — update_draft only rewrites drafts`,
+          );
+        }
+
+        // Two mailparser defaults would change the draft. It rewrites an inline
+        // image's `cid:` reference into a data: URI, baking every image into
+        // the HTML a second time; and it makes up a text body from the HTML
+        // when there is none, giving an HTML-only draft a part it never had.
+        const mail = await simpleParser(draft.source, {
+          keepCidLinks: true,
+          skipHtmlToText: true,
+        });
+        const parts = parsedDraftParts(mail);
+        const fromEntry = mail.from?.value?.[0];
+        const from =
+          (fromEntry && headerAddress(fromEntry)) ??
+          smtp.formatFromHeader(smtp.resolveFromAddress());
+        const references = mail.references
+          ? Array.isArray(mail.references)
+            ? mail.references
+            : [mail.references]
+          : undefined;
+
+        const messageOptions: ComposeOptions = {
+          from,
+          to: to ?? parsedAddresses(mail.to),
+          cc: cc ?? parsedAddresses(mail.cc),
+          bcc: bcc ?? parsedAddresses(mail.bcc),
+          replyTo: parsedAddresses(mail.replyTo),
+          subject: args.subject ?? mail.subject ?? "",
+          text: bodyGiven ? args.text : mail.text || undefined,
+          html: bodyGiven ? args.html : mail.html || undefined,
+          attachments: attachments ?? parts.attachments,
+          // An invitation is part of the body, not an attachment: replacing the
+          // attachments keeps it.
+          icalEvent: parts.icalEvent,
+          headers: carriedHeaders(mail),
+          inReplyTo: mail.inReplyTo || undefined,
+          references,
+        };
+
+        // Bcc stays in the saved message so send_draft can still deliver to it.
+        const raw = await smtp.composeRawMessage(messageOptions, { keepBcc: true });
+        const messageId = headerMessageId(raw) ?? "";
+        const replaced = await imap.replaceDraft(
+          folder,
+          args.uid,
+          raw,
+          draftFlags(draft.flags),
+          messageId,
+        );
+        if (!replaced.previousRemoved) {
+          console.error(
+            `[email-mcp] update_draft saved UID ${replaced.uid ?? "?"} but UID ${args.uid} is still in ${folder}`,
+          );
+        }
+
+        return structured({
+          status: "updated" as const,
+          uid: replaced.uid,
+          folder,
+          messageId,
+          previousUid: args.uid,
+          previousRemoved: replaced.previousRemoved,
+        });
+      }),
   },
   {
     name: "send_draft",

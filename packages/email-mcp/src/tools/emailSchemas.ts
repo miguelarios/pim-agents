@@ -102,6 +102,20 @@ export const sendResultSchema = v.variant("status", [
   }),
 ]);
 
+/** update_draft: the new version, and whether the old one is gone. */
+export const updateDraftResultSchema = v.object({
+  status: v.literal("updated"),
+  /** The new version's UID; null when the server gave no way to learn it. */
+  uid: v.nullable(v.number()),
+  folder: v.string(),
+  /** The new version's Message-ID, a fresh one, to find it by if uid is null. */
+  messageId: v.string(),
+  /** The UID that was updated. It no longer names the draft. */
+  previousUid: v.number(),
+  /** False when the old version could not be removed and is still there. */
+  previousRemoved: v.boolean(),
+});
+
 export const moveResultSchema = v.object({
   status: v.literal("moved"),
   uids: v.array(v.number()),

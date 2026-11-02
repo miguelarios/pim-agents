@@ -1,6 +1,6 @@
 # Email MCP Tools
 
-`@miguelarios/email-mcp` — IMAP/SMTP email server with 17 tools.
+`@miguelarios/email-mcp` — IMAP/SMTP email server with 18 tools.
 
 > Definitions are pulled directly from `packages/email-mcp/src/tools/emailTools.ts`. Output shapes from `packages/email-mcp/src/tools/emailSchemas.ts` and `packages/email-mcp/src/services/ImapService.ts`; resources from `packages/email-mcp/src/resources/imapResources.ts`.
 
@@ -214,6 +214,55 @@ outright when that domain publishes `p=quarantine` or `p=reject`.
 If the goal is only to distinguish which agent sent a message, prefer `fromName` — it changes the display name
 without touching the address, and carries no deliverability risk.
 
+
+## update_draft
+
+Change an existing draft in place: its recipients, subject, body or attachments. Only the fields given change. The draft keeps its `From`, `Reply-To`, the threading headers (`In-Reply-To`, `References`, so a reply draft stays a reply), its attachments with their charset and disposition, a calendar invitation, a read-receipt request (`Disposition-Notification-To`) and priority headers (`X-Priority`, `Importance`, `Priority`, `Sensitivity`), and the message's flags. Use this rather than `send_email` with `saveToDrafts: true` followed by a permanent `delete_email`, which leaves a duplicate behind if the second call is skipped or declined.
+
+> **No confirmation.** Nothing is sent, and the old draft's content survives in the new one.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | yes | UID of the draft to change. |
+| `folder` | string | | IMAP folder containing the draft. Defaults to the server's Drafts folder. A message outside it must carry the `\Draft` flag. |
+| `to` | string[] | | New To list, replacing the draft's. Omit to keep it. |
+| `cc` | string[] | | New CC list. Omit to keep it; `[]` clears it. |
+| `bcc` | string[] | | New BCC list. Omit to keep it; `[]` clears it. Kept in the saved draft so `send_draft` still delivers to it. |
+| `subject` | string | | New subject. Omit to keep it. |
+| `text` | string | | New plain text body. |
+| `html` | string | | New HTML body. |
+| `attachments` | object[] | | New attachments, replacing all of the draft's — same shape as [`send_email`](#send_email). Omit to keep them; `[]` removes them. |
+
+At least one field other than `uid` and `folder` must be given, or the call fails with `INVALID_INPUT` without touching the server.
+
+**A new body replaces the whole body.** Giving `text` alone drops the draft's HTML part, and `html` alone drops its text part, rather than leaving one part saying something the other no longer does. Give both to keep a two-part body. When neither is given the body is kept as it was: an HTML-only draft stays HTML-only, and inline images keep their `Content-ID`, so `cid:` references in the HTML still resolve.
+
+**How the draft is replaced.** IMAP cannot edit a message, so the new version is saved as a new message and the old one removed. Where the server advertises `REPLACE` (RFC 8508) that is one atomic command. Otherwise the new version is appended first and the old one expunged only after the append succeeded, so a failure at any point leaves the draft, never nothing. Without `UIDPLUS` the only expunge IMAP offers is a plain `EXPUNGE`, which would also purge every other message in the folder already marked `\Deleted`; so when there is any, the old version is left in place and `previousRemoved` is `false`.
+
+The new version gets a fresh `Message-ID` and the current date. Headers a mail client added for its own use (`X-Mozilla-Draft-Info` and the like) are not carried over, and an address group (`team: a@x, b@x;`) is written out as its members.
+
+**A calendar invitation stays an invitation.** A `text/calendar` part with a `METHOD` and no filename is rebuilt as the invitation it was, not re-attached as a file, and it is kept when `attachments` replaces the rest.
+
+A message outside the Drafts folder that is not flagged `\Draft` is refused with `INVALID_INPUT`: rewriting a received message would discard its `Received` and `DKIM-Signature` headers for good.
+
+**Output**
+
+```json
+{
+  "status": "updated",
+  "uid": 58,
+  "folder": "Drafts",
+  "messageId": "<new-message-id>",
+  "previousUid": 41,
+  "previousRemoved": true
+}
+```
+
+`uid` is the new version's UID — the old one no longer names the draft. It comes from the server's `APPENDUID` (`UIDPLUS`), then the folder's new message count, then a search for `messageId`; it is `null` only if all three fail, in which case search for `messageId` to find it.
+
+`previousRemoved: false` means the new version was saved but the old one could not be removed, so the folder holds both. The call still succeeds — retrying it would add a third copy. Delete `previousUid` with `delete_email` instead.
 
 ## send_draft
 
@@ -611,7 +660,7 @@ Errors are returned as a tool result with `isError: true` and a single text bloc
 
 | Code | When |
 |---|---|
-| `INVALID_INPUT` | The arguments cannot work: an empty `uids`, a self-copy, a `from` address not in `SMTP_ALLOWED_FROM`, an attachment path outside `EMAIL_ATTACHMENT_DIR`. |
+| `INVALID_INPUT` | The arguments cannot work: an empty `uids`, a self-copy, an `update_draft` that changes nothing or targets a message that is not a draft, a `from` address not in `SMTP_ALLOWED_FROM`, an attachment path outside `EMAIL_ATTACHMENT_DIR`. |
 | `FOLDER_NOT_FOUND` | A `folder`, `destination` or `path` the server does not have (RFC 5530 `NONEXISTENT` / `TRYCREATE`, or the server's equivalent text). The message names the folder and quotes the server. |
 | `EMAIL_NOT_FOUND`, `ATTACHMENT_NOT_FOUND` | No message with that `uid`, or no part with that `partId`. |
 | `OPERATION_FAILED` | Any other command the IMAP server refused, with its reason in `message`. Retryable only for `UNAVAILABLE` / `INUSE` and Microsoft 365 throttling. |
