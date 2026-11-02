@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 (2026-11-02)
+
+- **New tool: `update_draft`** (#137, #157). It changes an existing draft's recipients, subject, body or attachments in place. Before, an agent revising a draft had to save a new one and then permanently delete the old one; when that confirmation-gated delete was skipped or declined, duplicate drafts piled up. Only the fields given change. The draft keeps its From, Reply-To and threading headers (a reply draft stays a reply), its attachments (inline images keep their Content-ID, text attachments their charset), a calendar invitation, read-receipt and priority headers, and its flags. A new `text` or `html` replaces the whole body. It asks for no confirmation, and returns the new UID, `previousUid`, and `previousRemoved`.
+- The swap is a single atomic `UID REPLACE` where the server supports RFC 8508. Elsewhere the new version is appended before the old one is expunged, so a failure never leaves zero copies. On a server without UIDPLUS, the old version is left in place (`previousRemoved: false`) when other messages in the folder are already marked `\Deleted`, because a plain `EXPUNGE` would purge those too.
+- A message outside the Drafts folder without the `\Draft` flag is refused, so a received email is never rewritten.
+
 ## 1.0.0 (2026-10-18)
 
 First stable release. The public contract, and what a minor or patch may change from here, is in [`docs/versioning.md`](../../docs/versioning.md).
