@@ -9,7 +9,12 @@ import {
   structured,
   toolError,
 } from "@miguelarios/pim-core/mcp";
-import { type AddressObject, type ParsedMail, simpleParser } from "mailparser";
+import {
+  type AddressObject,
+  type Attachment as Attachment_,
+  type ParsedMail,
+  simpleParser,
+} from "mailparser";
 import { htmlToMarkdown, sanitizeEmailHtml } from "../htmlToMarkdown.js";
 import { attachmentUri, rawEmailUri } from "../resources/imapResources.js";
 import type { SearchParams } from "../search.js";
@@ -461,28 +466,96 @@ function draftFlags(previous: string[]): string[] {
 }
 
 /**
- * Whether a message has a text/plain part of its own. mailparser fills `text`
- * from the HTML when there is none, and carrying that over would give an
- * HTML-only draft a second body it never had. A message with no Content-Type
- * at all is text/plain (RFC 2045 §5.2). A text/plain attachment also counts,
- * which errs toward keeping a part rather than dropping one.
+ * A part's Content-Type with its parameters — a text attachment's charset, an
+ * invitation's METHOD — minus `name`, which nodemailer writes from the filename.
+ * mailparser's `contentType` is the bare type, and re-attaching with only that
+ * would turn a Latin-1 CSV into mojibake.
  */
-function hasPlainTextPart(source: Buffer): boolean {
-  const text = source.toString("latin1");
-  const end = text.search(/\r?\n\r?\n/);
-  const topHeaders = end === -1 ? text : text.slice(0, end);
-  return !/^content-type:/im.test(topHeaders) || /^content-type:[ \t]*text\/plain/im.test(text);
+function fullContentType(att: Attachment_): string {
+  const header = att.headers?.get("content-type") as
+    | { value?: string; params?: Record<string, string> }
+    | undefined;
+  const params = Object.entries(header?.params ?? {})
+    .filter(([key]) => key.toLowerCase() !== "name")
+    .map(([key, value]) => `; ${key}=${/^[\w.+-]+$/.test(value) ? value : JSON.stringify(value)}`);
+  return `${att.contentType}${params.join("")}`;
 }
 
-/** The draft's existing attachments, inline images keeping their Content-ID. */
-function parsedAttachments(mail: ParsedMail): ResolvedAttachment[] {
-  return mail.attachments.map((att, index) => ({
-    filename: att.filename || `attachment-${index}`,
-    content: att.content,
-    contentType: att.contentType,
-    ...(att.cid ? { cid: att.cid } : {}),
-    ...(att.contentDisposition === "inline" ? { contentDisposition: "inline" as const } : {}),
-  }));
+/**
+ * The draft's non-body parts: its attachments, and a calendar invitation if it
+ * carries one.
+ *
+ * An invitation is a text/calendar alternative with a METHOD and no filename.
+ * mailparser lists it among the attachments, and re-attaching it as one would
+ * turn a meeting request into a file called attachment-0, so it is handed back
+ * as an `icalEvent` instead. nodemailer writes an `invite.ics` copy beside
+ * every icalEvent; that copy is dropped here, or each update would add another.
+ */
+function parsedDraftParts(mail: ParsedMail): {
+  attachments: ResolvedAttachment[];
+  icalEvent?: { method?: string; content: string };
+} {
+  let icalEvent: { method?: string; content: string } | undefined;
+  const rest: Attachment_[] = [];
+  for (const att of mail.attachments) {
+    const header = att.headers?.get("content-type") as
+      | { params?: Record<string, string> }
+      | undefined;
+    const method = header?.params?.method;
+    if (!icalEvent && att.contentType === "text/calendar" && method && !att.filename) {
+      icalEvent = { method, content: att.content.toString("utf8") };
+    } else {
+      rest.push(att);
+    }
+  }
+  const attachments = rest
+    .filter(
+      (att) =>
+        !(
+          icalEvent &&
+          att.filename === "invite.ics" &&
+          att.content.toString("utf8") === icalEvent.content
+        ),
+    )
+    .map(
+      (att, index): ResolvedAttachment => ({
+        filename: att.filename || `attachment-${index}`,
+        content: att.content,
+        contentType: fullContentType(att),
+        ...(att.cid ? { cid: att.cid } : {}),
+        ...(att.contentDisposition === "inline" || att.contentDisposition === "attachment"
+          ? { contentDisposition: att.contentDisposition as "inline" | "attachment" }
+          : {}),
+      }),
+    );
+  return { attachments, ...(icalEvent ? { icalEvent } : {}) };
+}
+
+/**
+ * Headers a draft may carry that change how the sent message is handled —
+ * a read-receipt request, a priority — and that composing afresh would drop.
+ * Everything else is either rebuilt (From, To, threading…), regenerated
+ * (Message-ID, Date, MIME structure) or a client's private state.
+ */
+const CARRIED_HEADERS = new Set([
+  "disposition-notification-to",
+  "return-receipt-to",
+  "x-priority",
+  "x-msmail-priority",
+  "importance",
+  "priority",
+  "sensitivity",
+]);
+
+/** The draft's carried-over headers, verbatim as they were encoded. */
+function carriedHeaders(mail: ParsedMail): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  for (const { key, line } of mail.headerLines ?? []) {
+    if (!CARRIED_HEADERS.has(key.toLowerCase())) continue;
+    const colon = line.indexOf(":");
+    headers[line.slice(0, colon).trim()] = line.slice(colon + 1).replace(/^[ \t]+/, "");
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 /** Runs a handler body, converting anything thrown into a tool execution error. */
@@ -1654,7 +1727,7 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
     name: "update_draft",
     title: "Update Draft",
     description:
-      "Change an existing draft in place: its recipients, subject, body or attachments. Only the fields given change; the rest of the draft is kept, including its From, Reply-To, threading headers (a reply draft stays a reply) and attachments. A new text or html replaces the whole body, so give both to keep both parts. The draft is saved as a new message under a new UID, which is returned, and the old copy is removed — atomically where the server supports IMAP REPLACE, otherwise only after the new version is safely saved. Use this rather than saving a new draft and deleting the old one. No confirmation is needed: nothing is sent, and no content is lost.",
+      "Change an existing draft in place: its recipients, subject, body or attachments. Only the fields given change. The draft keeps its From, Reply-To, threading headers (a reply draft stays a reply), attachments, any calendar invitation, and read-receipt and priority headers; other headers a mail client added for its own use are not carried over. A new text or html replaces the whole body, so give both to keep both parts. The draft is saved as a new message under a new UID, which is returned, and the old copy is removed — atomically where the server supports IMAP REPLACE, otherwise only after the new version is safely saved. Use this rather than saving a new draft and deleting the old one. No confirmation is needed: nothing is sent, and no content is lost.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -1765,10 +1838,15 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           );
         }
 
-        // keepCidLinks: by default mailparser rewrites an inline image's
-        // `cid:` reference into a data: URI, which would bake every image
-        // into the HTML a second time beside the part it already has.
-        const mail = await simpleParser(draft.source, { keepCidLinks: true });
+        // Two mailparser defaults would change the draft. It rewrites an inline
+        // image's `cid:` reference into a data: URI, baking every image into
+        // the HTML a second time; and it makes up a text body from the HTML
+        // when there is none, giving an HTML-only draft a part it never had.
+        const mail = await simpleParser(draft.source, {
+          keepCidLinks: true,
+          skipHtmlToText: true,
+        });
+        const parts = parsedDraftParts(mail);
         const fromEntry = mail.from?.value?.[0];
         const from =
           (fromEntry && headerAddress(fromEntry)) ??
@@ -1786,13 +1864,13 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           bcc: bcc ?? parsedAddresses(mail.bcc),
           replyTo: parsedAddresses(mail.replyTo),
           subject: args.subject ?? mail.subject ?? "",
-          text: bodyGiven
-            ? args.text
-            : mail.html && !hasPlainTextPart(draft.source)
-              ? undefined
-              : mail.text || undefined,
+          text: bodyGiven ? args.text : mail.text || undefined,
           html: bodyGiven ? args.html : mail.html || undefined,
-          attachments: attachments ?? parsedAttachments(mail),
+          attachments: attachments ?? parts.attachments,
+          // An invitation is part of the body, not an attachment: replacing the
+          // attachments keeps it.
+          icalEvent: parts.icalEvent,
+          headers: carriedHeaders(mail),
           inReplyTo: mail.inReplyTo || undefined,
           references,
         };

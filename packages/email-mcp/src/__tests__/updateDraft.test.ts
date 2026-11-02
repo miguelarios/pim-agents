@@ -149,6 +149,111 @@ describe("update_draft", () => {
     expect((await saved()).html).toContain("<b>HTML</b>");
   });
 
+  it("keeps the draft's text part when its MIME part has no Content-Type header", async () => {
+    // RFC 2045 §5.2: a part without Content-Type is text/plain. Hand-built,
+    // since a composer always writes one.
+    const source = Buffer.from(
+      [
+        "From: me@example.com",
+        "To: jane@example.com",
+        "Subject: Hand-built",
+        "MIME-Version: 1.0",
+        'Content-Type: multipart/alternative; boundary="b"',
+        "",
+        "--b",
+        "",
+        "Plain words that differ from the HTML",
+        "--b",
+        "Content-Type:",
+        " text/html; charset=utf-8",
+        "",
+        "<p>Rich words</p>",
+        "--b--",
+        "",
+      ].join("\r\n"),
+    );
+    imap.fetchDraft.mockResolvedValue({ source, flags: ["\\Draft"] });
+
+    await call({ uid: 7, subject: "Hand-built v2" });
+
+    const mail = await saved();
+    expect(mail.text?.trim()).toBe("Plain words that differ from the HTML");
+    expect(mail.html).toContain("Rich words");
+  });
+
+  it("keeps a calendar invitation an invitation, without piling up invite.ics copies", async () => {
+    const ics = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n";
+    imap.fetchDraft.mockResolvedValue({
+      source: await buildDraft({ icalEvent: { method: "REQUEST", content: ics } }),
+      flags: ["\\Draft"],
+    });
+
+    await call({ uid: 7, subject: "Meeting" });
+    // The update's own output, updated again, must come out the same.
+    const once = imap.replaceDraft.mock.calls[0][2] as Buffer;
+    imap.fetchDraft.mockResolvedValue({ source: once, flags: ["\\Draft"] });
+    imap.replaceDraft.mockClear();
+    await call({ uid: 8, subject: "Meeting v3" });
+
+    const raw = (imap.replaceDraft.mock.calls[0][2] as Buffer).toString("latin1");
+    expect(raw).toMatch(/Content-Type: text\/calendar; charset=utf-8; method=REQUEST/i);
+    expect(raw.match(/filename=invite\.ics/g)).toHaveLength(1);
+    const mail = await saved();
+    // The calendar alternative (no filename), its invite.ics copy, and the PDF.
+    const names = mail.attachments.map((a) => a.filename);
+    expect(names).toHaveLength(3);
+    expect(names).toEqual(expect.arrayContaining(["budget.pdf", undefined, "invite.ics"]));
+  });
+
+  it("keeps an attachment's charset and disposition", async () => {
+    imap.fetchDraft.mockResolvedValue({
+      source: await buildDraft({
+        attachments: [
+          {
+            filename: "data.csv",
+            content: Buffer.from("caf\xe9", "latin1"),
+            contentType: "text/csv; charset=iso-8859-1",
+          },
+          {
+            filename: "fwd.eml",
+            content: "From: x@example.com\r\nSubject: old\r\n\r\nhi",
+            contentType: "message/rfc822",
+            contentDisposition: "attachment",
+          },
+        ],
+      }),
+      flags: ["\\Draft"],
+    });
+
+    await call({ uid: 7, subject: "Files" });
+
+    const raw = (imap.replaceDraft.mock.calls[0][2] as Buffer).toString("latin1");
+    expect(raw).toContain("Content-Type: text/csv; charset=iso-8859-1; name=data.csv");
+    expect(raw).toMatch(
+      /Content-Type: message\/rfc822[\s\S]*?Content-Disposition: attachment; filename=fwd\.eml/,
+    );
+  });
+
+  it("carries a read-receipt request and priority, and nothing a client kept for itself", async () => {
+    imap.fetchDraft.mockResolvedValue({
+      source: await buildDraft({
+        headers: {
+          "Disposition-Notification-To": "me@example.com",
+          "X-Priority": "1 (Highest)",
+          "X-Mozilla-Draft-Info": "internal/draft; vcard=0",
+        },
+      }),
+      flags: ["\\Draft"],
+    });
+
+    await call({ uid: 7, subject: "Urgent" });
+
+    const raw = (imap.replaceDraft.mock.calls[0][2] as Buffer).toString("latin1");
+    expect(raw).toContain("Disposition-Notification-To: me@example.com\r\n");
+    expect(raw).toContain("X-Priority: 1 (Highest)\r\n");
+    expect(raw).not.toContain("X-Mozilla-Draft-Info");
+  });
+
   it("keeps an inline image's Content-ID, so the HTML that cites it still renders", async () => {
     imap.fetchDraft.mockResolvedValue({
       source: await buildDraft({

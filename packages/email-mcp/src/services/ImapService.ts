@@ -1031,7 +1031,9 @@ export class ImapService {
    * version is appended first and the old one expunged only after that
    * succeeded, so a failure at any point leaves at least one copy: never zero.
    * A failure after the APPEND leaves two, which `previousRemoved: false`
-   * reports rather than hides.
+   * reports rather than hides. So does a server without UIDPLUS when another
+   * message in the folder is already flagged \Deleted: its plain EXPUNGE
+   * would purge that message too, so the old version is left in place.
    *
    * The new UID comes from the server's APPENDUID (UIDPLUS); imapflow already
    * falls back to the EXISTS sequence number when appending to the selected
@@ -1051,11 +1053,20 @@ export class ImapService {
       await client.connect();
       const lock = await client.getMailboxLock(folder);
       try {
-        // The mailbox name goes out as an atom. One that needs modified UTF-7
-        // (non-ASCII, or an `&`) would need imapflow's private encoder, so it
-        // takes the non-atomic path instead, which is still correct.
-        if (client.capabilities.has("REPLACE") && /^[\x20-\x25\x27-\x7e]+$/.test(folder)) {
-          const replacedUid = await uidReplace(client, uid, folder, raw, flags);
+        // The folder as selected, after imapflow's normalisation (namespace
+        // prefix, INBOX case), so REPLACE targets the mailbox the lock opened.
+        const selected = (client.mailbox || undefined)?.path || folder;
+        // It goes out as an atom. A name that needs modified UTF-7 (non-ASCII,
+        // or an `&`) would need imapflow's encodePath, an internal module, so
+        // it takes the non-atomic path instead, which is still correct.
+        if (client.capabilities.has("REPLACE") && /^[\x20-\x25\x27-\x7e]+$/.test(selected)) {
+          const replacedUid = await uidReplace(
+            client,
+            uid,
+            selected,
+            raw,
+            storableFlags(client, flags),
+          );
           return {
             uid: replacedUid ?? (await findByMessageId(client, messageId, uid)),
             previousRemoved: true,
@@ -1070,18 +1081,26 @@ export class ImapService {
             ErrorCode.OPERATION_FAILED,
           );
         }
-        const newUid = appended.uid ?? (await findByMessageId(client, messageId, uid));
 
-        // From here the new version is safe on the server. Whatever goes wrong
-        // removing the old one is reported, not thrown: a thrown error would
-        // read as "nothing was saved" and invite a retry, adding a third copy.
+        // From here the new version is safe on the server. Nothing below may
+        // throw: an error would read as "nothing was saved" and invite a
+        // retry, adding a third copy. What goes wrong is reported instead.
+        const newUid =
+          appended.uid ?? (await findByMessageId(client, messageId, uid).catch(() => null));
+
         let previousRemoved = false;
         try {
-          await client.messageDelete(String(uid), { uid: true });
-          // imapflow's delete resolves true even when the \Deleted STORE before
-          // the EXPUNGE was refused, so look rather than trust it.
-          const remaining = await client.search({ uid: String(uid) }, { uid: true });
-          previousRemoved = Array.isArray(remaining) && !remaining.includes(uid);
+          if (await canExpungeOnly(client, uid)) {
+            await client.messageDelete(String(uid), { uid: true });
+            // imapflow's delete resolves true even when the \Deleted STORE
+            // before the EXPUNGE was refused, so look rather than trust it.
+            const remaining = await client.search({ uid: String(uid) }, { uid: true });
+            previousRemoved = Array.isArray(remaining) && !remaining.includes(uid);
+          } else {
+            console.error(
+              `[email-mcp] Saved the new draft, but left UID ${uid} in ${folder}: without UIDPLUS the expunge would also remove other messages already marked \\Deleted there`,
+            );
+          }
         } catch (deleteError) {
           console.error(
             `[email-mcp] Saved the new draft, but could not remove UID ${uid}:`,
@@ -1293,15 +1312,16 @@ function decodeText(buffer: Buffer, charset?: string): string {
   return buffer.toString("utf-8");
 }
 
+/** A parsed IMAP response, as far as its response code goes. */
+type ResponseWithCode = { attributes?: Array<{ section?: Array<{ value?: unknown }> }> };
+
 /** The slice of imapflow's internal `exec` that `uidReplace` drives. */
 type ExecClient = {
   exec: (
     command: string,
     attributes: unknown[],
-  ) => Promise<{
-    response?: { attributes?: Array<{ section?: Array<{ value?: unknown }> }> };
-    next?: () => void;
-  }>;
+    options: { untagged: Record<string, (untagged: ResponseWithCode) => Promise<void>> },
+  ) => Promise<{ response?: ResponseWithCode; next?: () => void }>;
 };
 
 /**
@@ -1321,20 +1341,66 @@ async function uidReplace(
   raw: Buffer,
   flags: string[],
 ): Promise<number | undefined> {
-  const response = await (client as unknown as ExecClient).exec("UID REPLACE", [
-    { type: "SEQUENCE", value: String(uid) },
-    { type: "ATOM", value: folder },
-    flags.map((flag) => ({ type: "ATOM", value: flag })),
-    { type: "LITERAL", value: raw },
-  ]);
+  // RFC 8508 §3.4 sends APPENDUID in an untagged OK, ahead of the EXPUNGE,
+  // and the tagged OK carries no code. imapflow drops untagged OK after
+  // login, so it is caught here; the tagged reply is read too, for a server
+  // that puts it there instead.
+  let appendUid: number | undefined;
+  const response = await (client as unknown as ExecClient).exec(
+    "UID REPLACE",
+    [
+      { type: "SEQUENCE", value: String(uid) },
+      { type: "ATOM", value: folder },
+      flags.map((flag) => ({ type: "ATOM", value: flag })),
+      { type: "LITERAL", value: raw },
+    ],
+    {
+      untagged: {
+        OK: async (untagged: ResponseWithCode) => {
+          appendUid ??= appendUidOf(untagged);
+        },
+      },
+    },
+  );
   // imapflow's own commands call this to release the response; skipping it
   // would leave the connection waiting on a reader that never runs.
   response?.next?.();
-  const section = response?.response?.attributes?.[0]?.section;
+  return appendUid ?? appendUidOf(response?.response);
+}
+
+/** The UID in an `[APPENDUID <validity> <uid>]` response code, if there is one. */
+function appendUidOf(response: ResponseWithCode | undefined): number | undefined {
+  const section = response?.attributes?.[0]?.section;
   const code = section?.[0]?.value;
   if (typeof code !== "string" || code.toUpperCase() !== "APPENDUID") return undefined;
   const value = section?.[2]?.value;
   return typeof value === "string" && /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+/**
+ * Whether expunging `uid` removes only `uid`. With UIDPLUS imapflow sends
+ * `UID EXPUNGE <uid>`; without it, a plain `EXPUNGE`, which also removes
+ * every other message in the folder already flagged \Deleted — mail the user
+ * marked for deletion but has not purged, which update_draft must not purge
+ * for them. Without UIDPLUS, then, it is safe only when no other message
+ * carries the flag.
+ */
+async function canExpungeOnly(client: ImapFlow, uid: number): Promise<boolean> {
+  if (client.capabilities.has("UIDPLUS")) return true;
+  const deleted = await client.search({ deleted: true }, { uid: true });
+  return Array.isArray(deleted) && deleted.every((u) => u === uid);
+}
+
+/**
+ * The flags the selected folder can store. imapflow's APPEND drops the rest
+ * against PERMANENTFLAGS itself; REPLACE goes through `exec`, so it is done
+ * here, or a keyword the folder does not allow could get the command refused.
+ */
+function storableFlags(client: ImapFlow, flags: string[]): string[] {
+  const permanent = client.mailbox ? client.mailbox.permanentFlags : undefined;
+  if (!permanent || permanent.size === 0 || permanent.has("\\*")) return flags;
+  const allowed = new Set([...permanent].map((flag) => flag.toLowerCase()));
+  return flags.filter((flag) => allowed.has(flag.toLowerCase()));
 }
 
 /**

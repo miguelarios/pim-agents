@@ -217,7 +217,7 @@ without touching the address, and carries no deliverability risk.
 
 ## update_draft
 
-Change an existing draft in place: its recipients, subject, body or attachments. Only the fields given change; everything else is carried over from the draft — `From`, `Reply-To`, the threading headers (`In-Reply-To`, `References`, so a reply draft stays a reply), the attachments, and the message's flags. Use this rather than `send_email` with `saveToDrafts: true` followed by a permanent `delete_email`, which leaves a duplicate behind if the second call is skipped or declined.
+Change an existing draft in place: its recipients, subject, body or attachments. Only the fields given change. The draft keeps its `From`, `Reply-To`, the threading headers (`In-Reply-To`, `References`, so a reply draft stays a reply), its attachments with their charset and disposition, a calendar invitation, a read-receipt request (`Disposition-Notification-To`) and priority headers (`X-Priority`, `Importance`, `Priority`, `Sensitivity`), and the message's flags. Use this rather than `send_email` with `saveToDrafts: true` followed by a permanent `delete_email`, which leaves a duplicate behind if the second call is skipped or declined.
 
 > **No confirmation.** Nothing is sent, and the old draft's content survives in the new one.
 
@@ -239,9 +239,11 @@ At least one field other than `uid` and `folder` must be given, or the call fail
 
 **A new body replaces the whole body.** Giving `text` alone drops the draft's HTML part, and `html` alone drops its text part, rather than leaving one part saying something the other no longer does. Give both to keep a two-part body. When neither is given the body is kept as it was: an HTML-only draft stays HTML-only, and inline images keep their `Content-ID`, so `cid:` references in the HTML still resolve.
 
-**How the draft is replaced.** IMAP cannot edit a message, so the new version is saved as a new message and the old one removed. Where the server advertises `REPLACE` (RFC 8508) that is one atomic command. Otherwise the new version is appended first and the old one expunged only after the append succeeded, so a failure at any point leaves the draft, never nothing. Without `UIDPLUS` the expunge is a plain `EXPUNGE`, which also removes any other message in the folder already marked `\Deleted` — the same as `delete_email` with `permanent: true`.
+**How the draft is replaced.** IMAP cannot edit a message, so the new version is saved as a new message and the old one removed. Where the server advertises `REPLACE` (RFC 8508) that is one atomic command. Otherwise the new version is appended first and the old one expunged only after the append succeeded, so a failure at any point leaves the draft, never nothing. Without `UIDPLUS` the only expunge IMAP offers is a plain `EXPUNGE`, which would also purge every other message in the folder already marked `\Deleted`; so when there is any, the old version is left in place and `previousRemoved` is `false`.
 
-The new version gets a fresh `Message-ID` and the current date. Headers a mail client added for its own use (`X-Mozilla-Draft-Info` and the like) are not carried over.
+The new version gets a fresh `Message-ID` and the current date. Headers a mail client added for its own use (`X-Mozilla-Draft-Info` and the like) are not carried over, and an address group (`team: a@x, b@x;`) is written out as its members.
+
+**A calendar invitation stays an invitation.** A `text/calendar` part with a `METHOD` and no filename is rebuilt as the invitation it was, not re-attached as a file, and it is kept when `attachments` replaces the rest.
 
 A message outside the Drafts folder that is not flagged `\Draft` is refused with `INVALID_INPUT`: rewriting a received message would discard its `Received` and `DKIM-Signature` headers for good.
 

@@ -19,6 +19,13 @@ const mockStatus = vi.fn();
 const mockGetMailboxLock = vi.fn();
 const mockAppend = vi.fn();
 const mockExec = vi.fn();
+/** The selected mailbox every client reports; a test can set its path or flags. */
+const mockMailbox: {
+  exists: number;
+  flags: Set<string>;
+  path?: string;
+  permanentFlags?: Set<string>;
+} = { exists: 100, flags: new Set() };
 /** Shared across the per-call client objects, so a test can turn SORT on. */
 const mockCapabilities = new Map<string, boolean | number>();
 const mockConnect = vi.fn().mockResolvedValue(undefined);
@@ -49,7 +56,7 @@ vi.mock("imapflow", () => ({
     exec: mockExec,
     capabilities: mockCapabilities,
     enabled: new Set(),
-    mailbox: { exists: 100, flags: new Set() },
+    mailbox: mockMailbox,
   })),
 }));
 
@@ -2273,6 +2280,9 @@ describe("ImapService", () => {
 
     beforeEach(() => {
       for (const mock of [mockExec, mockAppend, mockMessageDelete, mockSearch]) mock.mockReset();
+      mockMailbox.path = undefined;
+      mockMailbox.permanentFlags = undefined;
+      mockCapabilities.set("UIDPLUS", true);
       // By default every search comes back empty: the old UID is gone, and no
       // Message-ID lookup is needed or answered.
       mockSearch.mockResolvedValue([]);
@@ -2292,17 +2302,56 @@ describe("ImapService", () => {
       const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
 
       expect(result).toEqual({ uid: 58, previousRemoved: true, atomic: true });
-      expect(mockExec).toHaveBeenCalledWith("UID REPLACE", [
-        { type: "SEQUENCE", value: "41" },
-        { type: "ATOM", value: "Drafts" },
+      expect(mockExec).toHaveBeenCalledWith(
+        "UID REPLACE",
         [
-          { type: "ATOM", value: "\\Draft" },
-          { type: "ATOM", value: "\\Seen" },
+          { type: "SEQUENCE", value: "41" },
+          { type: "ATOM", value: "Drafts" },
+          [
+            { type: "ATOM", value: "\\Draft" },
+            { type: "ATOM", value: "\\Seen" },
+          ],
+          { type: "LITERAL", value: raw },
         ],
-        { type: "LITERAL", value: raw },
-      ]);
+        { untagged: { OK: expect.any(Function) } },
+      );
       expect(mockAppend).not.toHaveBeenCalled();
       expect(mockMessageDelete).not.toHaveBeenCalled();
+    });
+
+    it("reads APPENDUID from the untagged OK, where RFC 8508 puts it", async () => {
+      mockCapabilities.set("REPLACE", true);
+      mockExec.mockImplementationOnce(async (_command, _attributes, options: any) => {
+        // * OK [APPENDUID 1700000000 70] Replacement Message ready
+        await options.untagged.OK({
+          attributes: [
+            { section: [{ value: "APPENDUID" }, { value: "1700000000" }, { value: "70" }] },
+          ],
+        });
+        return {
+          response: { attributes: [{ type: "TEXT", value: "Replace completed" }] },
+          next: vi.fn(),
+        };
+      });
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(result.uid).toBe(70);
+      expect(mockSearch).not.toHaveBeenCalled();
+    });
+
+    it("sends REPLACE to the folder as selected, and only flags it can store", async () => {
+      mockCapabilities.set("REPLACE", true);
+      mockMailbox.path = "INBOX.Drafts";
+      mockMailbox.permanentFlags = new Set(["\\Draft", "\\Seen", "\\Deleted"]);
+      mockExec.mockResolvedValueOnce({ response: { attributes: [] }, next: vi.fn() });
+      mockSearch.mockResolvedValueOnce([71]);
+
+      await service.replaceDraft("Drafts", 41, raw, ["\\Draft", "$Label1"], "<new@test.com>");
+
+      const [, attributes] = mockExec.mock.calls[0];
+      expect(attributes[1]).toEqual({ type: "ATOM", value: "INBOX.Drafts" });
+      expect(attributes[2]).toEqual([{ type: "ATOM", value: "\\Draft" }]);
     });
 
     it("finds the new UID by Message-ID when REPLACE reports no APPENDUID", async () => {
@@ -2362,7 +2411,7 @@ describe("ImapService", () => {
       expect(result).toEqual({ uid: 61, previousRemoved: true, atomic: false });
     });
 
-    it("without UIDPLUS, finds the new UID by Message-ID, ignoring the old one", async () => {
+    it("without APPENDUID, finds the new UID by Message-ID, ignoring the old one", async () => {
       mockAppend.mockResolvedValueOnce({ destination: "Drafts" });
       mockMessageDelete.mockResolvedValueOnce(true);
       mockSearch.mockImplementation(async (query: { uid?: string; header?: unknown }) =>
@@ -2415,6 +2464,46 @@ describe("ImapService", () => {
 
       expect(mockSearch).toHaveBeenCalledWith({ uid: "41" }, { uid: true });
       expect(result).toEqual({ uid: 63, previousRemoved: false, atomic: false });
+    });
+
+    it("without UIDPLUS, leaves the old draft rather than purge other \\Deleted mail", async () => {
+      // A plain EXPUNGE removes every \Deleted message in the folder, not
+      // just the old draft.
+      mockCapabilities.delete("UIDPLUS");
+      mockAppend.mockResolvedValueOnce({ destination: "Drafts", uid: 65 });
+      mockSearch.mockImplementation(async (query: { deleted?: boolean }) =>
+        query.deleted ? [12, 13] : [],
+      );
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(mockSearch).toHaveBeenCalledWith({ deleted: true }, { uid: true });
+      expect(mockMessageDelete).not.toHaveBeenCalled();
+      expect(result).toEqual({ uid: 65, previousRemoved: false, atomic: false });
+    });
+
+    it("without UIDPLUS, expunges when nothing else in the folder is \\Deleted", async () => {
+      mockCapabilities.delete("UIDPLUS");
+      mockAppend.mockResolvedValueOnce({ destination: "Drafts", uid: 66 });
+      mockMessageDelete.mockResolvedValueOnce(true);
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(mockMessageDelete).toHaveBeenCalledWith("41", { uid: true });
+      expect(result.previousRemoved).toBe(true);
+    });
+
+    it("does not report a saved draft as unsaved when the UID lookup throws", async () => {
+      mockAppend.mockResolvedValueOnce({ destination: "Drafts" });
+      mockMessageDelete.mockResolvedValueOnce(true);
+      mockSearch.mockImplementation(async (query: { header?: unknown }) => {
+        if (query.header) throw new Error("Connection not available");
+        return [];
+      });
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(result.uid).toBeNull();
     });
 
     it("keeps the new copy and reports the old one when the delete throws", async () => {

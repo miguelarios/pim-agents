@@ -69,6 +69,10 @@ export interface ComposeOptions {
   }>;
   inReplyTo?: string;
   references?: string[];
+  /** A calendar invitation, sent as a text/calendar alternative with its METHOD. */
+  icalEvent?: { method?: string; content: string };
+  /** Extra headers, written verbatim (already encoded and folded). */
+  headers?: Record<string, string>;
 }
 
 export class SmtpService {
@@ -184,6 +188,12 @@ export class SmtpService {
       attachments: options.attachments,
       inReplyTo: options.inReplyTo,
       references: options.references?.join(" "),
+      icalEvent: options.icalEvent,
+      headers: options.headers
+        ? Object.fromEntries(
+            Object.entries(options.headers).map(([key, value]) => [key, { prepared: true, value }]),
+          )
+        : undefined,
     });
 
     // MailComposer doesn't forward a `keepBcc` mail option through to the
