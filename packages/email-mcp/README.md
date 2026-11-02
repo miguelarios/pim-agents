@@ -93,7 +93,7 @@ docker run -d --name email-mcp --restart unless-stopped --user node \
 
 See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.
 
-## Tools (17)
+## Tools (18)
 
 See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter and output details.
 
@@ -103,6 +103,7 @@ See [docs/tools/email-mcp.md](../../docs/tools/email-mcp.md) for full parameter 
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata, calendar invitation parts |
 | `get_thread` | Fetch the whole conversation a message belongs to, oldest first |
 | `send_email` | Compose and send via SMTP, reply or reply-all with threading, save as draft, or use an allowed visible From address |
+| `update_draft` | Change a draft's recipients, subject, body or attachments in place, keeping the rest |
 | `send_draft` | Send an existing draft from the Drafts folder |
 | `forward_email` | Forward a message with its attachments and an optional note |
 | `move_email` | Move emails between folders |

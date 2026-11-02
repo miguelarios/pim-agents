@@ -8,7 +8,7 @@ import MailComposer from "nodemailer/lib/mail-composer/index.js";
  * The Message-ID header of an RFC 5322 message, from its header block only
  * (up to the first blank line), with folded continuation lines unfolded.
  */
-function headerMessageId(raw: Buffer): string | undefined {
+export function headerMessageId(raw: Buffer): string | undefined {
   const text = raw.toString("latin1");
   const end = text.search(/\r?\n\r?\n/);
   const headers = (end === -1 ? text : text.slice(0, end)).replace(/\r?\n[ \t]+/g, " ");
@@ -54,6 +54,7 @@ export interface ComposeOptions {
   to: string[];
   cc?: string[];
   bcc?: string[];
+  replyTo?: string[];
   subject: string;
   text?: string;
   html?: string;
@@ -62,6 +63,9 @@ export interface ComposeOptions {
     path?: string;
     content?: string | Buffer;
     contentType?: string;
+    /** Content-ID an HTML body cites as `cid:…`, for an inline image. */
+    cid?: string;
+    contentDisposition?: "attachment" | "inline";
   }>;
   inReplyTo?: string;
   references?: string[];
@@ -173,6 +177,7 @@ export class SmtpService {
       to: options.to.join(", "),
       cc: options.cc?.join(", "),
       bcc: options.bcc?.join(", "),
+      replyTo: options.replyTo?.join(", "),
       subject: options.subject,
       text: options.text,
       html: options.html,

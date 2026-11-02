@@ -72,8 +72,8 @@ vi.mock("../htmlToMarkdown.js", () => ({
 }));
 
 describe("EMAIL_TOOLS definitions", () => {
-  it("defines 17 tools", () => {
-    expect(EMAIL_TOOLS).toHaveLength(17);
+  it("defines 18 tools", () => {
+    expect(EMAIL_TOOLS).toHaveLength(18);
   });
 
   it("all tools have name, description, and inputSchema", () => {
@@ -104,6 +104,7 @@ describe("EMAIL_TOOLS definitions", () => {
     expect(names).toContain("get_email_raw");
     expect(names).toContain("get_folder_status");
     expect(names).toContain("send_draft");
+    expect(names).toContain("update_draft");
   });
 
   it("send_email requires nothing up front, since replyAll supplies the recipients", () => {

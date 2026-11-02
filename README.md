@@ -24,7 +24,7 @@ Each package is versioned independently with semver. [docs/versioning.md](docs/v
 
 ## Tools
 
-### [Email (17 tools)](docs/tools/email-mcp.md)
+### [Email (18 tools)](docs/tools/email-mcp.md)
 
 | Tool | Description |
 |------|-------------|
@@ -32,6 +32,7 @@ Each package is versioned independently with semver. [docs/versioning.md](docs/v
 | `get_email` | Fetch full email by UID — headers, body, attachment metadata |
 | `get_thread` | Fetch the whole conversation a message belongs to, oldest first |
 | `send_email` | Compose and send via SMTP, reply with threading, or save as draft (confirms before sending) |
+| `update_draft` | Change a draft's recipients, subject, body or attachments in place, keeping the rest |
 | `send_draft` | Send an existing draft from the Drafts folder (confirms first) |
 | `forward_email` | Forward a message with its attachments and an optional note (confirms before sending) |
 | `move_email` | Move emails between folders |

@@ -2248,6 +2248,185 @@ describe("ImapService", () => {
     });
   });
 
+  describe("fetchDraft", () => {
+    it("returns the source and flags of one message", async () => {
+      const source = Buffer.from("Subject: Draft\r\n\r\nBody");
+      mockFetchOne.mockResolvedValueOnce({ source, flags: new Set(["\\Draft", "\\Seen"]) });
+
+      const draft = await service.fetchDraft("Drafts", 7);
+
+      expect(draft).toEqual({ source, flags: ["\\Draft", "\\Seen"] });
+      expect(mockFetchOne).toHaveBeenCalledWith("7", { source: true, flags: true }, { uid: true });
+    });
+
+    it("throws EMAIL_NOT_FOUND for a missing UID", async () => {
+      mockFetchOne.mockResolvedValueOnce(null);
+      await expect(service.fetchDraft("Drafts", 999)).rejects.toMatchObject({
+        code: "EMAIL_NOT_FOUND",
+      });
+    });
+  });
+
+  describe("replaceDraft", () => {
+    const raw = Buffer.from("Message-ID: <new@test.com>\r\nSubject: v2\r\n\r\nBody");
+    const flags = ["\\Draft", "\\Seen"];
+
+    beforeEach(() => {
+      for (const mock of [mockExec, mockAppend, mockMessageDelete, mockSearch]) mock.mockReset();
+      // By default every search comes back empty: the old UID is gone, and no
+      // Message-ID lookup is needed or answered.
+      mockSearch.mockResolvedValue([]);
+    });
+
+    it("uses UID REPLACE when the server advertises REPLACE, and reads APPENDUID", async () => {
+      mockCapabilities.set("REPLACE", true);
+      mockExec.mockResolvedValueOnce({
+        response: {
+          attributes: [
+            { section: [{ value: "APPENDUID" }, { value: "1700000000" }, { value: "58" }] },
+          ],
+        },
+        next: vi.fn(),
+      });
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(result).toEqual({ uid: 58, previousRemoved: true, atomic: true });
+      expect(mockExec).toHaveBeenCalledWith("UID REPLACE", [
+        { type: "SEQUENCE", value: "41" },
+        { type: "ATOM", value: "Drafts" },
+        [
+          { type: "ATOM", value: "\\Draft" },
+          { type: "ATOM", value: "\\Seen" },
+        ],
+        { type: "LITERAL", value: raw },
+      ]);
+      expect(mockAppend).not.toHaveBeenCalled();
+      expect(mockMessageDelete).not.toHaveBeenCalled();
+    });
+
+    it("finds the new UID by Message-ID when REPLACE reports no APPENDUID", async () => {
+      mockCapabilities.set("REPLACE", true);
+      mockExec.mockResolvedValueOnce({ response: { attributes: [] }, next: vi.fn() });
+      mockSearch.mockResolvedValueOnce([59]);
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(result.uid).toBe(59);
+      expect(mockSearch).toHaveBeenCalledWith(
+        { header: { "message-id": "<new@test.com>" } },
+        { uid: true },
+      );
+    });
+
+    it("leaves the old draft in place when the server refuses the REPLACE", async () => {
+      mockCapabilities.set("REPLACE", true);
+      mockExec.mockRejectedValueOnce(
+        Object.assign(new Error("Command failed"), { responseText: "Over quota" }),
+      );
+
+      await expect(
+        service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>"),
+      ).rejects.toThrow();
+      expect(mockAppend).not.toHaveBeenCalled();
+      expect(mockMessageDelete).not.toHaveBeenCalled();
+    });
+
+    it("does not send REPLACE for a folder name that would need encoding", async () => {
+      mockCapabilities.set("REPLACE", true);
+      mockAppend.mockResolvedValueOnce({ destination: "Brouillons é", uid: 60 });
+      mockMessageDelete.mockResolvedValueOnce(true);
+
+      const result = await service.replaceDraft("Brouillons é", 41, raw, flags, "<new@test.com>");
+
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(result).toEqual({ uid: 60, previousRemoved: true, atomic: false });
+    });
+
+    it("without REPLACE, appends first and then expunges the old UID", async () => {
+      const order: string[] = [];
+      mockAppend.mockImplementationOnce(async () => {
+        order.push("append");
+        return { destination: "Drafts", uid: 61 };
+      });
+      mockMessageDelete.mockImplementationOnce(async () => {
+        order.push("delete");
+        return true;
+      });
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(order).toEqual(["append", "delete"]);
+      expect(mockAppend).toHaveBeenCalledWith("Drafts", raw, flags);
+      expect(mockMessageDelete).toHaveBeenCalledWith("41", { uid: true });
+      expect(result).toEqual({ uid: 61, previousRemoved: true, atomic: false });
+    });
+
+    it("without UIDPLUS, finds the new UID by Message-ID, ignoring the old one", async () => {
+      mockAppend.mockResolvedValueOnce({ destination: "Drafts" });
+      mockMessageDelete.mockResolvedValueOnce(true);
+      mockSearch.mockImplementation(async (query: { uid?: string; header?: unknown }) =>
+        query.header ? [41, 62] : [],
+      );
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(result.uid).toBe(62);
+    });
+
+    it("reports a null UID rather than guessing when nothing identifies the new copy", async () => {
+      mockAppend.mockResolvedValueOnce({ destination: "Drafts" });
+      mockMessageDelete.mockResolvedValueOnce(true);
+      mockSearch.mockResolvedValue([]);
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(result).toEqual({ uid: null, previousRemoved: true, atomic: false });
+    });
+
+    it("never touches the old draft when the APPEND fails", async () => {
+      mockAppend.mockRejectedValueOnce(
+        Object.assign(new Error("Command failed"), { responseText: "Mailbox is full" }),
+      );
+
+      await expect(
+        service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>"),
+      ).rejects.toThrow();
+      expect(mockMessageDelete).not.toHaveBeenCalled();
+    });
+
+    it("throws when imapflow resolves the APPEND to nothing", async () => {
+      mockAppend.mockResolvedValueOnce(undefined);
+
+      await expect(
+        service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>"),
+      ).rejects.toMatchObject({ code: "OPERATION_FAILED" });
+      expect(mockMessageDelete).not.toHaveBeenCalled();
+    });
+
+    it("reports the old draft as still there when the expunge did not take", async () => {
+      // imapflow's EXPUNGE resolves true even when the \Deleted STORE before it
+      // was refused, so the old UID is looked for rather than trusted gone.
+      mockAppend.mockResolvedValueOnce({ destination: "Drafts", uid: 63 });
+      mockMessageDelete.mockResolvedValueOnce(true);
+      mockSearch.mockImplementation(async (query: { uid?: string }) => (query.uid ? [41] : []));
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(mockSearch).toHaveBeenCalledWith({ uid: "41" }, { uid: true });
+      expect(result).toEqual({ uid: 63, previousRemoved: false, atomic: false });
+    });
+
+    it("keeps the new copy and reports the old one when the delete throws", async () => {
+      mockAppend.mockResolvedValueOnce({ destination: "Drafts", uid: 64 });
+      mockMessageDelete.mockRejectedValueOnce(new Error("Connection not available"));
+
+      const result = await service.replaceDraft("Drafts", 41, raw, flags, "<new@test.com>");
+
+      expect(result).toEqual({ uid: 64, previousRemoved: false, atomic: false });
+    });
+  });
+
   describe("timezone formatting", () => {
     const originalTz = process.env.PIM_TIMEZONE;
 

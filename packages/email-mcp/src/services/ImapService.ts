@@ -164,6 +164,22 @@ export interface RawEmailTooLarge {
 
 export type RawEmailResult = RawEmailSource | RawEmailTooLarge;
 
+/** A message's source and flags, as update_draft reads a draft. */
+export interface DraftSource {
+  source: Buffer;
+  flags: string[];
+}
+
+/** How a draft was swapped for its new version. */
+export interface DraftReplacement {
+  /** The new version's UID; null when the server gave no way to learn it. */
+  uid: number | null;
+  /** False when the old version could not be removed and is still there. */
+  previousRemoved: boolean;
+  /** True when the server swapped them in one command (RFC 8508 REPLACE). */
+  atomic: boolean;
+}
+
 export interface SearchOptions {
   limit?: number;
   offset?: number;
@@ -974,6 +990,116 @@ export class ImapService {
     }
   }
 
+  /** One message's raw source and flags, for update_draft. */
+  async fetchDraft(folder: string, uid: number): Promise<DraftSource> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock(folder);
+      try {
+        const fetched = await client.fetchOne(
+          String(uid),
+          { source: true, flags: true },
+          { uid: true },
+        );
+        if (!fetched || !fetched.source) {
+          throw new EmailError(
+            `Draft UID ${uid} not found in ${folder}`,
+            ErrorCode.EMAIL_NOT_FOUND,
+            uid,
+          );
+        }
+        return {
+          source: Buffer.isBuffer(fetched.source) ? fetched.source : Buffer.from(fetched.source),
+          flags: [...(fetched.flags ?? [])],
+        };
+      } finally {
+        lock.release();
+      }
+    } catch (error) {
+      if (error instanceof EmailError) throw error;
+      throw toImapError(error, folder);
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
+  /**
+   * Swaps the message at `uid` for `raw`, in the same folder.
+   *
+   * With RFC 8508 REPLACE the server does it atomically. Otherwise the new
+   * version is appended first and the old one expunged only after that
+   * succeeded, so a failure at any point leaves at least one copy: never zero.
+   * A failure after the APPEND leaves two, which `previousRemoved: false`
+   * reports rather than hides.
+   *
+   * The new UID comes from the server's APPENDUID (UIDPLUS); imapflow already
+   * falls back to the EXISTS sequence number when appending to the selected
+   * folder, and failing both, the new version is found by its Message-ID.
+   * `null` means none of these identified it, which is reported rather than
+   * guessed.
+   */
+  async replaceDraft(
+    folder: string,
+    uid: number,
+    raw: Buffer,
+    flags: string[],
+    messageId: string,
+  ): Promise<DraftReplacement> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock(folder);
+      try {
+        // The mailbox name goes out as an atom. One that needs modified UTF-7
+        // (non-ASCII, or an `&`) would need imapflow's private encoder, so it
+        // takes the non-atomic path instead, which is still correct.
+        if (client.capabilities.has("REPLACE") && /^[\x20-\x25\x27-\x7e]+$/.test(folder)) {
+          const replacedUid = await uidReplace(client, uid, folder, raw, flags);
+          return {
+            uid: replacedUid ?? (await findByMessageId(client, messageId, uid)),
+            previousRemoved: true,
+            atomic: true,
+          };
+        }
+
+        const appended = await client.append(folder, raw, flags);
+        if (!appended) {
+          throw new EmailError(
+            `Could not save the new version of draft ${uid} to ${folder}: the server refused the APPEND. The draft is unchanged.`,
+            ErrorCode.OPERATION_FAILED,
+          );
+        }
+        const newUid = appended.uid ?? (await findByMessageId(client, messageId, uid));
+
+        // From here the new version is safe on the server. Whatever goes wrong
+        // removing the old one is reported, not thrown: a thrown error would
+        // read as "nothing was saved" and invite a retry, adding a third copy.
+        let previousRemoved = false;
+        try {
+          await client.messageDelete(String(uid), { uid: true });
+          // imapflow's delete resolves true even when the \Deleted STORE before
+          // the EXPUNGE was refused, so look rather than trust it.
+          const remaining = await client.search({ uid: String(uid) }, { uid: true });
+          previousRemoved = Array.isArray(remaining) && !remaining.includes(uid);
+        } catch (deleteError) {
+          console.error(
+            `[email-mcp] Saved the new draft, but could not remove UID ${uid}:`,
+            deleteError,
+          );
+        }
+        return { uid: newUid, previousRemoved, atomic: false };
+      } finally {
+        lock.release();
+      }
+    } catch (error) {
+      if (error instanceof EmailError) throw error;
+      throw toImapError(error, folder);
+    } finally {
+      await client.logout().catch(() => {});
+    }
+  }
+
   async getFolderStatus(folder: string): Promise<{ total: number; unseen: number }> {
     const client = this.createClient();
     try {
@@ -1165,4 +1291,63 @@ function decodeText(buffer: Buffer, charset?: string): string {
     }
   }
   return buffer.toString("utf-8");
+}
+
+/** The slice of imapflow's internal `exec` that `uidReplace` drives. */
+type ExecClient = {
+  exec: (
+    command: string,
+    attributes: unknown[],
+  ) => Promise<{
+    response?: { attributes?: Array<{ section?: Array<{ value?: unknown }> }> };
+    next?: () => void;
+  }>;
+};
+
+/**
+ * `UID REPLACE` (RFC 8508 §3.4), returning the new UID from the APPENDUID
+ * response code when the server sends one.
+ *
+ * imapflow has no REPLACE command, so this drives `exec` directly, as
+ * `imapSort` does for SORT. Unlike SORT it does not fail soft: a refusal
+ * leaves the old message untouched (the command is atomic), and the caller
+ * needs to hear about it rather than fall through to a non-atomic swap that
+ * would most likely be refused for the same reason.
+ */
+async function uidReplace(
+  client: ImapFlow,
+  uid: number,
+  folder: string,
+  raw: Buffer,
+  flags: string[],
+): Promise<number | undefined> {
+  const response = await (client as unknown as ExecClient).exec("UID REPLACE", [
+    { type: "SEQUENCE", value: String(uid) },
+    { type: "ATOM", value: folder },
+    flags.map((flag) => ({ type: "ATOM", value: flag })),
+    { type: "LITERAL", value: raw },
+  ]);
+  // imapflow's own commands call this to release the response; skipping it
+  // would leave the connection waiting on a reader that never runs.
+  response?.next?.();
+  const section = response?.response?.attributes?.[0]?.section;
+  const code = section?.[0]?.value;
+  if (typeof code !== "string" || code.toUpperCase() !== "APPENDUID") return undefined;
+  const value = section?.[2]?.value;
+  return typeof value === "string" && /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+/**
+ * The UID of the message carrying `messageId` in the selected folder, or null.
+ * `exclude` is the version being replaced; the highest remaining UID wins,
+ * since a newer APPEND always takes a higher one.
+ */
+async function findByMessageId(
+  client: ImapFlow,
+  messageId: string,
+  exclude: number,
+): Promise<number | null> {
+  const found = await client.search({ header: { "message-id": messageId } }, { uid: true });
+  const candidates = (Array.isArray(found) ? found : []).filter((u) => u !== exclude);
+  return candidates.length > 0 ? Math.max(...candidates) : null;
 }

@@ -133,16 +133,23 @@ a third party as part of this matrix.
    `send_draft` → verify the bcc recipient actually received the message, **and** verify
    the copy any visible recipient receives has **no** `Bcc` header present. Regression
    check for `fix/email-imap-correctness` (PR #11).
-7. `delete_email` on a test message with `permanent: false` → verify the message lands in
+7. **Update a draft**: create a reply draft with `send_email` (`replyToUid` on a message in
+   `PIM-Test`, `saveToDrafts: true`) carrying an attachment, then `update_draft` its
+   `subject` and `text`. Verify that `get_email` on the returned `uid` shows the new
+   subject and body, the original `inReplyTo`/`references` and the attachment, and that
+   `search_emails` on the Drafts folder finds exactly one copy. Note whether the server
+   advertises `REPLACE` and `UIDPLUS`; where possible repeat against a server without
+   them, since that takes the append-then-expunge path.
+8. `delete_email` on a test message with `permanent: false` → verify the message lands in
    the server's actual trash folder (not silently dropped or misfiled under a
    hardcoded `"Trash"` name that doesn't exist on this server) — regression check for PR
    #11's special-use trash resolution.
-8. Pick one real newsletter-style email already in the mailbox (read-only — do not modify
+9. Pick one real newsletter-style email already in the mailbox (read-only — do not modify
    it) and run markdown conversion (`get_email` with markdown format) on it. Verify the
    conversion completes without error and that any links pointing at private/reserved IP
    targets are left unresolved rather than resolved or causing a request to be made to
    them — regression check for `fix/email-security` (PR #12).
-9. Clean up: delete any test messages created in steps 3–7 that are still present in
+10. Clean up: delete any test messages created in steps 3–8 that are still present in
    `PIM-Test` or the account's trash, per the output-hygiene rule above.
 
 ## 6. mcporter invocation crib
