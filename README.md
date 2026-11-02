@@ -288,7 +288,7 @@ x-mcp: &mcp
 services:
   email-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/email-mcp@1.0.0"]
+    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.0"]
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
     volumes: [email-mcp-home:/home/node]

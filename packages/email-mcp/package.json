@@ -1,6 +1,6 @@
 {
   "name": "@miguelarios/email-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server for email via IMAP/SMTP — read, search, send, and manage emails",
   "keywords": [
     "mcp",

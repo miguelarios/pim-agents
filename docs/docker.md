@@ -74,7 +74,7 @@ The client starts the container itself. Note `-i` (stdio needs an open stdin) an
         "--env-file", "/absolute/path/to/email.env",
         "-v", "email-mcp-home:/home/node",
         "node:22-alpine",
-        "npx", "-y", "@miguelarios/email-mcp@1.0.0"
+        "npx", "-y", "@miguelarios/email-mcp@1.1.0"
       ]
     }
   }
@@ -98,7 +98,7 @@ docker run -d --name email-mcp --restart unless-stopped \
   --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
   --health-interval 30s --health-start-period 60s \
   node:22-alpine \
-  npx -y @miguelarios/email-mcp@1.0.0
+  npx -y @miguelarios/email-mcp@1.1.0
 ```
 
 The endpoint is `http://127.0.0.1:3001/mcp`.
@@ -109,7 +109,7 @@ The endpoint is `http://127.0.0.1:3001/mcp`.
 services:
   email-mcp:
     image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/email-mcp@1.0.0"]
+    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.0"]
     user: node
     restart: unless-stopped
     env_file: email.env
@@ -340,7 +340,7 @@ x-mcp: &mcp
 services:
   email-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/email-mcp@1.0.0"]
+    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.0"]
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
     volumes: [email-mcp-home:/home/node]
