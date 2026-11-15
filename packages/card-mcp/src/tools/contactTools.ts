@@ -559,7 +559,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
         emailType: {
           type: "string",
           description:
-            "Only consider emails of this TYPE, case-insensitive (e.g. 'work', 'home'). Among those the preferred one wins, else the first. Omit for the contact's preferred email of any type.",
+            "Only consider emails of this type, case-insensitive (e.g. 'work', 'home'). It matches an email's `type` as get_contact reports it, where an Apple custom label (e.g. 'Company') replaces the TYPE, so check get_contact when a type you expect is not found. Among the matches the preferred one wins, else the first. Omit for the contact's preferred email of any type.",
         },
         addressBook: ADDRESS_BOOK_PROP,
       },
