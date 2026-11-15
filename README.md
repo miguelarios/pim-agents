@@ -303,7 +303,7 @@ services:
     volumes: [cal-mcp-home:/home/node]
   card-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/card-mcp@1.0.0"]
+    command: ["npx", "-y", "@miguelarios/card-mcp@1.1.0"]
     env_file: card.env
     ports: ["127.0.0.1:3003:3000"]
     volumes: [card-mcp-home:/home/node]
