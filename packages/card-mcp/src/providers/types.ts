@@ -62,10 +62,16 @@ export interface BookToSearch {
 }
 
 export type ResolveContactResult =
-  | { status: "resolved"; fullName: string; email: string }
+  | { status: "resolved"; fullName: string; email: string; emailType?: string }
   | {
       status: "ambiguous";
-      candidates: Array<{ fullName: string; email: string; uid: string; addressBook?: string }>;
+      candidates: Array<{
+        fullName: string;
+        email: string;
+        emailType?: string;
+        uid: string;
+        addressBook?: string;
+      }>;
     }
   | { status: "not_found"; message: string };
 

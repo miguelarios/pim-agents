@@ -233,6 +233,34 @@ describe("resolve_contact handler new shape", () => {
     expect(res.structuredContent.status).toBe("not_found");
     expect(res.structuredContent.message).toContain("Nobody");
   });
+
+  it("passes emailType through to the service and returns it", async () => {
+    const fakeService = {
+      listAddressBooks: vi.fn().mockResolvedValue([{ url: "b", displayName: "x" }]),
+      resolveContact: vi.fn().mockResolvedValue({
+        status: "resolved",
+        fullName: "First Last",
+        email: "first.last@company.com",
+        emailType: "work",
+      }),
+    };
+    const res = await callTool(
+      "resolve_contact",
+      { name: "First", emailType: "work" },
+      fakeService,
+    );
+    expect(fakeService.resolveContact).toHaveBeenCalledWith(expect.any(Array), "First", {
+      emailType: "work",
+    });
+    expect(res.structuredContent.emailType).toBe("work");
+  });
+
+  it("advertises an optional emailType input", () => {
+    const tool = CONTACT_TOOLS.find((t) => t.name === "resolve_contact")!;
+    const schema = tool.inputSchema as any;
+    expect(schema.properties.emailType.type).toBe("string");
+    expect(schema.required).toEqual(["name"]);
+  });
 });
 
 describe("address book name resolution", () => {
@@ -767,6 +795,7 @@ describe("cross-book lookup when addressBook is omitted", () => {
         { url: "book2", label: "Work" },
       ],
       "w",
+      { emailType: undefined },
     );
   });
 

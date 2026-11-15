@@ -79,6 +79,7 @@ export const resolveResultSchema = v.variant("status", [
     status: v.literal("resolved"),
     fullName: v.string(),
     email: v.string(),
+    emailType: v.optional(v.string()),
   }),
   v.object({
     status: v.literal("ambiguous"),
@@ -86,6 +87,7 @@ export const resolveResultSchema = v.variant("status", [
       v.object({
         fullName: v.string(),
         email: v.string(),
+        emailType: v.optional(v.string()),
         uid: v.string(),
         addressBook: v.optional(v.string()),
       }),
