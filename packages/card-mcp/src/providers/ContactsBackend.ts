@@ -58,10 +58,15 @@ export interface ContactsBackend {
     query: string,
     opts?: { detailLevel?: DetailLevel },
   ): Promise<Contact[]>;
-  /** A name to an address: one match, several candidates, or none. */
+  /**
+   * A name to an address: one match, several candidates, or none. Each person
+   * resolves to their preferred email, or with `emailType` to their preferred
+   * email of that type; a person with none of that type is not a match.
+   */
   resolveContact(
     addressBook: string | Array<string | BookToSearch>,
     name: string,
+    opts?: { emailType?: string },
   ): Promise<ResolveContactResult>;
   /** Finds which of `books` holds `uid`. */
   locateContact(uid: string, books: Array<string | BookToSearch>): Promise<LocatedContact>;

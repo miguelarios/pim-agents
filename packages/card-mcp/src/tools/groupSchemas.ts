@@ -17,7 +17,7 @@ export const groupListSchema = v.object({
   count: v.number(),
 });
 
-/** A member, resolved to its contact. `email` is the contact's first address. */
+/** A member, resolved to its contact. `email` is its preferred address, else its first. */
 const groupMember = v.object({
   uid: v.string(),
   fullName: v.string(),

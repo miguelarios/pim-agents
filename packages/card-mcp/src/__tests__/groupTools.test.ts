@@ -139,6 +139,27 @@ describe("get_group", () => {
     });
   });
 
+  it("gives each member their preferred email, not just the first", async () => {
+    const service = fakeService();
+    const cara = {
+      ...person("c", "Cara"),
+      emails: [
+        { type: "work", value: "cara@corp.io" },
+        { type: "home", value: "cara@home.io", pref: true },
+      ],
+    };
+    service.fetchBook.mockResolvedValueOnce(
+      [cara, group("g1", "Book Club", ["c"])].map((contact) => ({
+        contact,
+        located: { bookUrl: "/p/", url: `/p/${contact.uid}.vcf`, etag: '"e"', data: "" },
+      })),
+    );
+    const res = await callTool("get_group", { uid: "g1" }, service);
+    expect(res.structuredContent.members).toEqual([
+      { uid: "c", fullName: "Cara", email: "cara@home.io" },
+    ]);
+  });
+
   it("reads the book once, and lists the books once", async () => {
     const service = fakeService();
     await callTool("get_group", { uid: "g1" }, service);

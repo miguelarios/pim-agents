@@ -5,6 +5,7 @@ import {
   type Contact,
   ContactError,
   ErrorCode,
+  type TypedValue,
   ValidationError,
   buildVCard,
   checkDavCollectionResponse,
@@ -26,6 +27,7 @@ import type {
   LocatedContact,
   ResolveContactResult,
 } from "../providers/types.js";
+import { pickPreferred } from "./preferred.js";
 
 export type {
   AddressBook,
@@ -202,6 +204,11 @@ function uidEquals(uid: string): AddressBookFilter {
       },
     },
   };
+}
+
+/** An email as the resolve result reports it: the address, and its type when it has one. */
+function emailFields(email: TypedValue): { email: string; emailType?: string } {
+  return email.type ? { email: email.value, emailType: email.type } : { email: email.value };
 }
 
 /** Splits a query into the tokens a card must contain, all of them, in any field. */
@@ -827,6 +834,7 @@ export class CardDavService implements ContactsBackend {
   async resolveContact(
     addressBook: string | Array<string | BookToSearch>,
     name: string,
+    opts: { emailType?: string } = {},
   ): Promise<ResolveContactResult> {
     const refs = (Array.isArray(addressBook) ? addressBook : [addressBook]).map((b) =>
       typeof b === "string" ? { url: b, label: undefined } : b,
@@ -844,32 +852,43 @@ export class CardDavService implements ContactsBackend {
     // false ambiguity. (Writes treat that state as a conflict, because a
     // write has to pick a book.)
     const seen = new Set<string>();
-    const withEmail = matches.filter(({ contact }) => {
+    const persons = matches.filter(({ contact }) => {
       if (isGroup(contact) || contact.emails.length === 0 || seen.has(contact.uid)) return false;
       seen.add(contact.uid);
       return true;
     });
+    // Each person is reduced to the one address the caller would send to. A
+    // person with no address of the requested type drops out rather than
+    // falling back to another type: "her work email" answered with her home
+    // one is a wrong answer that looks like a right one.
+    const withEmail = persons.flatMap((m) => {
+      const email = pickPreferred(m.contact.emails, opts.emailType);
+      return email ? [{ ...m, email }] : [];
+    });
     if (withEmail.length === 0) {
       return {
         status: "not_found",
-        message: `No contact with email found matching "${name}"`,
+        message:
+          opts.emailType && persons.length > 0
+            ? `No contact matching "${name}" has a "${opts.emailType}" email`
+            : `No contact with email found matching "${name}"`,
       };
     }
     if (withEmail.length === 1) {
-      const c = withEmail[0].contact;
+      const { contact: c, email } = withEmail[0];
       return {
         status: "resolved",
         fullName: c.fullName,
-        email: c.emails[0].value,
+        ...emailFields(email),
       };
     }
     // Candidates carry their book's label when one was given, so a caller can
     // pass it back — the same contract every other read path keeps.
     const candidates = [...withEmail]
       .sort((a, b) => a.contact.fullName.localeCompare(b.contact.fullName))
-      .map(({ contact: c, label }) => ({
+      .map(({ contact: c, email, label }) => ({
         fullName: c.fullName,
-        email: c.emails[0].value,
+        ...emailFields(email),
         uid: c.uid,
         ...(label ? { addressBook: label } : {}),
       }));

@@ -179,7 +179,7 @@ type CreateArgs = Partial<Pick<Contact, UpdatableField>> & {
 };
 type UpdateArgs = Pick<ContactUpdates, UpdatableField> & { uid: string; addressBook?: string };
 type DeleteArgs = { uid: string; addressBook?: string };
-type ResolveArgs = { name: string; addressBook?: string };
+type ResolveArgs = { name: string; addressBook?: string; emailType?: string };
 type TransferArgs = { uids: string[]; addressBook: string; targetAddressBook: string };
 
 /**
@@ -545,7 +545,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
     name: "resolve_contact",
     title: "Resolve Contact to Email",
     description:
-      "Given a person's name, resolve to email. Returns { status: 'resolved', fullName, email } on a single match; { status: 'ambiguous', candidates: [...] } when multiple contacts match (caller must disambiguate); { status: 'not_found', message } when no contact with email matches.",
+      "Given a person's name, resolve to email. Each contact resolves to its preferred email (the default Apple clients and Nextcloud pick), else its first; pass emailType (e.g. 'work') to get that kind of address instead. Returns { status: 'resolved', fullName, email, emailType? } on a single match; { status: 'ambiguous', candidates: [...] } when multiple contacts match (caller must disambiguate); { status: 'not_found', message } when no contact with email matches — or, with emailType, none has an email of that type (another type is never substituted).",
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -556,6 +556,11 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
       type: "object",
       properties: {
         name: { type: "string", description: "Name to search for (partial matches allowed)" },
+        emailType: {
+          type: "string",
+          description:
+            "Only consider emails of this type, case-insensitive (e.g. 'work', 'home'). It matches an email's `type` as get_contact reports it, where an Apple custom label (e.g. 'Company') replaces the TYPE, so check get_contact when a type you expect is not found. Among the matches the preferred one wins, else the first. Omit for the contact's preferred email of any type.",
+        },
         addressBook: ADDRESS_BOOK_PROP,
       },
       required: ["name"],
@@ -568,6 +573,7 @@ export const CONTACT_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
           await service.resolveContact(
             books.map((b) => ({ url: b.url, label: b.label })),
             args.name,
+            { emailType: args.emailType },
           ),
         );
       } catch (err) {

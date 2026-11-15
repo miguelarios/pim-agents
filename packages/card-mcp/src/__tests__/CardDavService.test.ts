@@ -1634,6 +1634,7 @@ describe("CardDavService.resolveContact", () => {
       status: "resolved",
       fullName: "Patrick Wilson",
       email: "n@t.com",
+      emailType: "work",
     });
   });
 
@@ -1683,6 +1684,114 @@ describe("CardDavService.resolveContact", () => {
     if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
     expect(r.candidates.length).toBe(2);
     expect(r.candidates.every((c) => c.email.length > 0)).toBe(true);
+  });
+
+  describe("email selection", () => {
+    const card = (uid: string, fn: string, emails: string[]) =>
+      ["BEGIN:VCARD", "VERSION:3.0", `UID:${uid}`, `FN:${fn}`, ...emails, "END:VCARD"].join("\r\n");
+    const serviceWith = (...cards: string[]) => {
+      const service = new CardDavService({ url: "x", username: "u", password: "p" }, WHOLE_BOOK);
+      (service as any).client = {
+        fetchVCards: vi
+          .fn()
+          .mockResolvedValue(cards.map((data, i) => ({ url: String(i), data, etag: "" }))),
+      };
+      return service;
+    };
+    // The issue's example: the preferred address is not the first one.
+    const firstLast = card("u1", "First Last", [
+      "EMAIL;TYPE=WORK:first.last@company.com",
+      "EMAIL;TYPE=HOME,pref:personal@example.com",
+    ]);
+
+    it("resolves to the preferred email when it is not first", async () => {
+      const r = await serviceWith(firstLast).resolveContact("book", "First");
+      expect(r).toEqual({
+        status: "resolved",
+        fullName: "First Last",
+        email: "personal@example.com",
+        emailType: "home",
+      });
+    });
+
+    it("recognizes vCard 4 PREF=1", async () => {
+      const c = card("u1", "First Last", [
+        "EMAIL;TYPE=work:w@x.com",
+        "EMAIL;TYPE=home;PREF=1:h@x.com",
+      ]);
+      const r = await serviceWith(c).resolveContact("book", "First");
+      expect(r).toMatchObject({ status: "resolved", email: "h@x.com" });
+    });
+
+    it("selects by emailType even when another type is preferred", async () => {
+      const r = await serviceWith(firstLast).resolveContact("book", "First", {
+        emailType: "Work",
+      });
+      expect(r).toEqual({
+        status: "resolved",
+        fullName: "First Last",
+        email: "first.last@company.com",
+        emailType: "work",
+      });
+    });
+
+    it("prefers the preferred email among several of the requested type", async () => {
+      const c = card("u1", "First Last", [
+        "EMAIL;TYPE=work:old@company.com",
+        "EMAIL;TYPE=work,pref:new@company.com",
+      ]);
+      const r = await serviceWith(c).resolveContact("book", "First", { emailType: "work" });
+      expect(r).toMatchObject({ status: "resolved", email: "new@company.com" });
+    });
+
+    it("matches one token of a multi-type email", async () => {
+      const c = card("u1", "First Last", [
+        "EMAIL;TYPE=home:h@x.com",
+        "EMAIL;TYPE=work,internet,x-school:ws@x.com",
+      ]);
+      const r = await serviceWith(c).resolveContact("book", "First", { emailType: "work" });
+      expect(r).toMatchObject({ status: "resolved", email: "ws@x.com" });
+    });
+
+    it("is not_found, not a different type, when no email has the requested type", async () => {
+      const c = card("u1", "First Last", ["EMAIL;TYPE=home,pref:h@x.com"]);
+      const r = await serviceWith(c).resolveContact("book", "First", { emailType: "work" });
+      if (r.status !== "not_found") throw new Error(`expected not_found, got ${r.status}`);
+      expect(r.message).toContain("work");
+      expect(r.message).toContain("First");
+    });
+
+    it("applies the same rule to ambiguous candidates, dropping those without the type", async () => {
+      const r = await serviceWith(
+        firstLast,
+        card("u2", "First Other", ["EMAIL;TYPE=home:other@example.com"]),
+        card("u3", "First Third", [
+          "EMAIL;TYPE=home:third@example.com",
+          "EMAIL;TYPE=work:third@company.com",
+        ]),
+      ).resolveContact("book", "First", { emailType: "work" });
+      if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+      expect(r.candidates).toEqual([
+        { fullName: "First Last", email: "first.last@company.com", emailType: "work", uid: "u1" },
+        { fullName: "First Third", email: "third@company.com", emailType: "work", uid: "u3" },
+      ]);
+    });
+
+    it("ambiguous candidates take the preferred email without emailType", async () => {
+      const r = await serviceWith(
+        firstLast,
+        card("u2", "First Other", ["EMAIL;TYPE=home:other@example.com"]),
+      ).resolveContact("book", "First");
+      if (r.status !== "ambiguous") throw new Error(`expected ambiguous, got ${r.status}`);
+      expect(r.candidates[0]).toMatchObject({ uid: "u1", email: "personal@example.com" });
+    });
+
+    it("keeps the first email when none is preferred and no type is asked", async () => {
+      const c = card("u1", "First Last", ["EMAIL:a@x.com", "EMAIL;TYPE=work:b@x.com"]);
+      const r = await serviceWith(c).resolveContact("book", "First");
+      // No TYPE on the chosen address, so no emailType either.
+      expect(r).toEqual({ status: "resolved", fullName: "First Last", email: "a@x.com" });
+    });
   });
 });
 
