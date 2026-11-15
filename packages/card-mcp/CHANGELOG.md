@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 (2026-11-15)
+
+- **`resolve_contact` and `get_group` use a contact's preferred email** (#159, #160). Both used to answer with the first EMAIL on the card, ignoring the preferred one (vCard 3 `TYPE=pref`, vCard 4 `PREF=1`) that Apple clients and Nextcloud default to. They now take the preferred email, else the first. This applies to a single `resolve_contact` match, to each `ambiguous` candidate, and to each `get_group` member.
+- **New optional `emailType` input on `resolve_contact`** (e.g. `"work"`, `"home"`, case-insensitive). It picks the preferred email of that type, else the first of that type. A contact with no email of that type is not a match: the result is `not_found`, or the contact drops out of the candidates. An address of another type is never returned in its place. It matches the type `get_contact` reports, where an Apple custom label (such as "Company") replaces the TYPE.
+- **New optional `emailType` output field** on `resolved` results and on `ambiguous` candidates. It names the type of the address picked, and is omitted when that address has none.
+
 ## 1.0.0 (2026-10-18)
 
 First stable release. The public contract, and what a minor or patch may change from here, is in [`docs/versioning.md`](../../docs/versioning.md).
