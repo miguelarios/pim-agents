@@ -17,6 +17,7 @@ import {
 import { type ToolDef, confirmDestructive, structured, toolError } from "@miguelarios/pim-core/mcp";
 import type { ContactsBackend } from "../providers/ContactsBackend.js";
 import type { LocatedContact } from "../providers/types.js";
+import { pickPreferred } from "../services/preferred.js";
 import {
   ADDRESS_BOOK_PROP,
   booksToSearch,
@@ -162,7 +163,7 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
     name: "get_group",
     title: "Get Contact Group",
     description:
-      "Get a contact group with its members resolved to contacts (UID, name, first email). Member UIDs the address book no longer holds are listed under missingMembers.",
+      "Get a contact group with its members resolved to contacts (UID, name, preferred email, else first). Member UIDs the address book no longer holds are listed under missingMembers.",
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -190,7 +191,7 @@ export const GROUP_TOOLS: ReadonlyArray<ToolDef<ContactsBackend>> = [
             missingMembers.push(uid);
             continue;
           }
-          const email = member.emails[0]?.value;
+          const email = pickPreferred(member.emails)?.value;
           members.push({ uid, fullName: member.fullName, ...(email ? { email } : {}) });
         }
         return structured({

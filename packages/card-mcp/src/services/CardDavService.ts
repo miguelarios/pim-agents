@@ -27,6 +27,7 @@ import type {
   LocatedContact,
   ResolveContactResult,
 } from "../providers/types.js";
+import { pickPreferred } from "./preferred.js";
 
 export type {
   AddressBook,
@@ -203,21 +204,6 @@ function uidEquals(uid: string): AddressBookFilter {
       },
     },
   };
-}
-
-/**
- * The address `resolve_contact` answers with. Without a type it is the
- * preferred email, the one Apple clients and Nextcloud default to, else the
- * first. With a type it is chosen among the emails carrying that TYPE token
- * (an email typed `home/work` matches either), by the same rule; none of that
- * type is undefined, never an address of another type.
- */
-function pickEmail(emails: TypedValue[], type?: string): TypedValue | undefined {
-  const wanted = type?.trim().toLowerCase();
-  const pool = wanted
-    ? emails.filter((e) => e.type?.toLowerCase().split("/").includes(wanted))
-    : emails;
-  return pool.find((e) => e.pref) ?? pool[0];
 }
 
 /** An email as the resolve result reports it: the address, and its type when it has one. */
@@ -876,7 +862,7 @@ export class CardDavService implements ContactsBackend {
     // falling back to another type: "her work email" answered with her home
     // one is a wrong answer that looks like a right one.
     const withEmail = persons.flatMap((m) => {
-      const email = pickEmail(m.contact.emails, opts.emailType);
+      const email = pickPreferred(m.contact.emails, opts.emailType);
       return email ? [{ ...m, email }] : [];
     });
     if (withEmail.length === 0) {
