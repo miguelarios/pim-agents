@@ -6,6 +6,7 @@
       "start": "2012-09-04T00:00:00.000Z",
       "end": "2012-09-05T00:00:00.000Z",
       "allDay": true,
+      "timeZone": null,
       "location": null,
       "description": null,
       "status": "confirmed",

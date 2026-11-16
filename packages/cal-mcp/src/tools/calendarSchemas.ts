@@ -47,6 +47,7 @@ export const eventSchema = v.object({
   start: v.string(),
   end: v.string(),
   allDay: v.boolean(),
+  timeZone: nullableString,
   location: nullableString,
   status: nullableString,
   isRecurring: v.boolean(),

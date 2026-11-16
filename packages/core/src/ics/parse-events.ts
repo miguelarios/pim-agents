@@ -16,7 +16,25 @@ function nullIfEmpty(value: unknown): string | null {
   return value.length > 0 ? value : null;
 }
 
-function buildBaseEvent(component: ICAL.Component): Omit<ParsedEvent, "start" | "end"> {
+/**
+ * The TZID `time` was written in: "UTC" for a UTC time, null when it has none
+ * (floating, or a date). Taken from the property's TZID parameter when given,
+ * so a zone ical.js has no definition for is still reported by name.
+ */
+function zoneNameOf(time: ICAL.Time, prop?: ICAL.Property | null): string | null {
+  if (time.isDate) return null;
+  const param = prop?.getParameter("tzid");
+  if (typeof param === "string" && param.length > 0) return param;
+  const zone = time.zone;
+  if (zone === ICAL.Timezone.utcTimezone) return "UTC";
+  if (!zone || zone === ICAL.Timezone.localTimezone) return null;
+  const tzid = zone.tzid;
+  return tzid && tzid !== "floating" ? tzid : null;
+}
+
+function buildBaseEvent(
+  component: ICAL.Component,
+): Omit<ParsedEvent, "start" | "end" | "timeZone"> {
   const url = component.getFirstPropertyValue("url");
   const status = component.getFirstPropertyValue("status");
   const transp = component.getFirstPropertyValue("transp");
@@ -153,6 +171,7 @@ function emitNonExpanded(
     {
       ...base,
       allDay: allDay,
+      timeZone: zoneNameOf(dtstart, component.getFirstProperty("dtstart")),
       start: startIso,
       end: endIso,
       occurrenceDate: occDate,
@@ -199,6 +218,7 @@ function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string)
       rdates: series.rdates,
       isRecurring: true,
       allDay: allDay,
+      timeZone: zoneNameOf(details.startDate, effective.component.getFirstProperty("dtstart")),
       start: timeToEventIsoWithTz(details.startDate, timezone),
       end: timeToEventIsoWithTz(details.endDate, timezone),
       // occurrenceDate is the original RRULE-generated slot (RECURRENCE-ID).

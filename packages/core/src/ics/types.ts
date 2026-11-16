@@ -30,6 +30,12 @@ export interface ParsedEvent {
   start: string;
   end: string;
   allDay: boolean;
+  /**
+   * The IANA zone (or other TZID) DTSTART was written in, "UTC" for a UTC
+   * time, null for a floating time or an all-day event. `start` and `end` are
+   * UTC instants either way; this says what wall clock the organizer meant.
+   */
+  timeZone: string | null;
   location: string | null;
   description: string | null;
   status: string | null;

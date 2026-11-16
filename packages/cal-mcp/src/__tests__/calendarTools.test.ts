@@ -45,6 +45,7 @@ const mockService = {
 describe("calendarTools", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("exports 13 tool definitions", () => {
@@ -705,6 +706,7 @@ describe("calendarTools", () => {
       start: "2026-03-05T10:00:00Z",
       end: "2026-03-05T11:00:00Z",
       allDay: false,
+      timeZone: "UTC",
       isRecurring: true,
       occurrenceDate: "2026-03-05T10:00:00Z",
       location: null,
@@ -724,6 +726,7 @@ describe("calendarTools", () => {
     });
 
     it("list_events detailLevel=full fetches full events in one call (no per-event getEvent)", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
       mockService.listEventsFull.mockResolvedValueOnce([fullEventFixture()]);
 
       const result = await handleCalendarTool(
@@ -733,9 +736,9 @@ describe("calendarTools", () => {
       );
 
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.events[0].occurrenceDate).toBe("2026-03-05T10:00:00Z");
-      expect(parsed.events[0].start).toBe("2026-03-05T10:00:00Z");
-      expect(parsed.events[0].end).toBe("2026-03-05T11:00:00Z");
+      expect(parsed.events[0].occurrenceDate).toBe("2026-03-05T10:00:00+00:00");
+      expect(parsed.events[0].start).toBe("2026-03-05T10:00:00+00:00");
+      expect(parsed.events[0].end).toBe("2026-03-05T11:00:00+00:00");
       expect(parsed.events[0].description).toBe("Weekly standup meeting");
       expect(mockService.getEvent).not.toHaveBeenCalled();
       expect(mockService.listEventsFull).toHaveBeenCalledTimes(1);
@@ -854,6 +857,7 @@ describe("calendarTools", () => {
     });
 
     it("get_today_events detailLevel=full uses listEventsFull", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
       mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Cal" }]);
       mockService.listEventsFull.mockResolvedValueOnce([
         fullEventFixture({
@@ -872,7 +876,7 @@ describe("calendarTools", () => {
       );
 
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.events[0].occurrenceDate).toBe("2026-03-28T09:00:00Z");
+      expect(parsed.events[0].occurrenceDate).toBe("2026-03-28T09:00:00+00:00");
       expect(parsed.events[0].description).toBe("Daily standup");
       expect(mockService.getEvent).not.toHaveBeenCalled();
     });

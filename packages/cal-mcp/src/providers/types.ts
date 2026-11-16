@@ -34,6 +34,8 @@ export interface EventSummary {
   start: string;
   end: string;
   allDay: boolean;
+  /** The TZID the event was written in; "UTC" for a UTC time, null when floating or all-day. */
+  timeZone: string | null;
   location: string | null;
   status: string | null;
   isRecurring: boolean;

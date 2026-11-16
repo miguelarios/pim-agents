@@ -22,6 +22,7 @@ const EVENT = {
   start: "2026-08-01T09:00:00.000Z",
   end: "2026-08-01T09:15:00.000Z",
   allDay: false,
+  timeZone: "UTC",
   location: null,
   status: null,
   isRecurring: false,
@@ -166,6 +167,7 @@ const open = async (
 
 const openHandles: Array<{ close: () => Promise<void> }> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(openHandles.splice(0).map((h) => h.close()));
 });
 
@@ -280,6 +282,36 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
 
     expect(result.isError).toBeFalsy();
     expect((result.structuredContent as { events: unknown[] }).events).toHaveLength(1);
+  });
+
+  it("sends timed events in PIM_TIMEZONE and all-day events as dates, schema-valid", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    const service = fakeService();
+    service.listEvents.mockResolvedValue([
+      { ...EVENT, start: "2026-11-16T14:30:00.000Z", end: "2026-11-16T15:30:00.000Z" },
+      {
+        ...EVENT,
+        uid: "evt-2",
+        allDay: true,
+        timeZone: null,
+        start: "2026-11-16T00:00:00.000Z",
+        end: "2026-11-17T00:00:00.000Z",
+      },
+    ]);
+    const { client } = await connect(era, service);
+    const result = await client.callTool({
+      name: "list_events",
+      arguments: { start: "2026-11-16T00:00:00Z", end: "2026-11-17T00:00:00Z" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const { events } = result.structuredContent as {
+      events: Array<{ start: string; end: string; timeZone: string | null }>;
+    };
+    expect(events.map((e) => [e.start, e.end, e.timeZone])).toEqual([
+      ["2026-11-16T08:30:00-06:00", "2026-11-16T09:30:00-06:00", "UTC"],
+      ["2026-11-16", "2026-11-17", null],
+    ]);
   });
 
   it("queries only the calendars named in `calendars` over the wire (#49)", async () => {
