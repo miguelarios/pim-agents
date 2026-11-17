@@ -53,7 +53,7 @@ docker run -d --name cal-mcp --restart unless-stopped --user node \
   --env-file cal.env \
   -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 \
   -p 127.0.0.1:3002:3000 -v cal-mcp-home:/home/node \
-  node:22-alpine npx -y @miguelarios/cal-mcp@1.0.0
+  node:22-alpine npx -y @miguelarios/cal-mcp@2.0.0
 ```
 
 See the [Docker guide](https://github.com/miguelarios/pim-agents/blob/main/docs/docker.md) for the env file, stdio use from a desktop client, Docker Compose, and exposing a server safely, and the [README](https://github.com/miguelarios/pim-agents/blob/main/README.md#over-streamable-http) for every HTTP setting.

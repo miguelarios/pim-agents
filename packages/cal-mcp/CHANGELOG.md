@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.0 (2026-11-17)
+
+- **Breaking: event times come back in `PIM_TIMEZONE`, and all-day events as dates** (#162). Every event result (`list_events`, `get_today_events`, `search_events`, `get_event`, `create_event`, `update_event`, `move_event`, `create_events_batch`, `import_ics`) used to give `start`, `end` and `occurrenceDate` as UTC instants. All-day events were UTC midnight, which reads as the previous evening anywhere west of Greenwich. The values now look like this:
+
+  | Event | Was | Now |
+  |---|---|---|
+  | Timed, 8:30 Central | `2026-11-16T14:30:00.000Z` | `2026-11-16T08:30:00-06:00` |
+  | All-day, Nov 16 | `2026-11-16T00:00:00.000Z` | `2026-11-16` |
+
+  Timed values are the same instant as before, with the offset for that date (DST included), as `find_free_slots` already returned. All-day `end` is still exclusive. `occurrenceDate` follows the series: a date for an all-day series, even for an occurrence moved to a timed slot, and a local time otherwise. Both forms are accepted back as `occurrenceDate` by `get_event`, `update_event` and `delete_event`. If `PIM_TIMEZONE` is not a zone the runtime knows, times are rendered in UTC.
+- **New `timeZone` field on every event:** the zone it was written in (`"America/Chicago"`), `"UTC"` for a UTC time, `null` for a floating time or an all-day event. A server that expands recurrences itself (SabreDAV/Nextcloud) rewrites instances to UTC, so those report `"UTC"`.
+- Requires `@miguelarios/pim-core` 1.1.0.
+
 ## 1.0.0 (2026-10-18)
 
 First stable release. The public contract, and what a minor or patch may change from here, is in [`docs/versioning.md`](../../docs/versioning.md).
