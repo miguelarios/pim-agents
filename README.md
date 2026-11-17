@@ -288,13 +288,13 @@ x-mcp: &mcp
 services:
   email-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.0"]
+    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.1"]
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
     volumes: [email-mcp-home:/home/node]
   cal-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/cal-mcp@2.0.0"]
+    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.0"]
     env_file: cal.env
     environment:
       <<: *http

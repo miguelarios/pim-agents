@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 (2026-11-17)
+
+- **`search_emails` `since`/`before` are read in `PIM_TIMEZONE`** (#164). A date was UTC midnight, so in Chicago a search for Nov 16 covered 6 PM Nov 15 to 6 PM Nov 16 on servers with the WITHIN extension (Dovecot). On other servers an evening time could lose its day (`2026-11-16T20:00-06:00` became `SINCE 17-Nov`). A date now means the local day, and a time with no offset is read in the zone. The search sent to the server is shaped to its capabilities: exact instants for WITHIN, and the local calendar date otherwise.
+- Requires `@miguelarios/pim-core` 1.2.0.
+
 ## 1.1.0 (2026-11-02)
 
 - **New tool: `update_draft`** (#137, #157). It changes an existing draft's recipients, subject, body or attachments in place. Before, an agent revising a draft had to save a new one and then permanently delete the old one; when that confirmation-gated delete was skipped or declined, duplicate drafts piled up. Only the fields given change. The draft keeps its From, Reply-To and threading headers (a reply draft stays a reply), its attachments (inline images keep their Content-ID, text attachments their charset), a calendar invitation, read-receipt and priority headers, and its flags. A new `text` or `html` replaces the whole body. It asks for no confirmation, and returns the new UID, `previousUid`, and `previousRemoved`.

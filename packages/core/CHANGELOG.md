@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 (2026-11-17)
+
+- **New `parseInTimezone(value, timeZone)`** (#164). Reads a caller's date or date-time as the instant it means in a zone:
+  - A date or year-month is midnight.
+  - A date-time with no offset (`T` or space) is wall-clock time.
+  - `Z` and offsets are kept.
+  - DST is disambiguated as Temporal's "compatible" mode does: the earlier instant in an overlap, and forward by the gap in a spring-forward one.
+  - An out-of-range date or time is an Invalid Date (except `24:00`).
+- **New `usableTimezone(timeZone)`:** the zone if Intl knows it, else `"UTC"`.
+- `zonedTimeToUtc` and friends no longer count an instant's milliseconds as part of its UTC offset.
+
 ## 1.1.0 (2026-11-17)
 
 - **`ParsedEvent` gains `timeZone` and `occurrenceAllDay`** (#162). `timeZone` is the TZID DTSTART was written in, `"UTC"` for a UTC time, `null` for a floating time or a date. It's read from the TZID parameter, so a zone with no known definition is still named. `occurrenceAllDay` is true when the RECURRENCE-ID is a date, including for an occurrence of an all-day series moved to a timed slot. `start`, `end` and `occurrenceDate` are unchanged.
