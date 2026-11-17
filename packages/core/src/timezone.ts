@@ -122,3 +122,41 @@ export function parseTimestamp(timestamp: string): ParsedTimestamp {
 
   return { date, isUTC: false, hasExplicitTimezone: false };
 }
+
+/** `timeZone` if Intl knows it, else "UTC". */
+export function usableTimezone(timeZone: string): string {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return timeZone;
+  } catch {
+    return "UTC";
+  }
+}
+
+const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?$/;
+
+/**
+ * Reads a caller's date or date-time as the instant it means in `timeZone`.
+ *
+ * - A date (`2026-11-16`) is midnight in the zone. `new Date` would make it
+ *   UTC midnight, which is the previous evening west of Greenwich.
+ * - A date-time with no offset (`2026-11-16T08:30`) is wall-clock time in the
+ *   zone. `new Date` would read it in the host's zone, usually UTC in a
+ *   container.
+ * - Anything with `Z` or an offset is already an instant and is kept as is.
+ *
+ * Returns an Invalid Date for what cannot be read, so callers keep their own
+ * `Number.isNaN` checks. An unknown zone falls back to UTC.
+ */
+export function parseInTimezone(value: string, timeZone: string): Date {
+  const m = value.trim().match(LOCAL_DATE_TIME);
+  if (!m) return new Date(value);
+  const [, y, mo, d, h = "0", mi = "0", s = "0"] = m;
+  const [year, month, day] = [Number(y), Number(mo), Number(d)];
+  // Reject what Date.UTC would silently roll over (month 13, Feb 30).
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return new Date(Number.NaN);
+  const zone = usableTimezone(timeZone);
+  const instant = zonedTimeToUtc(year, month, day, Number(h), Number(mi), zone);
+  return new Date(instant.getTime() + Number(s) * 1000);
+}

@@ -3,6 +3,7 @@ import {
   formatInTimezone,
   getLocalDateParts,
   getTimezone,
+  parseInTimezone,
   parseTimestamp,
   zonedTimeToUtc,
 } from "../timezone.js";
@@ -97,5 +98,35 @@ describe("getLocalDateParts", () => {
       month: 7,
       day: 9,
     });
+  });
+});
+
+describe("parseInTimezone", () => {
+  const tz = "America/Chicago";
+  it("reads a date as midnight in the zone", () => {
+    expect(parseInTimezone("2026-11-16", tz).toISOString()).toBe("2026-11-16T06:00:00.000Z");
+  });
+  it("reads a date-time with no offset as wall-clock time in the zone", () => {
+    expect(parseInTimezone("2026-11-16T08:30", tz).toISOString()).toBe("2026-11-16T14:30:00.000Z");
+    expect(parseInTimezone("2026-07-16T08:30:15", tz).toISOString()).toBe(
+      "2026-07-16T13:30:15.000Z",
+    );
+  });
+  it("keeps an explicit offset or Z", () => {
+    expect(parseInTimezone("2026-11-16T08:30:00Z", tz).toISOString()).toBe(
+      "2026-11-16T08:30:00.000Z",
+    );
+    expect(parseInTimezone("2026-11-16T08:30:00+01:00", tz).toISOString()).toBe(
+      "2026-11-16T07:30:00.000Z",
+    );
+  });
+  it("is an Invalid Date for nonsense", () => {
+    expect(Number.isNaN(parseInTimezone("next tuesday", tz).getTime())).toBe(true);
+    expect(Number.isNaN(parseInTimezone("2026-13-45", tz).getTime())).toBe(true);
+  });
+  it("falls back to UTC for a zone Intl does not know", () => {
+    expect(parseInTimezone("2026-11-16", "Not/AZone").toISOString()).toBe(
+      "2026-11-16T00:00:00.000Z",
+    );
   });
 });

@@ -9,7 +9,7 @@ import {
 import { ImapFlow } from "imapflow";
 import { type Attachment, simpleParser } from "mailparser";
 import { uidSort } from "../imapSort.js";
-import { type SearchParams, buildSearchCriteria } from "../search.js";
+import { type SearchParams, buildSearchCriteria, criteriaForServer } from "../search.js";
 import { toImapError } from "./imapErrors.js";
 
 export interface EmailSummary {
@@ -243,9 +243,10 @@ export class ImapService {
     options: SearchOptions = {},
   ): Promise<EmailSummary[]> {
     const client = this.createClient();
-    const criteria = buildSearchCriteria(params);
+    const built = buildSearchCriteria(params, this.timezone);
     try {
       await client.connect();
+      const criteria = criteriaForServer(built, client.capabilities.has("WITHIN"), this.timezone);
       const lock = await client.getMailboxLock(folder);
       try {
         const offset = options.offset ?? 0;

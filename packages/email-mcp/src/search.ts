@@ -1,4 +1,11 @@
-import { ValidationError } from "@miguelarios/pim-core";
+import {
+  ValidationError,
+  getLocalDateParts,
+  getTimezone,
+  parseInTimezone,
+  usableTimezone,
+  zonedTimeToUtc,
+} from "@miguelarios/pim-core";
 
 export interface SearchParams {
   hasWords?: string;
@@ -49,6 +56,7 @@ function parseTokens(value: string): ParsedToken[] {
  */
 export function buildSearchCriteria(
   params: SearchParams,
+  timezone: string = getTimezone(),
 ): Record<string, unknown> | Record<string, unknown>[] {
   const baseCriteria: Record<string, unknown> = {};
   const tokenizedCriteria: Record<string, unknown>[] = [];
@@ -64,11 +72,11 @@ export function buildSearchCriteria(
   // Date filters → base criteria
   const since = filled(params.since);
   if (since !== undefined) {
-    baseCriteria.since = parseDate(since, "since");
+    baseCriteria.since = parseDate(since, "since", timezone);
   }
   const before = filled(params.before);
   if (before !== undefined) {
-    baseCriteria.before = parseDate(before, "before");
+    baseCriteria.before = parseDate(before, "before", timezone);
   }
 
   // Boolean flags → base criteria
@@ -159,8 +167,10 @@ function filled(value: string | undefined): string | undefined {
  * `new Date("nonsense")` yields an Invalid Date, which serializes to `null` and
  * makes IMAP match nothing — a silent empty result rather than a usable error.
  */
-function parseDate(value: string, field: "since" | "before"): Date {
-  const parsed = new Date(value);
+function parseDate(value: string, field: "since" | "before", timezone: string): Date {
+  // A date is midnight in PIM_TIMEZONE, not UTC midnight (the previous
+  // evening west of Greenwich).
+  const parsed = parseInTimezone(value, timezone);
   if (Number.isNaN(parsed.getTime())) {
     throw new ValidationError(
       `${field} is not a valid date: ${JSON.stringify(value)}. Use YYYY-MM-DD.`,
@@ -168,4 +178,40 @@ function parseDate(value: string, field: "since" | "before"): Date {
     );
   }
   return parsed;
+}
+
+/**
+ * Shapes the `since`/`before` instants from `buildSearchCriteria` for the
+ * server at hand, because imapflow sends them in one of two UTC-bound ways:
+ *
+ * - **WITHIN** (Dovecot and others): as YOUNGER/OLDER seconds from now. That
+ *   is exact, so the instants go as they are: local midnight stays local
+ *   midnight.
+ * - **Otherwise**: as SINCE/BEFORE dates taken from the instant's *UTC* date,
+ *   and for a BEFORE off UTC midnight, the next one. Local midnight in Chicago
+ *   is 06:00Z, so that would still work there, but east of UTC (22:00Z the
+ *   day before) it would search a day early. So each instant becomes UTC
+ *   midnight of its *local* date. A BEFORE that is not local midnight moves
+ *   to the next day, as imapflow means, so the day it falls in is included.
+ */
+export function criteriaForServer(
+  criteria: Record<string, unknown> | Record<string, unknown>[],
+  hasWithin: boolean,
+  timezone: string = getTimezone(),
+): Record<string, unknown> | Record<string, unknown>[] {
+  if (hasWithin) return criteria;
+  const zone = usableTimezone(timezone);
+  const localDay = (instant: Date, nextUnlessMidnight: boolean): Date => {
+    const { year, month, day } = getLocalDateParts(instant, zone);
+    const midnight = zonedTimeToUtc(year, month, day, 0, 0, zone).getTime();
+    const bump = nextUnlessMidnight && instant.getTime() !== midnight ? 1 : 0;
+    return new Date(Date.UTC(year, month - 1, day + bump));
+  };
+  const adapt = (one: Record<string, unknown>): Record<string, unknown> => {
+    const out = { ...one };
+    if (out.since instanceof Date) out.since = localDay(out.since, false);
+    if (out.before instanceof Date) out.before = localDay(out.before, true);
+    return out;
+  };
+  return Array.isArray(criteria) ? criteria.map(adapt) : adapt(criteria);
 }

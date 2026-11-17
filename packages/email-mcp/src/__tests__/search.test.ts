@@ -1,5 +1,6 @@
-import { assert, describe, expect, it } from "vitest";
-import { type SearchParams, buildSearchCriteria } from "../search.js";
+import { createRequire } from "node:module";
+import { assert, afterEach, describe, expect, it, vi } from "vitest";
+import { type SearchParams, buildSearchCriteria, criteriaForServer } from "../search.js";
 
 describe("buildSearchCriteria", () => {
   it("returns { all: true } for empty params", () => {
@@ -302,5 +303,86 @@ describe("buildSearchCriteria with materialized default arguments", () => {
     expect(buildSearchCriteria({ from: "", to: "", subject: "invoice", since: "" })).toEqual({
       subject: "invoice",
     });
+  });
+});
+
+describe("date filters are read in PIM_TIMEZONE (not UTC)", () => {
+  const CHICAGO = "America/Chicago";
+  const req = createRequire(import.meta.url);
+  const { searchCompiler } = req("imapflow/lib/search-compiler.js") as {
+    searchCompiler: (connection: unknown, query: unknown) => Array<{ value: string }>;
+  };
+  /** What imapflow actually sends for `criteria` to a server with `caps`. */
+  const wire = (criteria: Record<string, unknown>, caps: string[]) =>
+    searchCompiler(
+      {
+        capabilities: new Map(caps.map((c) => [c, true])),
+        enabled: new Set(),
+        mailbox: { flags: new Set() },
+      },
+      criteria,
+    ).map((a) => a.value);
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reads a date as local midnight", () => {
+    const result = buildSearchCriteria({ since: "2026-11-16", before: "2026-11-17" }, CHICAGO);
+    if (Array.isArray(result)) throw new Error("expected object");
+    expect(result.since).toEqual(new Date("2026-11-16T06:00:00Z"));
+    expect(result.before).toEqual(new Date("2026-11-17T06:00:00Z"));
+  });
+
+  it("reads a time with no offset in the zone, and keeps an explicit offset", () => {
+    const result = buildSearchCriteria(
+      { since: "2026-11-16T08:30:00", before: "2026-11-16T20:00:00+01:00" },
+      CHICAGO,
+    );
+    if (Array.isArray(result)) throw new Error("expected object");
+    expect(result.since).toEqual(new Date("2026-11-16T14:30:00Z"));
+    expect(result.before).toEqual(new Date("2026-11-16T19:00:00Z"));
+  });
+
+  it("asks a WITHIN server for exactly the local day", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-18T06:00:00Z")); // midnight Nov 18, Chicago
+    const built = buildSearchCriteria({ since: "2026-11-16", before: "2026-11-17" }, CHICAGO);
+    const criteria = criteriaForServer(built, true, CHICAGO) as Record<string, unknown>;
+    // 48h and 24h before local midnight Nov 18: the whole of Nov 16, Chicago time.
+    expect(wire(criteria, ["WITHIN"])).toEqual(["YOUNGER", "172800", "OLDER", "86400"]);
+  });
+
+  it("asks a server without WITHIN for the local calendar dates", () => {
+    const built = buildSearchCriteria({ since: "2026-11-16", before: "2026-11-17" }, CHICAGO);
+    const criteria = criteriaForServer(built, false, CHICAGO) as Record<string, unknown>;
+    expect(wire(criteria, [])).toEqual(["SINCE", "16-Nov-2026", "BEFORE", "17-Nov-2026"]);
+  });
+
+  it("keeps the local date of an evening time, where UTC has already moved on", () => {
+    const built = buildSearchCriteria({ since: "2026-11-16T20:00:00-06:00" }, CHICAGO);
+    const criteria = criteriaForServer(built, false, CHICAGO) as Record<string, unknown>;
+    expect(wire(criteria, [])).toEqual(["SINCE", "16-Nov-2026"]);
+  });
+
+  it("keeps the local date east of UTC too", () => {
+    const built = buildSearchCriteria(
+      { since: "2026-11-16", before: "2026-11-17" },
+      "Europe/Berlin",
+    );
+    const criteria = criteriaForServer(built, false, "Europe/Berlin") as Record<string, unknown>;
+    expect(wire(criteria, [])).toEqual(["SINCE", "16-Nov-2026", "BEFORE", "17-Nov-2026"]);
+  });
+
+  it("includes the day of a before with a time, as imapflow does", () => {
+    const built = buildSearchCriteria({ before: "2026-11-16T15:00:00" }, CHICAGO);
+    const criteria = criteriaForServer(built, false, CHICAGO) as Record<string, unknown>;
+    expect(wire(criteria, [])).toEqual(["BEFORE", "17-Nov-2026"]);
+  });
+
+  it("applies to every folded criterion", () => {
+    const built = buildSearchCriteria({ since: "2026-11-16", subject: "a b" }, CHICAGO);
+    const list = criteriaForServer(built, false, CHICAGO) as Array<Record<string, unknown>>;
+    expect(list.map((c) => wire(c, [])[1])).toEqual(["16-Nov-2026", "16-Nov-2026"]);
   });
 });
