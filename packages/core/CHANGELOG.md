@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0 (2026-11-17)
+
+- **`ParsedEvent` gains `timeZone` and `occurrenceAllDay`** (#162). `timeZone` is the TZID DTSTART was written in, `"UTC"` for a UTC time, `null` for a floating time or a date. It's read from the TZID parameter, so a zone with no known definition is still named. `occurrenceAllDay` is true when the RECURRENCE-ID is a date, including for an occurrence of an all-day series moved to a timed slot. `start`, `end` and `occurrenceDate` are unchanged.
+
 ## 1.0.0 (2026-10-18)
 
 First stable release. The public contract, and what a minor or patch may change from here, is in [`docs/versioning.md`](../../docs/versioning.md).
