@@ -32,8 +32,17 @@ Every event tool returned `start`, `end` and `occurrenceDate` as UTC instants
   - All-day values become plain dates (`2026-11-16`). `end` stays exclusive,
     as DTEND is.
   - `occurrenceDate` is a date for an all-day series and a local time
-    otherwise.
+    otherwise. "Series" matters here: an occurrence moved to a timed slot
+    still has a date RECURRENCE-ID. pim-core reports this as
+    `ParsedEvent.occurrenceAllDay`; cal-mcp uses it and strips it from
+    results. For events built from tool input, which have no flag, a plain
+    `YYYY-MM-DD` value stays a date.
   - Each event gains `timeZone`.
+
+If Intl doesn't know `PIM_TIMEZONE`, rendering falls back to UTC. It doesn't
+throw, because by the time a result is rendered, a create, update or move has
+already reached the server, and reporting it as a failure would invite a
+duplicate retry.
 
 Both forms parse back (via `Date.parse`) to the instant the server uses
 internally, so an `occurrenceDate` passed back to `get_event`, `update_event`

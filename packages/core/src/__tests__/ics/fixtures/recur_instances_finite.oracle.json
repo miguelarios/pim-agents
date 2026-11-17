@@ -29,7 +29,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-10-02T17:00:00.000Z"
+      "occurrenceDate": "2012-10-02T17:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
@@ -59,7 +60,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-11-05T18:00:00.000Z"
+      "occurrenceDate": "2012-11-05T18:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
@@ -89,7 +91,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-11-06T18:00:00.000Z"
+      "occurrenceDate": "2012-11-06T18:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
@@ -119,7 +122,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-11-10T18:00:00.000Z"
+      "occurrenceDate": "2012-11-10T18:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "623c13c0-6c2b-45d6-a12b-c33ad61c4868",
@@ -149,7 +153,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-12-04T18:00:00.000Z"
+      "occurrenceDate": "2012-12-04T18:00:00.000Z",
+      "occurrenceAllDay": false
     }
   ]
 }

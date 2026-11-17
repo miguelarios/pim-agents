@@ -23,7 +23,8 @@
       "lastModified": null,
       "isRecurring": true,
       "alarms": [],
-      "occurrenceDate": "2024-06-09T03:00:00.000Z"
+      "occurrenceDate": "2024-06-09T03:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "123",
@@ -47,7 +48,8 @@
       "lastModified": null,
       "isRecurring": true,
       "alarms": [],
-      "occurrenceDate": "2024-06-10T03:00:00.000Z"
+      "occurrenceDate": "2024-06-10T03:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "123",
@@ -71,7 +73,8 @@
       "lastModified": null,
       "isRecurring": true,
       "alarms": [],
-      "occurrenceDate": "2024-06-12T03:00:00.000Z"
+      "occurrenceDate": "2024-06-12T03:00:00.000Z",
+      "occurrenceAllDay": false
     }
   ]
 }

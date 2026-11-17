@@ -175,3 +175,53 @@ describe("parseIcsEvents — timeZone of DTSTART", () => {
     ]);
   });
 });
+
+describe("parseIcsEvents — occurrenceAllDay", () => {
+  // An all-day daily series whose Nov 17 occurrence was moved to a timed slot.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//pim-core//test//EN",
+    "BEGIN:VEVENT",
+    "UID:allday-series@pim-core",
+    "DTSTAMP:20260101T000000Z",
+    "DTSTART;VALUE=DATE:20261116",
+    "DTEND;VALUE=DATE:20261117",
+    "RRULE:FREQ=DAILY;COUNT=3",
+    "SUMMARY:Series",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:allday-series@pim-core",
+    "DTSTAMP:20260101T000000Z",
+    "RECURRENCE-ID;VALUE=DATE:20261117",
+    "DTSTART:20261117T150000Z",
+    "DTEND:20261117T160000Z",
+    "SUMMARY:Moved",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("follows the RECURRENCE-ID, not the occurrence, when expanding", () => {
+    const result = parseIcsEvents(ics, {
+      start: "2026-11-15T00:00:00Z",
+      end: "2026-11-20T00:00:00Z",
+    });
+    expect(result.map((e) => [e.allDay, e.occurrenceAllDay])).toEqual([
+      [true, true],
+      [false, true],
+      [true, true],
+    ]);
+  });
+
+  it("follows the RECURRENCE-ID on an override read without a range", () => {
+    const override = parseIcsEvents(ics).find((e) => e.title === "Moved");
+    expect(override?.occurrenceAllDay).toBe(true);
+    expect(override?.allDay).toBe(false);
+  });
+
+  it("is false for a one-off", () => {
+    const oneOff = ics.replace("RRULE:FREQ=DAILY;COUNT=3\r\n", "");
+    const master = parseIcsEvents(oneOff).find((e) => e.title === "Series");
+    expect(master?.occurrenceAllDay).toBe(false);
+  });
+});

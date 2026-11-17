@@ -923,6 +923,80 @@ describe("calendarTools", () => {
       vi.clearAllMocks();
     });
 
+    it("answers span=this on an all-day series with dates, not the previous evening", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+      const masterIcs = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:daily",
+        "DTSTART;VALUE=DATE:20261116",
+        "DTEND;VALUE=DATE:20261117",
+        "RRULE:FREQ=DAILY;COUNT=3",
+        "SUMMARY:Trip",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n");
+      mockService.getEventWithMeta.mockResolvedValueOnce({
+        event: {
+          uid: "daily",
+          calendarId: "prov/Cal",
+          title: "Trip",
+          isRecurring: true,
+          start: "2026-11-16T00:00:00.000Z",
+          end: "2026-11-17T00:00:00.000Z",
+          allDay: true,
+          timeZone: null,
+          location: null,
+          status: null,
+          occurrenceDate: null,
+          recurrenceRule: "FREQ=DAILY;COUNT=3",
+          description: null,
+          attendees: [],
+          alarms: [],
+          categories: [],
+          geo: null,
+          organizer: null,
+          availability: null,
+          url: null,
+          created: null,
+          lastModified: null,
+        },
+        meta: { url: "/cal/daily.ics", etag: '"e"' },
+      });
+      mockService.fetchRawCalendarObject.mockResolvedValueOnce({
+        data: masterIcs,
+        url: "/cal/daily.ics",
+        etag: '"e"',
+      });
+      mockService.updateEvent.mockResolvedValueOnce({});
+
+      // The date-form occurrenceDate list_events now returns for this series.
+      const result = await handleCalendarTool(
+        "update_event",
+        {
+          calendar: "prov/Cal",
+          uid: "daily",
+          occurrenceDate: "2026-11-17",
+          span: "this",
+          title: "Moved",
+        },
+        mockService as any,
+      );
+
+      expect(result.isError).toBeFalsy();
+      const { event } = result.structuredContent;
+      expect([event.start, event.end, event.occurrenceDate, event.timeZone]).toEqual([
+        "2026-11-17",
+        "2026-11-18",
+        "2026-11-17",
+        null,
+      ]);
+      expect(mockService.updateEvent.mock.calls[0][2]).toContain(
+        "RECURRENCE-ID;VALUE=DATE:20261117",
+      );
+    });
+
     it("creates exception VEVENT when span=this on recurring event", async () => {
       const masterIcs = [
         "BEGIN:VCALENDAR",

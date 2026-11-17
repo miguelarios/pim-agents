@@ -22,7 +22,8 @@
       "lastModified": "2012-07-24T21:24:11.000Z",
       "isRecurring": false,
       "alarms": [],
-      "occurrenceDate": null
+      "occurrenceDate": null,
+      "occurrenceAllDay": false
     }
   ]
 }

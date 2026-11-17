@@ -40,6 +40,11 @@ export interface EventSummary {
   status: string | null;
   isRecurring: boolean;
   occurrenceDate: string | null;
+  /**
+   * Internal: true when the RECURRENCE-ID is a date (an all-day series). The
+   * tool layer uses it to render `occurrenceDate` and strips it from results.
+   */
+  occurrenceAllDay?: boolean;
 }
 
 export interface EventFull extends EventSummary {

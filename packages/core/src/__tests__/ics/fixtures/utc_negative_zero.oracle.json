@@ -22,7 +22,8 @@
       "lastModified": null,
       "isRecurring": false,
       "alarms": [],
-      "occurrenceDate": null
+      "occurrenceDate": null,
+      "occurrenceAllDay": false
     }
   ]
 }

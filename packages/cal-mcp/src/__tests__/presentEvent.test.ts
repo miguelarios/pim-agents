@@ -1,7 +1,7 @@
 import { dispatchTool } from "@miguelarios/pim-core/mcp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CALENDAR_TOOLS } from "../tools/calendarTools.js";
-import { presentEvent } from "../tools/presentEvent.js";
+import { presentEvent, presentPayload } from "../tools/presentEvent.js";
 
 const timed = {
   uid: "a",
@@ -63,8 +63,42 @@ describe("presentEvent", () => {
     ).toBe("2026-11-16T08:30:00-06:00");
   });
 
+  it("renders occurrenceDate as a date for an all-day series even when this occurrence is timed", () => {
+    const moved = {
+      ...timed,
+      isRecurring: true,
+      start: "2026-11-17T15:00:00.000Z",
+      end: "2026-11-17T16:00:00.000Z",
+      occurrenceDate: "2026-11-17T00:00:00.000Z",
+      occurrenceAllDay: true,
+    };
+    const out = presentEvent(moved, "America/Chicago");
+    expect(out.occurrenceDate).toBe("2026-11-17");
+    expect(out.start).toBe("2026-11-17T09:00:00-06:00");
+  });
+
+  it("keeps a date-form occurrenceDate handed back by a caller as a date", () => {
+    const out = presentEvent(
+      { ...allDay, isRecurring: true, occurrenceDate: "2026-11-16", occurrenceAllDay: true },
+      "America/Chicago",
+    );
+    expect(out.occurrenceDate).toBe("2026-11-16");
+  });
+
+  it("keeps the internal occurrenceAllDay flag out of the result", () => {
+    const out = presentEvent({ ...timed, occurrenceAllDay: false }, "America/Chicago");
+    expect("occurrenceAllDay" in out).toBe(false);
+  });
+
   it("leaves a value it cannot parse untouched", () => {
     expect(presentEvent({ ...timed, start: "garbage" }, "America/Chicago").start).toBe("garbage");
+  });
+});
+
+describe("presentPayload", () => {
+  it("falls back to UTC for an invalid zone instead of throwing", () => {
+    const out = presentPayload({ events: [timed] }, "Not/AZone");
+    expect(out.events[0].start).toBe("2026-11-16T14:30:00+00:00");
   });
 });
 

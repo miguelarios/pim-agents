@@ -1129,6 +1129,7 @@ export class CalDavService implements IcsCalendarBackend {
             status: event.status,
             isRecurring: event.isRecurring,
             occurrenceDate: event.occurrenceDate,
+            occurrenceAllDay: event.occurrenceAllDay,
           });
         }
       }
@@ -1886,6 +1887,7 @@ export class CalDavService implements IcsCalendarBackend {
       status: event.status,
       isRecurring: event.isRecurring,
       occurrenceDate: event.occurrenceDate,
+      occurrenceAllDay: event.occurrenceAllDay,
       description: event.description,
       url: event.url,
       availability: event.availability,

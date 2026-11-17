@@ -26,7 +26,8 @@
       "alarms": [],
       "recurrenceRule": "FREQ=DAILY;COUNT=4",
       "isRecurring": true,
-      "occurrenceDate": "2026-10-19T14:00:00.000Z"
+      "occurrenceDate": "2026-10-19T14:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "smoke-expand-1@example.com",
@@ -50,7 +51,8 @@
       "alarms": [],
       "recurrenceRule": "FREQ=DAILY;COUNT=4",
       "isRecurring": true,
-      "occurrenceDate": "2026-10-20T14:00:00.000Z"
+      "occurrenceDate": "2026-10-20T14:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "smoke-expand-1@example.com",
@@ -74,7 +76,8 @@
       "alarms": [],
       "recurrenceRule": "FREQ=DAILY;COUNT=4",
       "isRecurring": true,
-      "occurrenceDate": "2026-10-21T14:00:00.000Z"
+      "occurrenceDate": "2026-10-21T14:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "smoke-expand-1@example.com",
@@ -98,7 +101,8 @@
       "alarms": [],
       "recurrenceRule": "FREQ=DAILY;COUNT=4",
       "isRecurring": true,
-      "occurrenceDate": "2026-10-22T14:00:00.000Z"
+      "occurrenceDate": "2026-10-22T14:00:00.000Z",
+      "occurrenceAllDay": false
     }
   ]
 }

@@ -28,7 +28,8 @@
           "triggerHuman": "2012-09-03T23:30:00.000Z"
         }
       ],
-      "occurrenceDate": null
+      "occurrenceDate": null,
+      "occurrenceAllDay": false
     }
   ]
 }

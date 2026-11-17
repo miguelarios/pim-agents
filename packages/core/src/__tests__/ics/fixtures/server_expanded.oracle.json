@@ -26,7 +26,8 @@
       "lastModified": null,
       "alarms": [],
       "isRecurring": true,
-      "occurrenceDate": "2026-10-19T14:00:00.000Z"
+      "occurrenceDate": "2026-10-19T14:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "smoke-expand-1@example.com",
@@ -50,7 +51,8 @@
       "lastModified": null,
       "alarms": [],
       "isRecurring": true,
-      "occurrenceDate": "2026-10-21T14:00:00.000Z"
+      "occurrenceDate": "2026-10-21T14:00:00.000Z",
+      "occurrenceAllDay": false
     }
   ]
 }

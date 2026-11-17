@@ -27,7 +27,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-03-26T18:00:00.000Z"
+      "occurrenceDate": "2012-03-26T18:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "1334F9B7-6136-444E-A58D-472564C6AA73",
@@ -55,7 +56,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-04-01T18:00:00.000Z"
+      "occurrenceDate": "2012-04-01T18:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "1334F9B7-6136-444E-A58D-472564C6AA73",
@@ -83,7 +85,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-04-02T18:00:00.000Z"
+      "occurrenceDate": "2012-04-02T18:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "1334F9B7-6136-444E-A58D-472564C6AA73",
@@ -111,7 +114,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-04-08T18:00:00.000Z"
+      "occurrenceDate": "2012-04-08T18:00:00.000Z",
+      "occurrenceAllDay": false
     },
     {
       "uid": "1334F9B7-6136-444E-A58D-472564C6AA73",
@@ -139,7 +143,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": "2012-04-09T18:00:00.000Z"
+      "occurrenceDate": "2012-04-09T18:00:00.000Z",
+      "occurrenceAllDay": false
     }
   ]
 }

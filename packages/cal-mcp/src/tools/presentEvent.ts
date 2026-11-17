@@ -21,9 +21,12 @@ interface EventTimes {
   end: string;
   allDay: boolean;
   occurrenceDate: string | null;
+  /** Internal: the RECURRENCE-ID is a date. Consumed here, never sent. */
+  occurrenceAllDay?: boolean;
 }
 
 const UTC_MIDNIGHT = /T00:00:00(\.000)?Z$/;
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 function asDate(iso: string): string {
   const ms = Date.parse(iso);
@@ -34,35 +37,49 @@ function asLocal(iso: string, timezone: string): string {
   return Number.isNaN(Date.parse(iso)) ? iso : formatInTimezone(iso, timezone);
 }
 
+/**
+ * `timezone` if Intl knows it, else UTC. A bad `PIM_TIMEZONE` must not turn a
+ * write that already reached the server into a reported failure.
+ */
+function usableZone(timezone: string): string {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    return timezone;
+  } catch {
+    return "UTC";
+  }
+}
+
 export function presentEvent<T extends EventTimes>(event: T, timezone: string): T {
+  const { occurrenceAllDay, ...rest } = event;
   const render = (iso: string) => (event.allDay ? asDate(iso) : asLocal(iso, timezone));
   const occ = event.occurrenceDate;
+  // The slot belongs to the series, which may be all-day even when this
+  // occurrence was moved to a timed slot. Without the parser's flag (an event
+  // built from tool input), fall back to the value's own form.
+  const occIsDate =
+    occ !== null &&
+    (occurrenceAllDay ?? (DATE_ONLY.test(occ) || (event.allDay && UTC_MIDNIGHT.test(occ))));
   return {
-    ...event,
+    ...rest,
     start: render(event.start),
     end: render(event.end),
-    // The slot belongs to the series, which an override may have changed the
-    // type of: a date-valued RECURRENCE-ID is UTC midnight here, anything else
-    // is a time.
-    occurrenceDate:
-      occ === null
-        ? null
-        : event.allDay && UTC_MIDNIGHT.test(occ)
-          ? asDate(occ)
-          : asLocal(occ, timezone),
-  };
+    occurrenceDate: occ === null ? null : occIsDate ? asDate(occ) : asLocal(occ, timezone),
+  } as T;
 }
 
 /** `presentEvent` over a tool payload's `event` and `events` fields. */
 export function presentPayload<T>(payload: T, timezone: string): T {
   if (payload === null || typeof payload !== "object") return payload;
+  const zone = usableZone(timezone);
   const p = payload as Record<string, unknown>;
   const out: Record<string, unknown> = { ...p };
-  if (p.event && typeof p.event === "object") {
-    out.event = presentEvent(p.event as EventTimes, timezone);
-  }
+  // import_ics reports an event it could not read back as just `{ uid }`.
+  const isEvent = (e: unknown): e is EventTimes =>
+    typeof e === "object" && e !== null && typeof (e as EventTimes).start === "string";
+  if (isEvent(p.event)) out.event = presentEvent(p.event, zone);
   if (Array.isArray(p.events)) {
-    out.events = p.events.map((e) => presentEvent(e as EventTimes, timezone));
+    out.events = p.events.map((e) => (isEvent(e) ? presentEvent(e, zone) : e));
   }
   return out as T;
 }

@@ -27,7 +27,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": null
+      "occurrenceDate": null,
+      "occurrenceAllDay": false
     }
   ]
 }

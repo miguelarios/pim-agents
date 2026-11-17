@@ -655,6 +655,9 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
                 overrides.end ??
                 new Date(new Date(occurrenceDate).getTime() + occDuration).toISOString(),
               allDay: overrides.allDay ?? existing.allDay,
+              // createExceptionComponent writes the override's DTSTART in UTC,
+              // or as a date when it is all-day: report what a re-read would.
+              timeZone: (overrides.allDay ?? existing.allDay) ? null : "UTC",
               location: overrides.location ?? existing.location,
               description: overrides.description ?? existing.description,
               attendees: overrides.attendees

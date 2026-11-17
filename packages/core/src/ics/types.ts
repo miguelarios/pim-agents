@@ -65,6 +65,12 @@ export interface ParsedEvent {
   alarms: ParsedAlarm[];
   /** The occurrence's RECURRENCE-ID as an ISO instant (UTC midnight when date-only); null for a master or a one-off. */
   occurrenceDate: string | null;
+  /**
+   * True when the RECURRENCE-ID is a date (an all-day series), even if this
+   * occurrence was moved to a timed slot; false for a timed one and when
+   * there is no RECURRENCE-ID.
+   */
+  occurrenceAllDay: boolean;
 }
 
 export interface ParsedTodo {
