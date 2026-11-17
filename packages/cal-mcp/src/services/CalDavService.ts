@@ -10,7 +10,9 @@ import {
   formatInTimezone,
   getLocalDateParts,
   getTimezone,
+  parseInTimezone,
   toPimError,
+  usableTimezone,
   zonedTimeToUtc,
 } from "@miguelarios/pim-core";
 import {
@@ -22,6 +24,7 @@ import {
   parseIcsFreeBusy,
 } from "@miguelarios/pim-core/ics";
 import { DAVClient } from "tsdav";
+import { allDayDate } from "../localDate.js";
 import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
 import type {
   CalendarCollection,
@@ -91,6 +94,21 @@ class ProviderError extends PimError {
  */
 function providerError(providerId: string, error: unknown): Error {
   return new ProviderError(providerId, toPimError(asError(error)));
+}
+
+/**
+ * `[start, end)` widened by a day on each side, for asking the server and the
+ * parser. Both read an all-day (floating DATE) event as its UTC day, which
+ * can fall outside a range bounded by local midnights even though the event's
+ * local day is inside it. A recurring occurrence is also kept only when it
+ * *starts* in range. The caller filters the results back to the real range.
+ */
+function widened(start: string, end: string): { start: string; end: string } {
+  const DAY = 86_400_000;
+  return {
+    start: new Date(Date.parse(start) - DAY).toISOString(),
+    end: new Date(Date.parse(end) + DAY).toISOString(),
+  };
 }
 
 /** The little an event contributes to a free/busy answer. */
@@ -324,7 +342,8 @@ export class CalDavService implements IcsCalendarBackend {
 
   constructor(config: CalDavConfig) {
     this.accounts = new Map(config.accounts.map((a) => [a.id, a]));
-    this.timezone = getTimezone();
+    // A zone Intl does not know would make every formatted result throw.
+    this.timezone = usableTimezone(getTimezone());
   }
 
   private createClient(account: CalDavAccount): DAVClient {
@@ -1101,17 +1120,19 @@ export class CalDavService implements IcsCalendarBackend {
       const client = await this.getClient(account);
       const calendar = await this.findCalendar(client, calendarName, account.id);
 
+      const wide = widened(start, end);
       const objects = await client.fetchCalendarObjects({
         calendar,
-        timeRange: { start, end },
+        timeRange: wide,
         expand: true,
       });
 
       const summaries: EventSummary[] = [];
       for (const obj of objects) {
         if (!obj.data) continue;
-        const parsed = parseIcsEvents(obj.data, { start, end }, this.timezone);
+        const parsed = parseIcsEvents(obj.data, wide, this.timezone);
         for (const event of parsed) {
+          if (!this.overlaps(event, start, end)) continue;
           // Populate the URL cache opportunistically so subsequent
           // get/update/delete for any of these UIDs can skip the scan.
           if (event.uid && obj.url) {
@@ -1148,17 +1169,19 @@ export class CalDavService implements IcsCalendarBackend {
       const client = await this.getClient(account);
       const calendar = await this.findCalendar(client, calendarName, account.id);
 
+      const wide = widened(start, end);
       const objects = await client.fetchCalendarObjects({
         calendar,
-        timeRange: { start, end },
+        timeRange: wide,
         expand: true,
       });
 
       const events: EventFull[] = [];
       for (const obj of objects) {
         if (!obj.data) continue;
-        const parsed = parseIcsEvents(obj.data, { start, end }, this.timezone);
+        const parsed = parseIcsEvents(obj.data, wide, this.timezone);
         for (const event of parsed) {
+          if (!this.overlaps(event, start, end)) continue;
           events.push(this.toEventFull(event, calendarId));
         }
       }
@@ -1225,7 +1248,10 @@ export class CalDavService implements IcsCalendarBackend {
     master: ParsedEvent,
     occurrenceDate: string,
   ): ParsedEvent {
-    const target = new Date(occurrenceDate).getTime();
+    // An all-day series names its slots by date (see allDayDate).
+    const target = new Date(
+      master.allDay ? allDayDate(occurrenceDate, this.timezone) : occurrenceDate,
+    ).getTime();
     if (Number.isNaN(target)) {
       throw new ValidationError(
         `Invalid occurrenceDate "${occurrenceDate}" — use an ISO 8601 date-time`,
@@ -1555,19 +1581,24 @@ export class CalDavService implements IcsCalendarBackend {
       const { account, calendarName } = this.resolveAccount(calendarId);
       const client = await this.getClient(account);
       const calendar = await this.findCalendar(client, calendarName, account.id);
+      const wide = widened(start, end);
       const objects = await client.fetchCalendarObjects({
         calendar,
-        timeRange: { start, end },
+        timeRange: wide,
         expand: true,
       });
 
       for (const obj of objects) {
         if (!obj.data) continue;
-        const parsed = parseIcsEvents(obj.data, { start, end });
+        const parsed = parseIcsEvents(obj.data, wide, this.timezone);
         for (const event of parsed) {
+          if (!this.overlaps(event, start, end)) continue;
+          // An all-day event blocks its day where the user is, not the UTC
+          // day it is anchored to (which ends at 6 PM in Chicago).
+          const bound = (iso: string) => (event.allDay ? this.localMidnight(iso) : iso);
           out.push({
-            start: event.start,
-            end: event.end,
+            start: bound(event.start),
+            end: bound(event.end),
             status: event.status,
             availability: event.availability,
             allDay: event.allDay,
@@ -1580,6 +1611,32 @@ export class CalDavService implements IcsCalendarBackend {
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
     return out;
+  }
+
+  /**
+   * Whether `event` falls in [start, end): an all-day event by its local day
+   * (local midnight to local midnight), anything else by its instants. A
+   * zero-length event counts when it starts in the range.
+   */
+  private overlaps(
+    event: { start: string; end: string; allDay: boolean },
+    start: string,
+    end: string,
+  ): boolean {
+    const s = Date.parse(event.allDay ? this.localMidnight(event.start) : event.start);
+    const e = Date.parse(event.allDay ? this.localMidnight(event.end) : event.end);
+    const from = Date.parse(start);
+    const to = Date.parse(end);
+    return s < to && (e > from || (e === s && s >= from));
+  }
+
+  /**
+   * Midnight in the configured zone of the date that `utcMidnight` (an
+   * all-day anchor) names. It goes through parseInTimezone, so a midnight DST
+   * skips still falls on that date.
+   */
+  private localMidnight(utcMidnight: string): string {
+    return parseInTimezone(utcMidnight.slice(0, 10), this.timezone).toISOString();
   }
 
   /** Which candidates actually block time under the given options. */

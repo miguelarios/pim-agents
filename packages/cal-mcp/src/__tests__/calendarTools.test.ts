@@ -625,6 +625,7 @@ describe("calendarTools", () => {
     });
 
     it("get_free_busy passes the calendars and options through and wraps the result (#48)", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
       mockService.getFreeBusy.mockResolvedValueOnce({
         busy: [
           { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
@@ -649,11 +650,12 @@ describe("calendarTools", () => {
         "2026-03-10T17:00:00Z",
         { includeAllDayAsBusy: false, ignoreTentative: true },
       );
+      // Rendered in PIM_TIMEZONE, like every other time cal-mcp returns.
       expect(JSON.parse(result.content[0].text)).toEqual({
-        start: "2026-03-10T08:00:00.000Z",
-        end: "2026-03-10T17:00:00.000Z",
+        start: "2026-03-10T08:00:00+00:00",
+        end: "2026-03-10T17:00:00+00:00",
         busy: [
-          { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
+          { start: "2026-03-10T09:00:00+00:00", end: "2026-03-10T10:00:00+00:00", type: "busy" },
         ],
         count: 1,
         sources: { "prov/A": "server" },
@@ -804,6 +806,7 @@ describe("calendarTools", () => {
     });
 
     it("list_events with an empty `calendars` falls back to every calendar (#49)", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
       mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Only" }]);
       mockService.listEvents.mockResolvedValue([]);
 
@@ -814,7 +817,12 @@ describe("calendarTools", () => {
       );
 
       expect(mockService.listCalendars).toHaveBeenCalledTimes(1);
-      expect(mockService.listEvents).toHaveBeenCalledWith("prov/Only", "2026-03-01", "2026-03-31");
+      // Date-only bounds are midnight in PIM_TIMEZONE (UTC here).
+      expect(mockService.listEvents).toHaveBeenCalledWith(
+        "prov/Only",
+        "2026-03-01T00:00:00.000Z",
+        "2026-03-31T00:00:00.000Z",
+      );
     });
 
     it("list_events reports an unknown calendar in `calendars` as CALENDAR_NOT_FOUND (#49)", async () => {
@@ -2230,6 +2238,7 @@ describe("calendarTools", () => {
     });
 
     it("list_events across all calendars returns what it could read and says what it skipped", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "UTC");
       nextcloudDown();
       mockService.listEvents.mockResolvedValueOnce([]);
       const result = await handleCalendarTool(
@@ -2240,8 +2249,8 @@ describe("calendarTools", () => {
       expect(result.isError).toBeFalsy();
       expect(mockService.listEvents).toHaveBeenCalledWith(
         "mailbox/Work",
-        "2026-03-01",
-        "2026-03-31",
+        "2026-03-01T00:00:00.000Z",
+        "2026-03-31T00:00:00.000Z",
       );
       expect(result.structuredContent.unavailableProviders).toEqual([NEXTCLOUD_DOWN]);
       expect(() => v.parse(eventListSchema, result.structuredContent)).not.toThrow();

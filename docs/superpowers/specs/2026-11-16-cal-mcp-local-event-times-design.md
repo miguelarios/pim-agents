@@ -62,3 +62,28 @@ exactly how date-only values are anchored inside.
   parsed throughout cal-mcp and pim-core's ICS helpers (`mergeFreeBusy` even
   compares them as strings). Converting only at the boundary keeps that code
   unchanged.
+
+## Follow-up: times going in (cal-mcp 3.0.0)
+
+Results were local, but what callers passed in still went through
+`new Date`:
+
+- **Date-only range bounds:** `list_events` from `2026-11-16` to `2026-11-17`
+  asked the server for the UTC day, 6 PM to 6 PM in Chicago.
+- **Offset-less times:** `create_event` at `2026-11-16T08:30:00` was read in
+  the host's zone (UTC in a container) and written as 02:30 Chicago time.
+- **All-day busy time:** an all-day event blocked the UTC day, so
+  `find_free_slots` offered its evening as free.
+
+`zonedArgs` rewrites each tool's time arguments before its handler runs,
+using pim-core's `parseInTimezone`:
+
+- **Range bounds:** a date means local midnight.
+- **Event times and `occurrenceDate`:** a plain date is left as given,
+  because it names an all-day date and the ICS layer reads it by calendar
+  date. Local midnight would be the previous UTC date east of Greenwich.
+- **Values with `Z` or an offset** pass through untouched.
+
+Busy candidates for all-day events now span local midnight to local
+midnight. `get_free_busy` renders its range and periods in `PIM_TIMEZONE`,
+like every other result. That output change is why this is a major.
