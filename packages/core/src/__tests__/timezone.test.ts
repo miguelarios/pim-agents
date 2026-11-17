@@ -3,6 +3,7 @@ import {
   formatInTimezone,
   getLocalDateParts,
   getTimezone,
+  parseInTimezone,
   parseTimestamp,
   zonedTimeToUtc,
 } from "../timezone.js";
@@ -97,5 +98,83 @@ describe("getLocalDateParts", () => {
       month: 7,
       day: 9,
     });
+  });
+});
+
+describe("parseInTimezone", () => {
+  const tz = "America/Chicago";
+  it("reads a date as midnight in the zone", () => {
+    expect(parseInTimezone("2026-11-16", tz).toISOString()).toBe("2026-11-16T06:00:00.000Z");
+  });
+  it("reads a date-time with no offset as wall-clock time in the zone", () => {
+    expect(parseInTimezone("2026-11-16T08:30", tz).toISOString()).toBe("2026-11-16T14:30:00.000Z");
+    expect(parseInTimezone("2026-07-16T08:30:15", tz).toISOString()).toBe(
+      "2026-07-16T13:30:15.000Z",
+    );
+  });
+  it("keeps an explicit offset or Z", () => {
+    expect(parseInTimezone("2026-11-16T08:30:00Z", tz).toISOString()).toBe(
+      "2026-11-16T08:30:00.000Z",
+    );
+    expect(parseInTimezone("2026-11-16T08:30:00+01:00", tz).toISOString()).toBe(
+      "2026-11-16T07:30:00.000Z",
+    );
+  });
+  it("is an Invalid Date for nonsense", () => {
+    expect(Number.isNaN(parseInTimezone("next tuesday", tz).getTime())).toBe(true);
+    expect(Number.isNaN(parseInTimezone("2026-13-45", tz).getTime())).toBe(true);
+  });
+  it("falls back to UTC for a zone Intl does not know", () => {
+    expect(parseInTimezone("2026-11-16", "Not/AZone").toISOString()).toBe(
+      "2026-11-16T00:00:00.000Z",
+    );
+  });
+});
+
+describe("parseInTimezone edge cases (#164 review)", () => {
+  it("resolves a date whose midnight DST skips to the first instant of that day", () => {
+    // Santiago jumps from 00:00 to 01:00 on Sep 6 2026 (-04:00 → -03:00).
+    const santiago = parseInTimezone("2026-09-06", "America/Santiago");
+    expect(santiago.toISOString()).toBe("2026-09-06T04:00:00.000Z");
+    expect(getLocalDateParts(santiago, "America/Santiago").day).toBe(6);
+    const azores = parseInTimezone("2026-03-29", "Atlantic/Azores");
+    expect(getLocalDateParts(azores, "Atlantic/Azores").day).toBe(29);
+  });
+
+  it("moves a wall time inside a spring-forward gap forward by the gap", () => {
+    // 02:30 does not exist in Chicago on Mar 8 2026; it reads as 03:30 CDT.
+    expect(parseInTimezone("2026-03-08T02:30", "America/Chicago").toISOString()).toBe(
+      "2026-03-08T08:30:00.000Z",
+    );
+  });
+
+  it("takes the earlier reading of a fall-back overlap", () => {
+    expect(parseInTimezone("2026-11-01T01:30", "America/Chicago").toISOString()).toBe(
+      "2026-11-01T06:30:00.000Z",
+    );
+  });
+
+  it("rejects an hour, minute or second out of range, but reads 24:00 as next midnight", () => {
+    for (const bad of ["2026-11-16T25:00", "2026-11-16T08:99", "2026-11-16T08:30:99"]) {
+      expect(Number.isNaN(parseInTimezone(bad, "America/Chicago").getTime()), bad).toBe(true);
+    }
+    expect(parseInTimezone("2026-11-16T24:00", "America/Chicago").toISOString()).toBe(
+      "2026-11-17T06:00:00.000Z",
+    );
+  });
+
+  it("accepts a space separator and a year-month, both in the zone", () => {
+    expect(parseInTimezone("2026-11-16 08:30", "America/Chicago").toISOString()).toBe(
+      "2026-11-16T14:30:00.000Z",
+    );
+    expect(parseInTimezone("2026-11", "America/Chicago").toISOString()).toBe(
+      "2026-11-01T05:00:00.000Z",
+    );
+  });
+
+  it("keeps fractional seconds", () => {
+    expect(parseInTimezone("2026-11-16T08:30:15.750", "America/Chicago").toISOString()).toBe(
+      "2026-11-16T14:30:15.750Z",
+    );
   });
 });

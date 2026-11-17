@@ -652,8 +652,16 @@ export const EMAIL_TOOLS: ReadonlyArray<ToolDef<EmailServices>> = [
           description:
             'Search all message content (headers + body, IMAP TEXT). Multiple words are ANDed. Use quotes for exact phrase. Use -term for exclusion. Examples: "budget", "report -draft", \'"quarterly report"\'.',
         },
-        since: { type: "string", description: "Emails on or after this date (YYYY-MM-DD)." },
-        before: { type: "string", description: "Emails before this date (YYYY-MM-DD)." },
+        since: {
+          type: "string",
+          description:
+            "Emails on or after this date (YYYY-MM-DD), from midnight in the configured time zone. A date-time with no offset is read in that zone too.",
+        },
+        before: {
+          type: "string",
+          description:
+            "Emails before this date (YYYY-MM-DD), up to midnight in the configured time zone.",
+        },
         unread: {
           type: "boolean",
           description:

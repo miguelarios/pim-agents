@@ -262,6 +262,32 @@ describe("ImapService", () => {
       );
     });
 
+    it("searches the local day in PIM_TIMEZONE, shaped for the server's capabilities", async () => {
+      vi.stubEnv("PIM_TIMEZONE", "Europe/Berlin");
+      const local = new ImapService(testConfig);
+      try {
+        // No WITHIN: UTC midnight of the local dates, so imapflow sends
+        // SINCE 16-Nov-2026 (local midnight here is 23:00Z on the 15th).
+        mockSearch.mockResolvedValueOnce([]);
+        await local.searchEmails("INBOX", { since: "2026-11-16", before: "2026-11-17" });
+        expect(mockSearch).toHaveBeenLastCalledWith(
+          { since: new Date("2026-11-16T00:00:00Z"), before: new Date("2026-11-17T00:00:00Z") },
+          { uid: true },
+        );
+
+        // WITHIN: the exact local midnights, which imapflow turns into seconds.
+        mockCapabilities.set("WITHIN", true);
+        mockSearch.mockResolvedValueOnce([]);
+        await local.searchEmails("INBOX", { since: "2026-11-16", before: "2026-11-17" });
+        expect(mockSearch).toHaveBeenLastCalledWith(
+          { since: new Date("2026-11-15T23:00:00Z"), before: new Date("2026-11-16T23:00:00Z") },
+          { uid: true },
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("intersects UIDs when criteria has duplicate keys (multi-word subject)", async () => {
       // First search: subject "dinner" → UIDs [101, 102, 103]
       mockSearch.mockResolvedValueOnce([101, 102, 103]);
