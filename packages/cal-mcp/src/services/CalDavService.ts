@@ -10,7 +10,9 @@ import {
   formatInTimezone,
   getLocalDateParts,
   getTimezone,
+  parseInTimezone,
   toPimError,
+  usableTimezone,
   zonedTimeToUtc,
 } from "@miguelarios/pim-core";
 import {
@@ -324,7 +326,8 @@ export class CalDavService implements IcsCalendarBackend {
 
   constructor(config: CalDavConfig) {
     this.accounts = new Map(config.accounts.map((a) => [a.id, a]));
-    this.timezone = getTimezone();
+    // A zone Intl does not know would make every formatted result throw.
+    this.timezone = usableTimezone(getTimezone());
   }
 
   private createClient(account: CalDavAccount): DAVClient {
@@ -1563,11 +1566,14 @@ export class CalDavService implements IcsCalendarBackend {
 
       for (const obj of objects) {
         if (!obj.data) continue;
-        const parsed = parseIcsEvents(obj.data, { start, end });
+        const parsed = parseIcsEvents(obj.data, { start, end }, this.timezone);
         for (const event of parsed) {
+          // An all-day event blocks its day where the user is, not the UTC
+          // day it is anchored to (which ends at 6 PM in Chicago).
+          const bound = (iso: string) => (event.allDay ? this.localMidnight(iso) : iso);
           out.push({
-            start: event.start,
-            end: event.end,
+            start: bound(event.start),
+            end: bound(event.end),
             status: event.status,
             availability: event.availability,
             allDay: event.allDay,
@@ -1580,6 +1586,15 @@ export class CalDavService implements IcsCalendarBackend {
       throw toPimError(error instanceof Error ? error : new Error(String(error)));
     }
     return out;
+  }
+
+  /**
+   * Midnight in the configured zone of the date that `utcMidnight` (an
+   * all-day anchor) names. It goes through parseInTimezone, so a midnight DST
+   * skips still falls on that date.
+   */
+  private localMidnight(utcMidnight: string): string {
+    return parseInTimezone(utcMidnight.slice(0, 10), this.timezone).toISOString();
   }
 
   /** Which candidates actually block time under the given options. */

@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { ErrorCode, getLocalDateParts, getTimezone, zonedTimeToUtc } from "@miguelarios/pim-core";
+import {
+  ErrorCode,
+  formatInTimezone,
+  getLocalDateParts,
+  getTimezone,
+  usableTimezone,
+  zonedTimeToUtc,
+} from "@miguelarios/pim-core";
 import {
   type ExceptionOverrides,
   IcsGenerateError,
@@ -39,6 +46,7 @@ import {
   singleEventSchema,
 } from "./calendarSchemas.js";
 import { presentPayload } from "./presentEvent.js";
+import { withZonedArgs } from "./zonedArgs.js";
 
 type Attendee = { email: string };
 type Alarm = { type: "relative" | "absolute"; trigger: number | string };
@@ -302,7 +310,7 @@ const READ_ONLY = {
   openWorldHint: true,
 } as const;
 
-export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
+const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
   {
     name: "list_calendars",
     title: "List Calendars",
@@ -332,8 +340,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             "Provider-prefixed calendar ID (e.g., mailbox/Work). If omitted, queries all calendars.",
         },
         calendars: CALENDARS_PROP("query"),
-        start: { type: "string", description: "Start of date range (ISO 8601)" },
-        end: { type: "string", description: "End of date range (ISO 8601)" },
+        start: {
+          type: "string",
+          description:
+            "Start of date range (ISO 8601). A date means midnight, and a time with no offset is read, in the configured time zone.",
+        },
+        end: {
+          type: "string",
+          description:
+            "End of date range (ISO 8601, exclusive). A date means midnight, and a time with no offset is read, in the configured time zone.",
+        },
         detailLevel: DETAIL_LEVEL_PROP,
       },
       required: ["start", "end"],
@@ -405,11 +421,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         calendars: CALENDARS_PROP("search"),
         start: {
           type: "string",
-          description: "Range start (ISO 8601). Defaults to 90 days ago.",
+          description:
+            "Range start (ISO 8601). Defaults to 90 days ago. A date means midnight, and a time with no offset is read, in the configured time zone.",
         },
         end: {
           type: "string",
-          description: "Range end (ISO 8601). Defaults to 90 days ahead.",
+          description:
+            "Range end (ISO 8601). Defaults to 90 days ahead. A date means midnight, and a time with no offset is read, in the configured time zone.",
         },
         detailLevel: DETAIL_LEVEL_PROP,
       },
@@ -485,8 +503,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       properties: {
         calendar: CALENDAR_PROP,
         title: { type: "string", description: "Event title" },
-        start: { type: "string", description: "Start time (ISO 8601)" },
-        end: { type: "string", description: "End time (ISO 8601)" },
+        start: {
+          type: "string",
+          description:
+            "Start time (ISO 8601). A time with no offset is wall-clock time in the configured time zone; for an all-day event pass a date (YYYY-MM-DD).",
+        },
+        end: {
+          type: "string",
+          description:
+            "End time (ISO 8601). A time with no offset is wall-clock time in the configured time zone; for an all-day event pass a date (YYYY-MM-DD).",
+        },
         allDay: { type: "boolean", description: "All-day event flag (default: false)" },
         location: { type: "string", description: "Event location" },
         description: { type: "string", description: "Event description" },
@@ -560,8 +586,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         calendar: CALENDAR_PROP,
         uid: { type: "string", description: "Event UID to update" },
         title: { type: "string", description: "New event title" },
-        start: { type: "string", description: "New start time (ISO 8601)" },
-        end: { type: "string", description: "New end time (ISO 8601)" },
+        start: {
+          type: "string",
+          description:
+            "New start time (ISO 8601). A time with no offset is wall-clock time in the configured time zone; for an all-day event pass a date (YYYY-MM-DD).",
+        },
+        end: {
+          type: "string",
+          description:
+            "New end time (ISO 8601). A time with no offset is wall-clock time in the configured time zone; for an all-day event pass a date (YYYY-MM-DD).",
+        },
         allDay: { type: "boolean", description: "All-day event flag" },
         location: { type: "string", description: "New location" },
         description: { type: "string", description: "New description" },
@@ -970,8 +1004,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             type: "object",
             properties: {
               title: { type: "string", description: "Event title" },
-              start: { type: "string", description: "Start time (ISO 8601)" },
-              end: { type: "string", description: "End time (ISO 8601)" },
+              start: {
+                type: "string",
+                description:
+                  "Start time (ISO 8601). A time with no offset is wall-clock time in the configured time zone; for an all-day event pass a date (YYYY-MM-DD).",
+              },
+              end: {
+                type: "string",
+                description:
+                  "End time (ISO 8601). A time with no offset is wall-clock time in the configured time zone; for an all-day event pass a date (YYYY-MM-DD).",
+              },
               allDay: { type: "boolean", description: "All-day event flag (default: false)" },
               location: { type: "string", description: "Event location" },
               description: { type: "string", description: "Event description" },
@@ -1101,7 +1143,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
     name: "get_free_busy",
     title: "Get Free/Busy",
     description:
-      "When is a calendar busy? Returns the busy periods in a date range — merged, typed as busy, tentative or unavailable — without event details, so availability questions cost one call and expose nothing else. Uses the server's own free-busy-query where it supports one, otherwise computes from the events. Use find_free_slots to get the free windows of a given length instead.",
+      "When is a calendar busy? Returns the busy periods in a date range — merged, typed as busy, tentative or unavailable — without event details, so availability questions cost one call and expose nothing else. Times come back in the configured time zone with their offset. Uses the server's own free-busy-query where it supports one, otherwise computes from the events. Use find_free_slots to get the free windows of a given length instead.",
     annotations: READ_ONLY,
     inputSchema: {
       type: "object",
@@ -1112,8 +1154,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           description:
             "Provider-prefixed calendar IDs to report on. If omitted, uses all calendars.",
         },
-        start: { type: "string", description: "Start of range (ISO 8601)" },
-        end: { type: "string", description: "End of range (ISO 8601)" },
+        start: {
+          type: "string",
+          description:
+            "Start of range (ISO 8601). A date means midnight, and a time with no offset is read, in the configured time zone.",
+        },
+        end: {
+          type: "string",
+          description:
+            "End of range (ISO 8601). A date means midnight, and a time with no offset is read, in the configured time zone.",
+        },
         includeAllDayAsBusy: {
           type: "boolean",
           description:
@@ -1148,10 +1198,13 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           includeAllDayAsBusy: args.includeAllDayAsBusy ?? false,
           ignoreTentative: args.ignoreTentative ?? false,
         });
+        // Rendered in PIM_TIMEZONE like every other time this server returns.
+        const zone = usableTimezone(getTimezone());
+        const local = (iso: string) => formatInTimezone(iso, zone);
         return ok({
-          start: new Date(args.start).toISOString(),
-          end: new Date(args.end).toISOString(),
-          busy,
+          start: local(args.start),
+          end: local(args.end),
+          busy: busy.map((p) => ({ ...p, start: local(p.start), end: local(p.end) })),
           count: busy.length,
           sources,
         });
@@ -1172,8 +1225,16 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           description:
             "Provider-prefixed calendar IDs to check availability against. If omitted, uses all calendars.",
         },
-        start: { type: "string", description: "Start of search range (ISO 8601)" },
-        end: { type: "string", description: "End of search range (ISO 8601)" },
+        start: {
+          type: "string",
+          description:
+            "Start of search range (ISO 8601). A date means midnight, and a time with no offset is read, in the configured time zone.",
+        },
+        end: {
+          type: "string",
+          description:
+            "End of search range (ISO 8601). A date means midnight, and a time with no offset is read, in the configured time zone.",
+        },
         duration: { type: "number", description: "Minimum slot duration in minutes" },
         preferredStart: {
           type: "string",
@@ -1239,3 +1300,6 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       }),
   },
 ];
+
+/** Every tool, with its time arguments read in PIM_TIMEZONE (see `zonedArgs`). */
+export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = TOOLS.map(withZonedArgs);
