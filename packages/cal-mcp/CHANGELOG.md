@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.0.0 (2026-11-17)
+
+- **Breaking: `get_free_busy` answers in `PIM_TIMEZONE`** (#165). Its `start`, `end` and every busy period come back with their offset (`2026-11-16T08:30:00-06:00`) instead of as UTC instants, like every other cal-mcp result since 2.0.0. The instants are unchanged.
+- **Time arguments are read in `PIM_TIMEZONE`** (#165). They went through `new Date`, so:
+
+  | Argument | Was read as | Now |
+  |---|---|---|
+  | Date-only range bound (`list_events`, `search_events`, `get_free_busy`, `find_free_slots`), e.g. `2026-11-16` | UTC midnight (6 PM the day before in Chicago) | Local midnight |
+  | Time with no offset (`create_event`, `create_events_batch`, `update_event`, `occurrenceDate`, absolute alarm triggers), e.g. `2026-11-16T08:30:00` | The host's zone, UTC in a container (written as 02:30 in Chicago) | Local wall-clock time |
+  | Date-time on an all-day event, e.g. `2026-11-16T00:00:00` in Berlin | Its UTC date (Nov 15) | Its local date |
+
+  Values with `Z` or an offset, and plain dates on all-day events, are used as given, as before.
+- **All-day events cover their local day** (#165). `find_free_slots` with `includeAllDayAsBusy`, and computed `get_free_busy`, used to block the UTC day, so 6 PM onwards of an out-of-office day was offered as free in Chicago. Listings and busy time also stop missing an all-day event, including a recurring one, near a range's edges: the server and the parser are asked for a day more on each side, and the results are filtered to the real range by local day.
+- Confirmation prompts for `span: "future"` show the occurrence in local time.
+- Requires `@miguelarios/pim-core` 1.2.0.
+
 ## 2.0.0 (2026-11-17)
 
 - **Breaking: event times come back in `PIM_TIMEZONE`, and all-day events as dates** (#162). Every event result (`list_events`, `get_today_events`, `search_events`, `get_event`, `create_event`, `update_event`, `move_event`, `create_events_batch`, `import_ics`) used to give `start`, `end` and `occurrenceDate` as UTC instants. All-day events were UTC midnight, which reads as the previous evening anywhere west of Greenwich. The values now look like this:
