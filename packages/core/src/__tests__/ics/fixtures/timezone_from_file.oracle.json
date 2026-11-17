@@ -6,6 +6,7 @@
       "start": "2023-03-06T21:23:00.000Z",
       "end": "2023-03-06T22:23:00.000Z",
       "allDay": false,
+      "timeZone": "Nowhere/Middle",
       "location": null,
       "description": null,
       "status": null,
@@ -21,7 +22,8 @@
       "lastModified": null,
       "isRecurring": false,
       "alarms": [],
-      "occurrenceDate": null
+      "occurrenceDate": null,
+      "occurrenceAllDay": false
     }
   ]
 }

@@ -16,7 +16,25 @@ function nullIfEmpty(value: unknown): string | null {
   return value.length > 0 ? value : null;
 }
 
-function buildBaseEvent(component: ICAL.Component): Omit<ParsedEvent, "start" | "end"> {
+/**
+ * The TZID `time` was written in: "UTC" for a UTC time, null when it has none
+ * (floating, or a date). Taken from the property's TZID parameter when given,
+ * so a zone ical.js has no definition for is still reported by name.
+ */
+function zoneNameOf(time: ICAL.Time, prop?: ICAL.Property | null): string | null {
+  if (time.isDate) return null;
+  const param = prop?.getParameter("tzid");
+  if (typeof param === "string" && param.length > 0) return param;
+  const zone = time.zone;
+  if (zone === ICAL.Timezone.utcTimezone) return "UTC";
+  if (!zone || zone === ICAL.Timezone.localTimezone) return null;
+  const tzid = zone.tzid;
+  return tzid && tzid !== "floating" ? tzid : null;
+}
+
+function buildBaseEvent(
+  component: ICAL.Component,
+): Omit<ParsedEvent, "start" | "end" | "timeZone" | "occurrenceAllDay"> {
   const url = component.getFirstPropertyValue("url");
   const status = component.getFirstPropertyValue("status");
   const transp = component.getFirstPropertyValue("transp");
@@ -143,19 +161,25 @@ function emitNonExpanded(
   const startIso = timeToEventIsoWithTz(dtstart, timezone);
   const endIso = dtend instanceof ICAL.Time ? timeToEventIsoWithTz(dtend, timezone) : startIso;
   let occDate: string | null = null;
+  let occAllDay = false;
   if (isException) {
     const recurId = component.getFirstPropertyValue("recurrence-id");
     // Same conversion as start/end and as emitOccurrences, so a date-only
     // RECURRENCE-ID is UTC midnight here too rather than host-local midnight.
-    if (recurId instanceof ICAL.Time) occDate = timeToEventIsoWithTz(recurId, timezone);
+    if (recurId instanceof ICAL.Time) {
+      occDate = timeToEventIsoWithTz(recurId, timezone);
+      occAllDay = recurId.isDate;
+    }
   }
   return [
     {
       ...base,
       allDay: allDay,
+      timeZone: zoneNameOf(dtstart, component.getFirstProperty("dtstart")),
       start: startIso,
       end: endIso,
       occurrenceDate: occDate,
+      occurrenceAllDay: occAllDay,
       // A RECURRENCE-ID makes this an occurrence of a series even without an
       // RRULE of its own: a detached override never carries one, and a server
       // that honours calendar-query <expand> (SabreDAV/Nextcloud) returns
@@ -199,6 +223,7 @@ function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string)
       rdates: series.rdates,
       isRecurring: true,
       allDay: allDay,
+      timeZone: zoneNameOf(details.startDate, effective.component.getFirstProperty("dtstart")),
       start: timeToEventIsoWithTz(details.startDate, timezone),
       end: timeToEventIsoWithTz(details.endDate, timezone),
       // occurrenceDate is the original RRULE-generated slot (RECURRENCE-ID).
@@ -206,6 +231,7 @@ function emitOccurrences(event: ICAL.Event, range: TimeRange, timezone?: string)
       // it is the original time the occurrence was supposed to fire, which is
       // what consumers need to reconcile overrides back to the master series.
       occurrenceDate: timeToEventIsoWithTz(details.recurrenceId, timezone),
+      occurrenceAllDay: details.recurrenceId.isDate,
     });
   }
   return out;

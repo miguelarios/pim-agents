@@ -125,3 +125,103 @@ describe("recurrence of a stored object read without a range (#99 review)", () =
     expect(ranged.every((e) => e.isRecurring)).toBe(true);
   });
 });
+
+describe("parseIcsEvents — timeZone of DTSTART", () => {
+  const wrap = (body: string) =>
+    `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//pim-core//test//EN\r\nBEGIN:VEVENT\r\nUID:tz@pim-core\r\nDTSTAMP:20260101T000000Z\r\n${body}\r\nSUMMARY:tz\r\nEND:VEVENT\r\nEND:VCALENDAR`;
+
+  it("reports the TZID an event was written in", () => {
+    const ics = wrap(
+      "DTSTART;TZID=America/Chicago:20261116T083000\r\nDTEND;TZID=America/Chicago:20261116T093000",
+    );
+    const [event] = parseIcsEvents(ics);
+    expect(event.timeZone).toBe("America/Chicago");
+    expect(event.start).toBe("2026-11-16T14:30:00.000Z");
+  });
+
+  it("reports UTC for a Z time", () => {
+    const [event] = parseIcsEvents(wrap("DTSTART:20261116T143000Z\r\nDTEND:20261116T153000Z"));
+    expect(event.timeZone).toBe("UTC");
+  });
+
+  it("reports null for a floating time and for an all-day event", () => {
+    const [floating] = parseIcsEvents(wrap("DTSTART:20261116T083000\r\nDTEND:20261116T093000"));
+    expect(floating.timeZone).toBeNull();
+    const [allDay] = parseIcsEvents(
+      wrap("DTSTART;VALUE=DATE:20261116\r\nDTEND;VALUE=DATE:20261117"),
+    );
+    expect(allDay.timeZone).toBeNull();
+  });
+
+  it("keeps a TZID the bundled zone data does not know", () => {
+    const ics = wrap(
+      "DTSTART;TZID=Custom/Nowhere:20261116T083000\r\nDTEND;TZID=Custom/Nowhere:20261116T093000",
+    );
+    expect(parseIcsEvents(ics)[0].timeZone).toBe("Custom/Nowhere");
+  });
+
+  it("reports the TZID on every expanded occurrence", () => {
+    const ics = wrap(
+      "DTSTART;TZID=America/Chicago:20261102T083000\r\nDTEND;TZID=America/Chicago:20261102T093000\r\nRRULE:FREQ=WEEKLY;COUNT=3",
+    );
+    const result = parseIcsEvents(ics, {
+      start: "2026-11-01T00:00:00Z",
+      end: "2026-12-01T00:00:00Z",
+    });
+    expect(result.map((e) => e.timeZone)).toEqual([
+      "America/Chicago",
+      "America/Chicago",
+      "America/Chicago",
+    ]);
+  });
+});
+
+describe("parseIcsEvents — occurrenceAllDay", () => {
+  // An all-day daily series whose Nov 17 occurrence was moved to a timed slot.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//pim-core//test//EN",
+    "BEGIN:VEVENT",
+    "UID:allday-series@pim-core",
+    "DTSTAMP:20260101T000000Z",
+    "DTSTART;VALUE=DATE:20261116",
+    "DTEND;VALUE=DATE:20261117",
+    "RRULE:FREQ=DAILY;COUNT=3",
+    "SUMMARY:Series",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:allday-series@pim-core",
+    "DTSTAMP:20260101T000000Z",
+    "RECURRENCE-ID;VALUE=DATE:20261117",
+    "DTSTART:20261117T150000Z",
+    "DTEND:20261117T160000Z",
+    "SUMMARY:Moved",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  it("follows the RECURRENCE-ID, not the occurrence, when expanding", () => {
+    const result = parseIcsEvents(ics, {
+      start: "2026-11-15T00:00:00Z",
+      end: "2026-11-20T00:00:00Z",
+    });
+    expect(result.map((e) => [e.allDay, e.occurrenceAllDay])).toEqual([
+      [true, true],
+      [false, true],
+      [true, true],
+    ]);
+  });
+
+  it("follows the RECURRENCE-ID on an override read without a range", () => {
+    const override = parseIcsEvents(ics).find((e) => e.title === "Moved");
+    expect(override?.occurrenceAllDay).toBe(true);
+    expect(override?.allDay).toBe(false);
+  });
+
+  it("is false for a one-off", () => {
+    const oneOff = ics.replace("RRULE:FREQ=DAILY;COUNT=3\r\n", "");
+    const master = parseIcsEvents(oneOff).find((e) => e.title === "Series");
+    expect(master?.occurrenceAllDay).toBe(false);
+  });
+});

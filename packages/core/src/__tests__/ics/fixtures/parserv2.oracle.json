@@ -6,6 +6,7 @@
       "start": "2012-09-11T17:30:00.000Z",
       "end": "2012-09-11T18:00:00.000Z",
       "allDay": false,
+      "timeZone": "America/Los_Angeles",
       "location": null,
       "description": "desc",
       "status": "confirmed",
@@ -26,7 +27,8 @@
       "alarms": [
         { "type": "relative", "trigger": -300, "triggerHuman": "5 minutes before" }
       ],
-      "occurrenceDate": null
+      "occurrenceDate": null,
+      "occurrenceAllDay": false
     }
   ]
 }

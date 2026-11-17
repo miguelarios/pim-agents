@@ -34,10 +34,17 @@ export interface EventSummary {
   start: string;
   end: string;
   allDay: boolean;
+  /** The TZID the event was written in; "UTC" for a UTC time, null when floating or all-day. */
+  timeZone: string | null;
   location: string | null;
   status: string | null;
   isRecurring: boolean;
   occurrenceDate: string | null;
+  /**
+   * Internal: true when the RECURRENCE-ID is a date (an all-day series). The
+   * tool layer uses it to render `occurrenceDate` and strips it from results.
+   */
+  occurrenceAllDay?: boolean;
 }
 
 export interface EventFull extends EventSummary {

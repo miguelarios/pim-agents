@@ -6,6 +6,7 @@
       "start": "2012-06-30T13:00:00.000Z",
       "end": "2012-06-30T14:00:00.000Z",
       "allDay": false,
+      "timeZone": "America/Los_Angeles",
       "location": null,
       "description": null,
       "status": "confirmed",
@@ -21,7 +22,8 @@
       "lastModified": "2012-07-24T21:24:11.000Z",
       "isRecurring": false,
       "alarms": [],
-      "occurrenceDate": null
+      "occurrenceDate": null,
+      "occurrenceAllDay": false
     }
   ]
 }

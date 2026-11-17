@@ -38,6 +38,7 @@ import {
   importResultSchema,
   singleEventSchema,
 } from "./calendarSchemas.js";
+import { presentPayload } from "./presentEvent.js";
 
 type Attendee = { email: string };
 type Alarm = { type: "relative" | "absolute"; trigger: number | string };
@@ -149,8 +150,13 @@ function debugMeta(): Pick<CallToolResult, "_meta"> | undefined {
   return { _meta: { "com.miguelarios.cal-mcp/debug": { timings } } };
 }
 
+/**
+ * Every successful result goes out through here, so this is where event times
+ * are rendered for the caller (see `presentEvent`); handlers keep working in
+ * UTC instants.
+ */
 function ok<T>(payload: T): CallToolResult {
-  return { ...structured(payload), ...debugMeta() };
+  return { ...structured(presentPayload(payload, getTimezone())), ...debugMeta() };
 }
 
 function calFail(code: ErrorCode, message: string, retryable = false): CallToolResult {
@@ -453,7 +459,7 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         occurrenceDate: {
           type: "string",
           description:
-            "ISO 8601 date-time of one occurrence of a recurring event, as returned in list_events results. Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master.",
+            "One occurrence of a recurring event, as the occurrenceDate list_events returned for it (an ISO 8601 date-time, or a date for an all-day series). Returns that occurrence (with any per-occurrence overrides applied) rather than the master series. Omit to get the master.",
         },
       },
       required: ["calendar", "uid"],
@@ -649,6 +655,9 @@ export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
                 overrides.end ??
                 new Date(new Date(occurrenceDate).getTime() + occDuration).toISOString(),
               allDay: overrides.allDay ?? existing.allDay,
+              // createExceptionComponent writes the override's DTSTART in UTC,
+              // or as a date when it is all-day: report what a re-read would.
+              timeZone: (overrides.allDay ?? existing.allDay) ? null : "UTC",
               location: overrides.location ?? existing.location,
               description: overrides.description ?? existing.description,
               attendees: overrides.attendees

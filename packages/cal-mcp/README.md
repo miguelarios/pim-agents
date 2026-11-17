@@ -41,7 +41,7 @@ Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_N
 
 Optional env vars:
 
-- `PIM_TIMEZONE` — IANA timezone used for "today", free-slot searches and local times. Defaults to the host timezone, which in a container is usually UTC.
+- `PIM_TIMEZONE` — IANA timezone used for "today", free-slot searches and the times events are returned in (`2026-11-16T08:30:00-06:00`; all-day events come back as plain dates, `2026-11-16`). Each event also carries `timeZone`, the zone it was written in. Defaults to the host timezone, which in a container is usually UTC.
 - `CAL_MCP_DEBUG` — set to `1` to attach per-step CalDAV timings to tool results under `_meta`.
 
 ## Over HTTP and in Docker

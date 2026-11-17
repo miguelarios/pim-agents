@@ -10,6 +10,7 @@
       "start": "2026-10-19T00:00:00.000Z",
       "end": "2026-10-20T00:00:00.000Z",
       "allDay": true,
+      "timeZone": null,
       "location": null,
       "description": null,
       "status": null,
@@ -25,7 +26,8 @@
       "lastModified": null,
       "alarms": [],
       "isRecurring": true,
-      "occurrenceDate": "2026-10-19T00:00:00.000Z"
+      "occurrenceDate": "2026-10-19T00:00:00.000Z",
+      "occurrenceAllDay": true
     },
     {
       "uid": "smoke-allday-1@example.com",
@@ -33,6 +35,7 @@
       "start": "2026-10-20T00:00:00.000Z",
       "end": "2026-10-21T00:00:00.000Z",
       "allDay": true,
+      "timeZone": null,
       "location": null,
       "description": null,
       "status": null,
@@ -48,7 +51,8 @@
       "lastModified": null,
       "alarms": [],
       "isRecurring": true,
-      "occurrenceDate": "2026-10-20T00:00:00.000Z"
+      "occurrenceDate": "2026-10-20T00:00:00.000Z",
+      "occurrenceAllDay": true
     }
   ]
 }
