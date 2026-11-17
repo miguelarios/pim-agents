@@ -159,14 +159,12 @@ describe("all-day events in local ranges (#165 review)", () => {
   it("blocks a recurring out-of-office day in find_free_slots", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue({
-          ok: false,
-          status: 501,
-          headers: new Headers(),
-          text: async () => "",
-        }),
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 501,
+        headers: new Headers(),
+        text: async () => "",
+      }),
     );
     const { s } = await serviceWith(WEEKLY);
     const slots = await s.findFreeSlots(
@@ -184,14 +182,12 @@ describe("all-day events in local ranges (#165 review)", () => {
   it("asks the server a day wider than the range, so it cannot drop an all-day event read as UTC", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue({
-          ok: false,
-          status: 501,
-          headers: new Headers(),
-          text: async () => "",
-        }),
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 501,
+        headers: new Headers(),
+        text: async () => "",
+      }),
     );
     const { s, client } = await serviceWith(ICS);
     // 6 PM to 11 PM Chicago on the out-of-office day.

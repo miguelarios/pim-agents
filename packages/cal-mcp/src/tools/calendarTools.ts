@@ -633,7 +633,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
     },
     outputSchema: singleEventSchema,
     handler: (
-      args: UpdateFields & {
+      input: UpdateFields & {
         calendar: string;
         uid: string;
         occurrenceDate?: string;
@@ -643,18 +643,19 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       ctx,
     ) =>
       run(async () => {
-        const span = args.span ?? "this";
-        const { event: existing } = await service.getEventWithMeta(args.calendar, args.uid);
+        const span = input.span ?? "this";
+        const { event: existing } = await service.getEventWithMeta(input.calendar, input.uid);
         // An all-day result takes the local date of whatever start/end says;
         // only here is it known whether the event is (or stays) all-day.
-        if (args.allDay ?? existing.allDay) {
-          const tz = getTimezone();
-          args = {
-            ...args,
-            ...(args.start !== undefined ? { start: allDayDate(args.start, tz) } : {}),
-            ...(args.end !== undefined ? { end: allDayDate(args.end, tz) } : {}),
-          };
-        }
+        const tz = getTimezone();
+        const args =
+          (input.allDay ?? existing.allDay)
+            ? {
+                ...input,
+                ...(input.start !== undefined ? { start: allDayDate(input.start, tz) } : {}),
+                ...(input.end !== undefined ? { end: allDayDate(input.end, tz) } : {}),
+              }
+            : input;
 
         // span="this" on a recurring event: create exception VEVENT
         if (existing.isRecurring && span === "this") {
