@@ -32,6 +32,7 @@ import {
   structured,
   toolError,
 } from "@miguelarios/pim-core/mcp";
+import { allDayDate, displayTime } from "../localDate.js";
 import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
 import type { EventFull, EventSummary, UnavailableProvider } from "../providers/types.js";
 import { drainDebugTimings } from "../services/CalDavService.js";
@@ -169,6 +170,14 @@ function ok<T>(payload: T): CallToolResult {
 
 function calFail(code: ErrorCode, message: string, retryable = false): CallToolResult {
   return { ...fail(code, message, retryable), ...debugMeta() };
+}
+
+/**
+ * An `occurrenceDate` as the series names its slots: the local date for an
+ * all-day series (see `allDayDate`), the instant otherwise.
+ */
+function seriesOccurrence(occurrenceDate: string, seriesAllDay: boolean): string {
+  return seriesAllDay ? allDayDate(occurrenceDate, getTimezone()) : occurrenceDate;
 }
 
 /** A `VALIDATION_FAILED` result unless `start` and `end` parse and `start` comes first. */
@@ -636,6 +645,16 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       run(async () => {
         const span = args.span ?? "this";
         const { event: existing } = await service.getEventWithMeta(args.calendar, args.uid);
+        // An all-day result takes the local date of whatever start/end says;
+        // only here is it known whether the event is (or stays) all-day.
+        if (args.allDay ?? existing.allDay) {
+          const tz = getTimezone();
+          args = {
+            ...args,
+            ...(args.start !== undefined ? { start: allDayDate(args.start, tz) } : {}),
+            ...(args.end !== undefined ? { end: allDayDate(args.end, tz) } : {}),
+          };
+        }
 
         // span="this" on a recurring event: create exception VEVENT
         if (existing.isRecurring && span === "this") {
@@ -645,7 +664,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
               "occurrenceDate is required when span is 'this' on a recurring event",
             );
           }
-          const occurrenceDate = args.occurrenceDate;
+          const occurrenceDate = seriesOccurrence(args.occurrenceDate, existing.allDay);
           const invalidDate = checkOccurrenceDate(occurrenceDate);
           if (invalidDate) return invalidDate;
           const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
@@ -732,7 +751,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
               "occurrenceDate is required when span is 'future' on a recurring event",
             );
           }
-          const occurrenceDate = args.occurrenceDate;
+          const occurrenceDate = seriesOccurrence(args.occurrenceDate, existing.allDay);
           const invalidDate = checkOccurrenceDate(occurrenceDate);
           if (invalidDate) return invalidDate;
           const newUid = `${randomUUID()}@pim-core`;
@@ -754,7 +773,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
               const gate = confirmDestructive(
                 ctx,
                 "confirm_update_event",
-                `Changing this and all future occurrences of event ${args.uid} from ${occurrenceDate} discards ${split.droppedOverrides} per-occurrence ${split.droppedOverrides === 1 ? "change" : "changes"} made on or after that date. Continue?`,
+                `Changing this and all future occurrences of event ${args.uid} from ${displayTime(occurrenceDate, getTimezone())} discards ${split.droppedOverrides} per-occurrence ${split.droppedOverrides === 1 ? "change" : "changes"} made on or after that date. Continue?`,
               );
               if (gate.status === "interrupt") return gate.result;
             }
@@ -882,7 +901,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
               "occurrenceDate is required when span is 'future' on a recurring event",
             );
           }
-          const occurrenceDate = args.occurrenceDate;
+          const occurrenceDate = seriesOccurrence(args.occurrenceDate, existing.allDay);
           const invalidDate = checkOccurrenceDate(occurrenceDate);
           if (invalidDate) return invalidDate;
           const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
@@ -894,7 +913,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
             const gate = confirmDestructive(
               ctx,
               "confirm_delete_event",
-              `Delete event ${args.uid} from ${args.calendar}? ${occurrenceDate} is its first occurrence, so ending the series there removes it entirely. This cannot be undone.`,
+              `Delete event ${args.uid} from ${args.calendar}? ${displayTime(occurrenceDate, getTimezone())} is its first occurrence, so ending the series there removes it entirely. This cannot be undone.`,
             );
             if (gate.status === "interrupt") return gate.result;
             await service.deleteEvent(args.calendar, args.uid, eventMeta);
@@ -904,7 +923,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           const gate = confirmDestructive(
             ctx,
             "confirm_delete_event",
-            `Delete the occurrence of event ${args.uid} at ${occurrenceDate} and every later one from ${args.calendar}? Earlier occurrences are kept. This cannot be undone.`,
+            `Delete the occurrence of event ${args.uid} at ${displayTime(occurrenceDate, getTimezone())} and every later one from ${args.calendar}? Earlier occurrences are kept. This cannot be undone.`,
           );
           if (gate.status === "interrupt") return gate.result;
 
@@ -937,7 +956,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
                 "occurrenceDate is required when span is 'this' on a recurring event",
               );
             }
-            const occurrenceDate = args.occurrenceDate;
+            const occurrenceDate = seriesOccurrence(args.occurrenceDate, existing.allDay);
             const invalidDate = checkOccurrenceDate(occurrenceDate);
             if (invalidDate) return invalidDate;
             const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);

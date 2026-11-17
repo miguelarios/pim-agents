@@ -19,6 +19,7 @@
  */
 import { getTimezone, parseInTimezone } from "@miguelarios/pim-core";
 import type { ToolDef } from "@miguelarios/pim-core/mcp";
+import { allDayDate } from "../localDate.js";
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 /** Already an instant: ends in Z or a UTC offset. */
@@ -43,9 +44,44 @@ function rewrite(args: Args, keys: string[], timezone: string, keepDate: boolean
   return out;
 }
 
+/**
+ * An event's `start`/`end`: on an all-day event, the local date (see
+ * `allDayDate`); otherwise an instant like any other event time. Whether
+ * `update_event` is all-day depends on the stored event, so its handler
+ * applies `allDayDate` itself.
+ */
+function eventTimes(args: Args, timezone: string): Args {
+  const out =
+    args.allDay === true
+      ? (() => {
+          const o = { ...args };
+          for (const k of ["start", "end"]) {
+            if (typeof o[k] === "string") o[k] = allDayDate(o[k] as string, timezone);
+          }
+          return o;
+        })()
+      : rewrite(args, ["start", "end"], timezone, true);
+  return alarmTimes(out, timezone);
+}
+
+/** An absolute alarm trigger with no offset is local wall-clock time too. */
+function alarmTimes(args: Args, timezone: string): Args {
+  if (!Array.isArray(args.alarms)) return args;
+  return {
+    ...args,
+    alarms: args.alarms.map((a) =>
+      a && typeof a === "object" && (a as Args).type === "absolute"
+        ? rewrite(a as Args, ["trigger"], timezone, false)
+        : a,
+    ),
+  };
+}
+
 interface TimeArgs {
   range?: string[];
   event?: string[];
+  /** `start`/`end` (and alarms) of a single event. */
+  times?: boolean;
   batch?: boolean;
 }
 
@@ -56,8 +92,8 @@ const TIME_ARGS: Record<string, TimeArgs> = {
   get_free_busy: { range: ["start", "end"] },
   find_free_slots: { range: ["start", "end"] },
   get_event: { event: ["occurrenceDate"] },
-  create_event: { event: ["start", "end"] },
-  update_event: { event: ["start", "end", "occurrenceDate"] },
+  create_event: { times: true },
+  update_event: { times: true, event: ["occurrenceDate"] },
   delete_event: { event: ["occurrenceDate"] },
   create_events_batch: { batch: true },
 };
@@ -67,12 +103,13 @@ export function zoneArgs(name: string, args: Args, timezone: string = getTimezon
   if (!spec || args === null || typeof args !== "object") return args;
   let out = args;
   if (spec.range) out = rewrite(out, spec.range, timezone, false);
+  if (spec.times) out = eventTimes(out, timezone);
   if (spec.event) out = rewrite(out, spec.event, timezone, true);
   if (spec.batch && Array.isArray(out.events)) {
     out = {
       ...out,
       events: out.events.map((e) =>
-        e && typeof e === "object" ? rewrite(e as Args, ["start", "end"], timezone, true) : e,
+        e && typeof e === "object" ? eventTimes(e as Args, timezone) : e,
       ),
     };
   }

@@ -107,3 +107,107 @@ describe("all-day events block the local day", () => {
     ]);
   });
 });
+
+describe("all-day events in local ranges (#165 review)", () => {
+  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function serviceWith(ics: string) {
+    const { __client } = (await import("tsdav")) as unknown as {
+      __client: { fetchCalendarObjects: ReturnType<typeof vi.fn> };
+    };
+    __client.fetchCalendarObjects.mockResolvedValue([
+      { url: "https://dav.example/caldav/work/x.ics", etag: "e", data: ics },
+    ]);
+    const { CalDavService } = await import("../services/CalDavService.js");
+    return {
+      client: __client,
+      s: new CalDavService({
+        accounts: [{ id: "mb", url: "https://dav.example/caldav/", username: "u", password: "p" }],
+      }),
+    };
+  }
+
+  const WEEKLY = ICS.replace(
+    "SUMMARY:Out of office",
+    "RRULE:FREQ=WEEKLY;COUNT=3\r\nSUMMARY:Out of office",
+  );
+
+  it("lists a recurring all-day occurrence for its local day", async () => {
+    const { s } = await serviceWith(WEEKLY);
+    const events = await s.listEvents(
+      "mb/Work",
+      "2026-11-16T06:00:00.000Z",
+      "2026-11-17T06:00:00.000Z",
+    );
+    expect(events.map((e) => e.start)).toEqual(["2026-11-16T00:00:00.000Z"]);
+  });
+
+  it("does not list an all-day event for the local day after it", async () => {
+    const { s } = await serviceWith(ICS);
+    const events = await s.listEvents(
+      "mb/Work",
+      "2026-11-17T06:00:00.000Z",
+      "2026-11-18T06:00:00.000Z",
+    );
+    expect(events).toEqual([]);
+  });
+
+  it("blocks a recurring out-of-office day in find_free_slots", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue({
+          ok: false,
+          status: 501,
+          headers: new Headers(),
+          text: async () => "",
+        }),
+    );
+    const { s } = await serviceWith(WEEKLY);
+    const slots = await s.findFreeSlots(
+      ["mb/Work"],
+      "2026-11-16T14:00:00.000Z",
+      "2026-11-17T02:00:00.000Z",
+      60,
+      {
+        includeAllDayAsBusy: true,
+      },
+    );
+    expect(slots).toEqual([]);
+  });
+
+  it("asks the server a day wider than the range, so it cannot drop an all-day event read as UTC", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue({
+          ok: false,
+          status: 501,
+          headers: new Headers(),
+          text: async () => "",
+        }),
+    );
+    const { s, client } = await serviceWith(ICS);
+    // 6 PM to 11 PM Chicago on the out-of-office day.
+    const slots = await s.findFreeSlots(
+      ["mb/Work"],
+      "2026-11-17T00:00:00.000Z",
+      "2026-11-17T05:00:00.000Z",
+      60,
+      {
+        includeAllDayAsBusy: true,
+      },
+    );
+    expect(client.fetchCalendarObjects.mock.lastCall?.[0].timeRange).toEqual({
+      start: "2026-11-16T00:00:00.000Z",
+      end: "2026-11-18T05:00:00.000Z",
+    });
+    expect(slots).toEqual([]);
+  });
+});

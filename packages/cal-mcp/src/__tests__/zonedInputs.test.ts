@@ -253,3 +253,184 @@ describe("event times", () => {
     expect(s.getEvent).toHaveBeenCalledWith("prov/Cal", "e1", "2026-11-16");
   });
 });
+
+describe("all-day values keep their local date (#165 review)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const ALLDAY_SERIES = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:e1",
+    "DTSTART;VALUE=DATE:20261116",
+    "DTEND;VALUE=DATE:20261117",
+    "RRULE:FREQ=WEEKLY;COUNT=5",
+    "SUMMARY:Gym",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  function allDaySeries(s: ReturnType<typeof mockService>) {
+    s.getEventWithMeta.mockResolvedValue({
+      event: {
+        ...EVENT,
+        allDay: true,
+        timeZone: null,
+        start: "2026-11-16T00:00:00.000Z",
+        end: "2026-11-17T00:00:00.000Z",
+        isRecurring: true,
+        attendees: [],
+        alarms: [],
+        categories: [],
+        organizer: null,
+      },
+      meta: { url: "u", etag: "e" },
+    });
+    s.fetchRawCalendarObject.mockResolvedValue({ data: ALLDAY_SERIES, url: "u", etag: "e" });
+  }
+
+  it("create_event with allDay and midnight date-times writes those dates, east of UTC", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "Europe/Berlin");
+    const s = mockService();
+    await call(
+      "create_event",
+      {
+        calendar: "prov/Cal",
+        title: "Trip",
+        allDay: true,
+        start: "2026-11-16T00:00:00",
+        end: "2026-11-17T00:00:00",
+      },
+      s,
+    );
+    const ics = String(s.createEvent.mock.calls[0][1]);
+    expect(ics).toContain("DTSTART;VALUE=DATE:20261116");
+    expect(ics).toContain("DTEND;VALUE=DATE:20261117");
+  });
+
+  it("create_events_batch does the same west of UTC with evening times", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    const s = mockService();
+    await call(
+      "create_events_batch",
+      {
+        calendar: "prov/Cal",
+        events: [
+          { title: "a", allDay: true, start: "2026-11-16T20:00:00", end: "2026-11-17T20:00:00" },
+        ],
+      },
+      s,
+    );
+    expect(String(s.createEvent.mock.calls[0][1])).toContain("DTSTART;VALUE=DATE:20261116");
+  });
+
+  it("delete_event span=this excludes the named day of an all-day series", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "Asia/Tokyo");
+    const s = mockService();
+    allDaySeries(s);
+    const r = await call(
+      "delete_event",
+      { calendar: "prov/Cal", uid: "e1", span: "this", occurrenceDate: "2026-11-23T00:00:00" },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    const ics = String(s.updateEvent.mock.calls[0][2]);
+    expect(ics).toMatch(/EXDATE;VALUE=DATE(;VALUE=DATE)?:20261123/);
+  });
+
+  it("update_event span=this on an all-day series targets the named day", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "Asia/Tokyo");
+    const s = mockService();
+    allDaySeries(s);
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "this",
+        occurrenceDate: "2026-11-23T00:00:00",
+        title: "Moved",
+      },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(String(s.updateEvent.mock.calls[0][2])).toMatch(
+      /RECURRENCE-ID;VALUE=DATE(;VALUE=DATE)?:20261123/,
+    );
+  });
+
+  it("update_event on an all-day event writes the local date of a timed value", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    const s = mockService();
+    allDaySeries(s);
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16T20:00:00",
+        end: "2026-11-17T20:00:00",
+      },
+      s,
+    );
+    const ics = String(s.updateEvent.mock.calls[0][2]);
+    expect(ics).toMatch(/DTSTART;VALUE=DATE(;VALUE=DATE)?:20261116/);
+    expect(ics).toMatch(/DTEND;VALUE=DATE(;VALUE=DATE)?:20261117/);
+  });
+
+  it("reads an absolute alarm trigger with no offset in the zone", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    const s = mockService();
+    await call(
+      "create_event",
+      {
+        calendar: "prov/Cal",
+        title: "x",
+        start: "2026-11-16T09:00:00",
+        end: "2026-11-16T10:00:00",
+        alarms: [{ type: "absolute", trigger: "2026-11-16T08:30:00" }],
+      },
+      s,
+    );
+    expect(String(s.createEvent.mock.calls[0][1])).toContain(
+      "TRIGGER;VALUE=DATE-TIME:20261116T143000Z",
+    );
+  });
+
+  it("asks about a span=future cut in local time", async () => {
+    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    const s = mockService();
+    const master = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:e1",
+      "DTSTART;TZID=America/Chicago:20261102T083000",
+      "DTEND;TZID=America/Chicago:20261102T093000",
+      "RRULE:FREQ=WEEKLY;COUNT=5",
+      "SUMMARY:Standup",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    s.getEventWithMeta.mockResolvedValue({
+      event: {
+        ...EVENT,
+        isRecurring: true,
+        attendees: [],
+        alarms: [],
+        categories: [],
+        organizer: null,
+      },
+      meta: { url: "u", etag: "e" },
+    });
+    s.fetchRawCalendarObject.mockResolvedValue({ data: master, url: "u", etag: "e" });
+    const r = await call(
+      "delete_event",
+      { calendar: "prov/Cal", uid: "e1", span: "future", occurrenceDate: "2026-11-16T08:30:00" },
+      s,
+    );
+    expect(JSON.stringify(r)).toContain("2026-11-16T08:30:00-06:00");
+    expect(JSON.stringify(r)).not.toContain("14:30:00.000Z");
+  });
+});
