@@ -26,6 +26,8 @@ jobs:
     outputs:
       releases: ${{ steps.scan.outputs.releases }}
       any: ${{ steps.scan.outputs.any }}
+      images: ${{ steps.scan.outputs.images }}
+      any_images: ${{ steps.scan.outputs.any_images }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -90,6 +92,15 @@ jobs:
           RESULT=$(printf '%s' "$RESULT" | jq -c 'sort_by(.package != "pim-core")')
 
           echo "releases=$RESULT" >> "$GITHUB_OUTPUT"
+
+          # Every server gets a container image; pim-core is a library and does not.
+          IMAGES=$(printf '%s' "$RESULT" | jq -c 'map(select(.package != "pim-core"))')
+          echo "images=$IMAGES" >> "$GITHUB_OUTPUT"
+          if [ "$(printf '%s' "$IMAGES" | jq 'length')" -gt 0 ]; then
+            echo "any_images=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_images=false" >> "$GITHUB_OUTPUT"
+          fi
           if [ "$(printf '%s' "$RESULT" | jq 'length')" -gt 0 ]; then
             echo "any=true" >> "$GITHUB_OUTPUT"
           else
@@ -238,3 +249,22 @@ jobs:
             echo "::error::At least one package did not publish; see warnings above"
             exit 1
           fi
+
+  image:
+    needs: [detect, publish, tag]
+    # `always()` for the same reason as the tag job: one package failing to
+    # publish must not cost its siblings their images. docker.yml checks npm
+    # itself and fails only the entry whose version never arrived.
+    if: always() && needs.detect.outputs.any_images == 'true'
+    strategy:
+      matrix:
+        release: ${{ fromJSON(needs.detect.outputs.images) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    uses: ./.github/workflows/docker.yml
+    with:
+      package: ${{ matrix.release.package }}
+      version: ${{ matrix.release.version }}
+      published: ${{ needs.publish.result == 'success' }}

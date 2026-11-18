@@ -1,43 +1,53 @@
 # Running in Docker
 
-There is no dedicated image: each server runs from the official `node` image with `npx`,
-pinned to an exact package version. That keeps the version you run explicit and lets you
-upgrade by changing one tag.
+Each server has its own image on the GitHub Container Registry:
+
+| Server | Image |
+|--------|-------|
+| Email | `ghcr.io/miguelarios/email-mcp` |
+| Calendar | `ghcr.io/miguelarios/cal-mcp` |
+| Contacts | `ghcr.io/miguelarios/card-mcp` |
+
+An image's tag is its server's npm version (`ghcr.io/miguelarios/cal-mcp:3.0.1`), and it is
+built by installing that published package, as `npx @miguelarios/cal-mcp@3.0.1` would. Images
+are built for `linux/amd64` and `linux/arm64`.
 
 Two ways to run a server, picked by `PIM_MCP_TRANSPORT`:
 
 | Transport | Who starts the container | Use it for |
 |-----------|--------------------------|------------|
-| **stdio** (default) | Your MCP client, once per session, with `docker run -i` | A desktop client (Claude Desktop, Claude Code, Cursor) on the same machine |
-| **Streamable HTTP** | You, as a long-running service | Several clients sharing one server, a server on another machine, a homelab |
+| **Streamable HTTP** (the image's default) | You, as a long-running service | Several clients sharing one server, a server on another machine, a homelab |
+| **stdio** | Your MCP client, once per session, with `docker run -i` | A desktop client (Claude Desktop, Claude Code, Cursor) on the same machine |
 
-Streamable HTTP needs **email-mcp 0.17.0, cal-mcp 0.20.0, card-mcp 0.12.0** or later.
-
-- [Conventions used below](#conventions-used-below)
+- [What the image sets up](#what-the-image-sets-up)
 - [Email](#email) · [Calendar](#calendar) · [Contacts](#contacts)
 - [All three with Docker Compose](#all-three-with-docker-compose)
 - [Connecting a client over HTTP](#connecting-a-client-over-http)
 - [Exposing a server beyond your machine](#exposing-a-server-beyond-your-machine)
-- [Upgrading](#upgrading) · [Troubleshooting](#troubleshooting)
+- [Upgrading](#upgrading) · [Without the image](#without-the-image) · [Troubleshooting](#troubleshooting)
 
-## Conventions used below
+## What the image sets up
+
+- **Runs as the unprivileged `node` user**, from `node:22-alpine`.
+- **Streamable HTTP on port 3000**, listening on all interfaces inside the container
+  (`PIM_MCP_TRANSPORT=http`, `PIM_MCP_HTTP_HOST=0.0.0.0`, `PIM_MCP_HTTP_PORT=3000`). Set
+  `PIM_MCP_TRANSPORT=stdio` for a desktop client.
+- **A built-in health check** against `GET /healthz`, which answers `ok` without contacting
+  your mail or DAV server.
+
+The examples below follow these conventions:
 
 - **Credentials live in an env file** (`email.env`, `cal.env`, `card.env`) passed with
   `--env-file` / `env_file:`, never on the command line, where they would land in your shell
   history and `docker inspect`. Keep these files out of version control.
-- **`--user node`** runs the server as the image's unprivileged user rather than root.
-- **A named volume at `/home/node`** caches the downloaded package, so only the first start
-  fetches it from npm, and holds cal-mcp's URL cache (`~/.cache/cal-mcp`). Mount it at the home
-  directory, not at `/home/node/.npm`: Docker creates a volume on a path that does not exist in
-  the image as root-owned, and the `node` user then cannot write its npm cache. `/home/node`
-  exists in the image, owned by `node`, and a new volume inherits that.
-- **HTTP servers listen on port 3000 inside their container** (`PIM_MCP_HTTP_HOST=0.0.0.0` so
-  the port can be published) and are published on `127.0.0.1` only, as 3001 (email), 3002
-  (calendar) and 3003 (contacts). Publishing on `127.0.0.1` keeps them reachable from this
-  machine alone. **The servers do no authentication** — see
-  [Exposing a server beyond your machine](#exposing-a-server-beyond-your-machine).
-- **`GET /healthz`** answers `ok` without contacting your mail or DAV server, so it is safe to
-  poll. The `node:alpine` image ships `wget` for the health check.
+- **Ports are published on `127.0.0.1` only**, as 3001 (email), 3002 (calendar) and 3003
+  (contacts), so they are reachable from this machine alone. **The servers do no
+  authentication** — see [Exposing a server beyond your machine](#exposing-a-server-beyond-your-machine).
+- **Pin an exact version tag.** `latest`, `1` and `1.1` also exist and follow the newest
+  release, but a pinned tag is what keeps a restart from changing the server under you. A
+  version tag is normally built once; if it is ever rebuilt, its dependencies and Node base
+  are resolved afresh. To pin those too, pin the digest
+  (`ghcr.io/miguelarios/cal-mcp:3.0.1@sha256:…`, shown in `docker images --digests`).
 
 ## Email
 
@@ -58,6 +68,29 @@ SMTP_PASS=your-app-password
 # PIM_TIMEZONE=America/Chicago
 ```
 
+### Streamable HTTP
+
+```bash
+docker run -d --name email-mcp --restart unless-stopped \
+  --env-file email.env \
+  -p 127.0.0.1:3001:3000 \
+  ghcr.io/miguelarios/email-mcp:1.1.1
+```
+
+Or in Compose:
+
+```yaml
+services:
+  email-mcp:
+    image: ghcr.io/miguelarios/email-mcp:1.1.1
+    restart: unless-stopped
+    env_file: email.env
+    ports:
+      - "127.0.0.1:3001:3000"
+```
+
+The endpoint is `http://127.0.0.1:3001/mcp`.
+
 ### stdio
 
 The client starts the container itself. Note `-i` (stdio needs an open stdin) and `--rm`
@@ -70,11 +103,9 @@ The client starts the container itself. Note `-i` (stdio needs an open stdin) an
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "--user", "node",
         "--env-file", "/absolute/path/to/email.env",
-        "-v", "email-mcp-home:/home/node",
-        "node:22-alpine",
-        "npx", "-y", "@miguelarios/email-mcp@1.1.1"
+        "-e", "PIM_MCP_TRANSPORT=stdio",
+        "ghcr.io/miguelarios/email-mcp:1.1.1"
       ]
     }
   }
@@ -83,53 +114,6 @@ The client starts the container itself. Note `-i` (stdio needs an open stdin) an
 
 The env file path must be absolute: the client does not start Docker from the directory the
 file is in.
-
-### Streamable HTTP with `docker run`
-
-```bash
-docker run -d --name email-mcp --restart unless-stopped \
-  --user node \
-  --env-file email.env \
-  -e PIM_MCP_TRANSPORT=http \
-  -e PIM_MCP_HTTP_HOST=0.0.0.0 \
-  -e PIM_MCP_HTTP_PORT=3000 \
-  -p 127.0.0.1:3001:3000 \
-  -v email-mcp-home:/home/node \
-  --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
-  --health-interval 30s --health-start-period 60s \
-  node:22-alpine \
-  npx -y @miguelarios/email-mcp@1.1.1
-```
-
-The endpoint is `http://127.0.0.1:3001/mcp`.
-
-### Streamable HTTP with Docker Compose
-
-```yaml
-services:
-  email-mcp:
-    image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.1"]
-    user: node
-    restart: unless-stopped
-    env_file: email.env
-    environment:
-      PIM_MCP_TRANSPORT: http
-      PIM_MCP_HTTP_HOST: 0.0.0.0
-      PIM_MCP_HTTP_PORT: "3000"
-    ports:
-      - "127.0.0.1:3001:3000"
-    volumes:
-      - email-mcp-home:/home/node
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
-      interval: 30s
-      timeout: 5s
-      start_period: 60s
-
-volumes:
-  email-mcp-home:
-```
 
 ### Sending files from disk
 
@@ -141,12 +125,12 @@ at the mount:
     environment:
       EMAIL_ATTACHMENT_DIR: /attachments
     volumes:
-      - email-mcp-home:/home/node
       - ./outbox:/attachments:ro
 ```
 
 Add `-v "$PWD/outbox:/attachments:ro" -e EMAIL_ATTACHMENT_DIR=/attachments` to the
-`docker run` forms. Without it, attach inline content with `attachments[].content` instead.
+`docker run` forms. Paths the client passes must then start with `/attachments/`. Without the
+mount, attach inline content with `attachments[].content` instead.
 
 ## Calendar
 
@@ -170,6 +154,38 @@ PIM_TIMEZONE=America/Chicago
 **Set `PIM_TIMEZONE`.** Outside Docker the server defaults to the host's zone; inside a
 container that is UTC, so `get_today_events` and `find_free_slots` would work in the wrong day.
 
+cal-mcp caches calendar URLs under `/home/node/.cache/cal-mcp`. Mount a named volume at
+`/home/node` to keep that cache across restarts; it is optional.
+
+### Streamable HTTP
+
+```bash
+docker run -d --name cal-mcp --restart unless-stopped \
+  --env-file cal.env \
+  -p 127.0.0.1:3002:3000 \
+  -v cal-mcp-home:/home/node \
+  ghcr.io/miguelarios/cal-mcp:3.0.1
+```
+
+Or in Compose:
+
+```yaml
+services:
+  cal-mcp:
+    image: ghcr.io/miguelarios/cal-mcp:3.0.1
+    restart: unless-stopped
+    env_file: cal.env
+    ports:
+      - "127.0.0.1:3002:3000"
+    volumes:
+      - cal-mcp-home:/home/node
+
+volumes:
+  cal-mcp-home:
+```
+
+The endpoint is `http://127.0.0.1:3002/mcp`.
+
 ### stdio
 
 ```json
@@ -179,62 +195,14 @@ container that is UTC, so `get_today_events` and `find_free_slots` would work in
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "--user", "node",
         "--env-file", "/absolute/path/to/cal.env",
+        "-e", "PIM_MCP_TRANSPORT=stdio",
         "-v", "cal-mcp-home:/home/node",
-        "node:22-alpine",
-        "npx", "-y", "@miguelarios/cal-mcp@3.0.1"
+        "ghcr.io/miguelarios/cal-mcp:3.0.1"
       ]
     }
   }
 }
-```
-
-### Streamable HTTP with `docker run`
-
-```bash
-docker run -d --name cal-mcp --restart unless-stopped \
-  --user node \
-  --env-file cal.env \
-  -e PIM_MCP_TRANSPORT=http \
-  -e PIM_MCP_HTTP_HOST=0.0.0.0 \
-  -e PIM_MCP_HTTP_PORT=3000 \
-  -p 127.0.0.1:3002:3000 \
-  -v cal-mcp-home:/home/node \
-  --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
-  --health-interval 30s --health-start-period 60s \
-  node:22-alpine \
-  npx -y @miguelarios/cal-mcp@3.0.1
-```
-
-The endpoint is `http://127.0.0.1:3002/mcp`.
-
-### Streamable HTTP with Docker Compose
-
-```yaml
-services:
-  cal-mcp:
-    image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.1"]
-    user: node
-    restart: unless-stopped
-    env_file: cal.env
-    environment:
-      PIM_MCP_TRANSPORT: http
-      PIM_MCP_HTTP_HOST: 0.0.0.0
-      PIM_MCP_HTTP_PORT: "3000"
-    ports:
-      - "127.0.0.1:3002:3000"
-    volumes:
-      - cal-mcp-home:/home/node
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
-      interval: 30s
-      timeout: 5s
-      start_period: 60s
-
-volumes:
-  cal-mcp-home:
 ```
 
 ## Contacts
@@ -250,6 +218,29 @@ CARDDAV_PASS=your-app-password
 # CARDDAV_SERVER_SEARCH=off
 ```
 
+### Streamable HTTP
+
+```bash
+docker run -d --name card-mcp --restart unless-stopped \
+  --env-file card.env \
+  -p 127.0.0.1:3003:3000 \
+  ghcr.io/miguelarios/card-mcp:1.1.0
+```
+
+Or in Compose:
+
+```yaml
+services:
+  card-mcp:
+    image: ghcr.io/miguelarios/card-mcp:1.1.0
+    restart: unless-stopped
+    env_file: card.env
+    ports:
+      - "127.0.0.1:3003:3000"
+```
+
+The endpoint is `http://127.0.0.1:3003/mcp`.
+
 ### stdio
 
 ```json
@@ -259,113 +250,51 @@ CARDDAV_PASS=your-app-password
       "command": "docker",
       "args": [
         "run", "-i", "--rm",
-        "--user", "node",
         "--env-file", "/absolute/path/to/card.env",
-        "-v", "card-mcp-home:/home/node",
-        "node:22-alpine",
-        "npx", "-y", "@miguelarios/card-mcp@1.1.0"
+        "-e", "PIM_MCP_TRANSPORT=stdio",
+        "ghcr.io/miguelarios/card-mcp:1.1.0"
       ]
     }
   }
 }
 ```
 
-### Streamable HTTP with `docker run`
-
-```bash
-docker run -d --name card-mcp --restart unless-stopped \
-  --user node \
-  --env-file card.env \
-  -e PIM_MCP_TRANSPORT=http \
-  -e PIM_MCP_HTTP_HOST=0.0.0.0 \
-  -e PIM_MCP_HTTP_PORT=3000 \
-  -p 127.0.0.1:3003:3000 \
-  -v card-mcp-home:/home/node \
-  --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
-  --health-interval 30s --health-start-period 60s \
-  node:22-alpine \
-  npx -y @miguelarios/card-mcp@1.1.0
-```
-
-The endpoint is `http://127.0.0.1:3003/mcp`.
-
-### Streamable HTTP with Docker Compose
-
-```yaml
-services:
-  card-mcp:
-    image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/card-mcp@1.1.0"]
-    user: node
-    restart: unless-stopped
-    env_file: card.env
-    environment:
-      PIM_MCP_TRANSPORT: http
-      PIM_MCP_HTTP_HOST: 0.0.0.0
-      PIM_MCP_HTTP_PORT: "3000"
-    ports:
-      - "127.0.0.1:3003:3000"
-    volumes:
-      - card-mcp-home:/home/node
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
-      interval: 30s
-      timeout: 5s
-      start_period: 60s
-
-volumes:
-  card-mcp-home:
-```
-
 ## All three with Docker Compose
 
-One `compose.yaml` next to `email.env`, `cal.env` and `card.env`. The shared settings are a
-YAML anchor, so each service only states what is its own:
+One `compose.yaml` next to `email.env`, `cal.env` and `card.env`. Each server stays its own
+container, so one can be upgraded, restarted or crash without touching the others:
 
 ```yaml
 x-mcp: &mcp
-  image: node:22-alpine
-  user: node
   restart: unless-stopped
-  environment: &http
-    PIM_MCP_TRANSPORT: http
-    PIM_MCP_HTTP_HOST: 0.0.0.0
-    PIM_MCP_HTTP_PORT: "3000"
-  healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
-    interval: 30s
-    timeout: 5s
-    start_period: 60s
 
 services:
   email-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.1"]
+    image: ghcr.io/miguelarios/email-mcp:1.1.1
     env_file: email.env
+    environment:
+      EMAIL_ATTACHMENT_DIR: /attachments
     ports: ["127.0.0.1:3001:3000"]
-    volumes: [email-mcp-home:/home/node]
+    volumes: ["./outbox:/attachments:ro"]
 
   cal-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.1"]
+    image: ghcr.io/miguelarios/cal-mcp:3.0.1
     env_file: cal.env
     environment:
-      <<: *http
       PIM_TIMEZONE: America/Chicago
     ports: ["127.0.0.1:3002:3000"]
     volumes: [cal-mcp-home:/home/node]
 
   card-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/card-mcp@1.1.0"]
+    image: ghcr.io/miguelarios/card-mcp:1.1.0
     env_file: card.env
     ports: ["127.0.0.1:3003:3000"]
-    volumes: [card-mcp-home:/home/node]
 
 volumes:
-  email-mcp-home:
   cal-mcp-home:
-  card-mcp-home:
 ```
 
 ```bash
@@ -373,9 +302,6 @@ docker compose up -d
 docker compose ps        # all three should reach (healthy) within a minute
 docker compose logs -f   # each logs "Server started on http://0.0.0.0:3000/mcp"
 ```
-
-A service that redefines `environment:` replaces the anchor's map rather than adding to it,
-which is why `cal-mcp` merges `*http` back in.
 
 ## Connecting a client over HTTP
 
@@ -428,28 +354,51 @@ confirmation, which on a network-reachable server deserves particular care.
 
 ## Upgrading
 
-Change the version in the `npx` argument and restart:
+Change the image tag and recreate:
 
 ```bash
-docker compose up -d     # recreates the services whose command changed
+docker compose pull
+docker compose up -d     # recreates the services whose image changed
 ```
 
-The new version is downloaded on that start and cached in the volume. Check each package's
-`CHANGELOG.md` before a minor-version bump: these are 0.x releases, where a minor version can
-change behaviour.
+Check each package's `CHANGELOG.md` before a major-version bump: a major version changes
+behaviour a client may depend on (cal-mcp 3.0.0 changed how time arguments are read, for
+example).
 
-Avoid `@latest` or an unpinned name: the server would change under you on any restart, with
-no record of which version was running.
+## Without the image
+
+Any version can also run straight from npm on the stock `node` image, which is how the servers
+were run before they had images and still works for any version, including ones older than
+the first image:
+
+```bash
+docker run -d --name email-mcp --restart unless-stopped \
+  --user node \
+  --env-file email.env \
+  -e PIM_MCP_TRANSPORT=http -e PIM_MCP_HTTP_HOST=0.0.0.0 -e PIM_MCP_HTTP_PORT=3000 \
+  -p 127.0.0.1:3001:3000 \
+  -v email-mcp-home:/home/node \
+  node:22-alpine \
+  npx -y @miguelarios/email-mcp@1.1.1
+```
+
+The named volume at `/home/node` caches the downloaded package so only the first start
+fetches it. Mount it at the home directory, not at `/home/node/.npm`: Docker creates a volume
+on a path that does not exist in the image as root-owned, and the `node` user then cannot
+write its npm cache. Streamable HTTP needs **email-mcp 0.17.0, cal-mcp 0.20.0, card-mcp
+0.12.0** or later.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---------|-------|
-| `(health: starting)` for the first minute | The first start downloads the package. Later starts read the volume's cache. |
-| `npm error EACCES` or "Log files were not written" | The volume is mounted at `/home/node/.npm`, so it was created root-owned. Mount it at `/home/node` instead, and remove the old volume (`docker volume rm <name>`). |
 | `Fatal error: Config validation failed` and the container restarts | A required variable is missing from the env file. The message names it. |
 | `PIM_MCP_TRANSPORT must be "stdio" or "http"` | Typo in the transport value. |
+| `denied` or `unauthorized` pulling from ghcr.io | The image tag does not exist (check the version), or the package is private and this machine has not run `docker login ghcr.io`. |
 | The client gets `404 Session not found` | The server restarted, or the session sat idle over 30 minutes. Clients re-initialize on their own; a hand-written client must too. |
 | `403 Forbidden: origin not allowed` | A browser-based client. Add its origin to `PIM_MCP_HTTP_ALLOWED_ORIGINS`. |
 | Calendar "today" is off by hours | `PIM_TIMEZONE` is unset, so the container's UTC is used. |
-| stdio client shows no tools, container exits at once | `-i` is missing from the `docker run` arguments. |
+| stdio client shows no tools, container exits at once | `-i` is missing from the `docker run` arguments, or `PIM_MCP_TRANSPORT=stdio` is. |
+| `(unhealthy)` with `PIM_MCP_HTTP_HOST` set to one address | The health check probes `127.0.0.1`. Leave the host at `0.0.0.0` inside the container and restrict access where the port is published. |
+| stdio container shows `(unhealthy)` | Expected: the health check probes the HTTP port, which stdio does not open. It has no effect on a `--rm` container. |
+| `npm error EACCES` with the `npx` form | The volume is mounted at `/home/node/.npm`, so it was created root-owned. Mount it at `/home/node` instead, and remove the old volume (`docker volume rm <name>`). |

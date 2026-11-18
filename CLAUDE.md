@@ -109,6 +109,11 @@ convention changes do not ride along with a feature.
   one is skipped with a warning and the run goes red. Re-running the job resumes it, since each
   step checks npm and the existing tag/release before acting
 - Publishing is idempotent: a version already on npm is skipped, so a failed run can be re-run
+- Each released server (not `pim-core`) also gets a container image,
+  `ghcr.io/miguelarios/<server>:<version>`, built by `docker.yml` from the published npm package
+  after the tag job. If only the image fails, `gh workflow run release.yml` will not retry it (the
+  version is already tagged): re-run the failed job, or run **Actions → Container image → Run
+  workflow** with the package and version
 - The version in the tag must match `package.json`, or the publish fails rather than shipping a mismatch
 - `.npmignore` excludes test files from published packages
 

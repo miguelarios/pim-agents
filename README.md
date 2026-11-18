@@ -269,52 +269,30 @@ The endpoint is `/mcp`, and `GET /healthz` answers `ok` for container health che
 
 ### Running in Docker
 
-There is no dedicated image: run each server from `node:22-alpine` with `npx`, pinned to a version. For example, all three over HTTP, reachable from this machine only:
+Each server has its own image — `ghcr.io/miguelarios/email-mcp`, `cal-mcp` and `card-mcp` — tagged with its npm version, for `linux/amd64` and `linux/arm64`. An image runs as the `node` user, serves Streamable HTTP on port 3000 and carries its own health check. For example, all three, reachable from this machine only:
 
 ```yaml
-x-mcp: &mcp
-  image: node:22-alpine
-  user: node
-  restart: unless-stopped
-  environment: &http
-    PIM_MCP_TRANSPORT: http
-    PIM_MCP_HTTP_HOST: 0.0.0.0
-    PIM_MCP_HTTP_PORT: "3000"
-  healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
-    interval: 30s
-    start_period: 60s
-
 services:
   email-mcp:
-    <<: *mcp
-    command: ["npx", "-y", "@miguelarios/email-mcp@1.1.1"]
+    image: ghcr.io/miguelarios/email-mcp:1.1.1
+    restart: unless-stopped
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
-    volumes: [email-mcp-home:/home/node]
   cal-mcp:
-    <<: *mcp
-    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.1"]
+    image: ghcr.io/miguelarios/cal-mcp:3.0.1
+    restart: unless-stopped
     env_file: cal.env
     environment:
-      <<: *http
       PIM_TIMEZONE: America/Chicago
     ports: ["127.0.0.1:3002:3000"]
-    volumes: [cal-mcp-home:/home/node]
   card-mcp:
-    <<: *mcp
-    command: ["npx", "-y", "@miguelarios/card-mcp@1.1.0"]
+    image: ghcr.io/miguelarios/card-mcp:1.1.0
+    restart: unless-stopped
     env_file: card.env
     ports: ["127.0.0.1:3003:3000"]
-    volumes: [card-mcp-home:/home/node]
-
-volumes:
-  email-mcp-home:
-  cal-mcp-home:
-  card-mcp-home:
 ```
 
-**[docs/docker.md](docs/docker.md)** has the complete guide: an env file and `docker run` (stdio and HTTP) and Compose examples for each server on its own, connecting clients, attachments from disk, exposing a server safely, upgrading, and troubleshooting.
+**[docs/docker.md](docs/docker.md)** has the complete guide: an env file and `docker run` (HTTP and stdio) and Compose examples for each server on its own, running from npm without the image, connecting clients, attachments from disk, exposing a server safely, upgrading, and troubleshooting.
 
 ## License
 
