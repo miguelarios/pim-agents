@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.1 (2026-11-18)
+
+- **`update_event` makes an all-day event timed when given a timed start and end** (#168). With `allDay` left out, the event used to stay all-day and both values were cut to dates. A same-day pair (`14:00` to `15:00`) wrote a zero-length all-day event, and the times were lost.
+  - **When it switches:** a one-off event, or one occurrence (`span: "this"`), given both a `start` and an `end`, at least one with a time. A plain date beside a time means local midnight, and an end that isn't after the start is rejected.
+  - **When it doesn't:** plain dates keep the event all-day, an explicit `allDay` always wins, and a `start` or `end` alone still moves the all-day event and keeps its length.
+  - **A whole recurring series** (`span: "all"` / `"future"`) is not switched automatically: its exclusions, overrides and `UNTIL` would need converting too.
+- **Moving only an event's start moves its end too** (#167). The end used to stay put, so a 1-hour event moved from Nov 16 to Nov 18 ended on Nov 16, before it started. The length is kept in wall-clock time, and an all-day event keeps at least a day.
+- **All-day times are written with one `VALUE=DATE`** (#167). Updates, single-occurrence edits and deletes, and series splits wrote `DTSTART;VALUE=DATE;VALUE=DATE:…`.
+- Requires `@miguelarios/pim-core` 1.2.1.
+
 ## 3.0.0 (2026-11-17)
 
 - **Breaking: `get_free_busy` answers in `PIM_TIMEZONE`** (#165). Its `start`, `end` and every busy period come back with their offset (`2026-11-16T08:30:00-06:00`) instead of as UTC instants, like every other cal-mcp result since 2.0.0. The instants are unchanged.

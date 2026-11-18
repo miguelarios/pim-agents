@@ -183,7 +183,7 @@ container that is UTC, so `get_today_events` and `find_free_slots` would work in
         "--env-file", "/absolute/path/to/cal.env",
         "-v", "cal-mcp-home:/home/node",
         "node:22-alpine",
-        "npx", "-y", "@miguelarios/cal-mcp@3.0.0"
+        "npx", "-y", "@miguelarios/cal-mcp@3.0.1"
       ]
     }
   }
@@ -204,7 +204,7 @@ docker run -d --name cal-mcp --restart unless-stopped \
   --health-cmd "wget -qO- http://127.0.0.1:3000/healthz" \
   --health-interval 30s --health-start-period 60s \
   node:22-alpine \
-  npx -y @miguelarios/cal-mcp@3.0.0
+  npx -y @miguelarios/cal-mcp@3.0.1
 ```
 
 The endpoint is `http://127.0.0.1:3002/mcp`.
@@ -215,7 +215,7 @@ The endpoint is `http://127.0.0.1:3002/mcp`.
 services:
   cal-mcp:
     image: node:22-alpine
-    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.0"]
+    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.1"]
     user: node
     restart: unless-stopped
     env_file: cal.env
@@ -347,7 +347,7 @@ services:
 
   cal-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.0"]
+    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.1"]
     env_file: cal.env
     environment:
       <<: *http

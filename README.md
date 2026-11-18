@@ -294,7 +294,7 @@ services:
     volumes: [email-mcp-home:/home/node]
   cal-mcp:
     <<: *mcp
-    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.0"]
+    command: ["npx", "-y", "@miguelarios/cal-mcp@3.0.1"]
     env_file: cal.env
     environment:
       <<: *http
