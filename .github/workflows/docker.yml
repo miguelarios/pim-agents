@@ -1,0 +1,195 @@
+name: Container image
+
+# Builds ghcr.io/<owner>/<server>:<version> from docker/Dockerfile, which
+# installs the published npm package, so an image always matches a version
+# that is already on npm. Three ways in:
+#
+#   * workflow_call — release.yml calls this once per server it released,
+#     after the tag job has seen the version on npm. Merging a release PR is
+#     therefore also the image release.
+#   * workflow_dispatch — build (or rebuild) any published version by hand,
+#     e.g. to backfill an image for a release that predates this workflow.
+#   * pull_request touching the Dockerfile or this file — builds each server's
+#     current npm version for amd64 and smoke-tests it. Nothing is pushed.
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: "Server to build: email-mcp, cal-mcp or card-mcp"
+        required: true
+        type: string
+      version:
+        description: "Published npm version, e.g. 1.1.1"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Server to build"
+        required: true
+        type: choice
+        options: [email-mcp, cal-mcp, card-mcp]
+      version:
+        description: "Published npm version, e.g. 1.1.1"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - docker/**
+      - .github/workflows/docker.yml
+
+jobs:
+  publish:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve target
+        id: target
+        env:
+          PACKAGE: ${{ inputs.package }}
+          VERSION: ${{ inputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            email-mcp|cal-mcp|card-mcp) ;;
+            *) echo "::error::No image for '$PACKAGE'"; exit 1 ;;
+          esac
+          NAME="@miguelarios/${PACKAGE}"
+
+          # The tag job already saw this version, but from another runner;
+          # npm's CDN can still answer 404 here for a few minutes.
+          SEEN=0
+          for _ in $(seq 1 60); do
+            if npm view --prefer-online "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+              SEEN=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$SEEN" -eq 0 ]; then
+            echo "::error::${NAME}@${VERSION} is not on npm; nothing to build"
+            exit 1
+          fi
+
+          # Floating tags (latest, 1, 1.1) follow npm's `latest` dist-tag, so a
+          # hand-run rebuild of an older version cannot move them backwards.
+          NPM_LATEST=$(npm view --prefer-online "$NAME" version)
+          if [ "$NPM_LATEST" = "$VERSION" ]; then FLOAT=true; else FLOAT=false; fi
+          echo "npm latest is $NPM_LATEST; floating tags: $FLOAT"
+
+          {
+            echo "image=ghcr.io/${OWNER,,}/${PACKAGE}"
+            echo "float=$FLOAT"
+            echo "description=$(jq -r .description "packages/${PACKAGE}/package.json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.target.outputs.image }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ steps.target.outputs.float }}
+            type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ steps.target.outputs.float }}
+            type=raw,value=latest,enable=${{ steps.target.outputs.float }}
+          labels: |
+            org.opencontainers.image.title=${{ inputs.package }}
+            org.opencontainers.image.description=${{ steps.target.outputs.description }}
+            org.opencontainers.image.version=${{ inputs.version }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile
+          build-args: |
+            PACKAGE=${{ inputs.package }}
+            VERSION=${{ inputs.version }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+
+      - name: Summary
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### ${{ inputs.package }} ${{ inputs.version }}"
+            echo
+            echo "Digest: \`${DIGEST}\`"
+            echo
+            printf -- '- `%s`\n' $TAGS
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Proves a Dockerfile change still produces a server that starts and answers
+  # its health check, before it can reach a release.
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: email-mcp
+            env: -e IMAP_HOST=imap.invalid -e IMAP_USER=u -e IMAP_PASS=p -e SMTP_HOST=smtp.invalid -e SMTP_USER=u -e SMTP_PASS=p
+          - package: cal-mcp
+            env: -e CALDAV_TEST_URL=https://dav.invalid/ -e CALDAV_TEST_USER=u -e CALDAV_TEST_PASS=p
+          - package: card-mcp
+            env: -e CARDDAV_URL=https://dav.invalid/ -e CARDDAV_USER=u -e CARDDAV_PASS=p
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Current npm version
+        id: npm
+        run: echo "version=$(npm view '@miguelarios/${{ matrix.package }}' version)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile
+          build-args: |
+            PACKAGE=${{ matrix.package }}
+            VERSION=${{ steps.npm.outputs.version }}
+          load: true
+          tags: smoke:${{ matrix.package }}
+
+      - name: Starts and reports healthy
+        run: |
+          set -euo pipefail
+          # Dummy credentials: the server validates config at startup but only
+          # connects on a tool call, which this never makes.
+          docker run -d --name smoke -p 127.0.0.1:3000:3000 ${{ matrix.env }} smoke:${{ matrix.package }}
+          for _ in $(seq 1 30); do
+            STATUS=$(docker inspect -f '{{.State.Health.Status}}' smoke)
+            [ "$STATUS" = "healthy" ] && break
+            sleep 2
+          done
+          docker logs smoke
+          [ "$(curl -fsS http://127.0.0.1:3000/healthz)" = "ok" ]
+          [ "$(docker exec smoke id -un)" = "node" ]
+          echo "healthy, running as node"
