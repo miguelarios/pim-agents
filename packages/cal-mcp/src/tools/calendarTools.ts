@@ -4,6 +4,7 @@ import {
   formatInTimezone,
   getLocalDateParts,
   getTimezone,
+  parseInTimezone,
   usableTimezone,
   zonedTimeToUtc,
 } from "@miguelarios/pim-core";
@@ -32,7 +33,7 @@ import {
   structured,
   toolError,
 } from "@miguelarios/pim-core/mcp";
-import { allDayDate, displayTime } from "../localDate.js";
+import { allDayDate, displayTime, isDateOnly } from "../localDate.js";
 import type { IcsCalendarBackend } from "../providers/CalendarBackend.js";
 import type { EventFull, EventSummary, UnavailableProvider } from "../providers/types.js";
 import { drainDebugTimings } from "../services/CalDavService.js";
@@ -605,7 +606,11 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           description:
             "New end time (ISO 8601). A time with no offset is wall-clock time in the configured time zone; for an all-day event pass a date (YYYY-MM-DD).",
         },
-        allDay: { type: "boolean", description: "All-day event flag" },
+        allDay: {
+          type: "boolean",
+          description:
+            "All-day event flag. If omitted, the event keeps its current kind, except that giving a one-off all-day event, or one occurrence (span 'this'), both a start and an end with a time makes it timed. To change a whole recurring series, pass allDay explicitly.",
+        },
         location: { type: "string", description: "New location" },
         description: { type: "string", description: "New description" },
         attendees: ATTENDEES_PROP("New attendee list (replaces existing)."),
@@ -645,11 +650,43 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
       run(async () => {
         const span = input.span ?? "this";
         const { event: existing } = await service.getEventWithMeta(input.calendar, input.uid);
+        // A new start *and* end with a time, given to an all-day event with
+        // allDay left out, mean the event is now timed. It used to stay all-day,
+        // both values cut to dates, which wrote a zero-length all-day event
+        // when they fell on one day. A start or end alone still moves the
+        // all-day event, keeping its length, as before. Plain dates keep it
+        // all-day, and an explicit allDay always wins.
+        //
+        // Only one event is switched this way: a one-off, or one occurrence
+        // (span "this"). Switching a whole all-day series would also have to
+        // turn its EXDATE/RDATE/RECURRENCE-ID dates and its RRULE UNTIL into
+        // date-times. The ICS layer does not do that, so a series keeps its
+        // old behaviour.
+        const timed = (v: string | undefined) => typeof v === "string" && !isDateOnly(v);
+        const wholeSeries = existing.isRecurring && span !== "this";
+        const becomesTimed =
+          input.allDay === undefined &&
+          existing.allDay &&
+          !wholeSeries &&
+          input.start !== undefined &&
+          input.end !== undefined &&
+          (timed(input.start) || timed(input.end));
+        const allDay = becomesTimed ? false : (input.allDay ?? existing.allDay);
         // An all-day result takes the local date of whatever start/end says;
         // only here is it known whether the event is (or stays) all-day.
         const tz = getTimezone();
-        const args =
-          (input.allDay ?? existing.allDay)
+        // A plain date beside a time is midnight in PIM_TIMEZONE, not UTC
+        // midnight (the evening before, west of Greenwich).
+        const instant = (v: string) => (isDateOnly(v) ? parseInTimezone(v, tz).toISOString() : v);
+        const timedTimes = becomesTimed
+          ? { start: instant(input.start as string), end: instant(input.end as string) }
+          : null;
+        if (timedTimes && !(Date.parse(timedTimes.start) < Date.parse(timedTimes.end))) {
+          return calFail(ErrorCode.VALIDATION_FAILED, "end must be after start");
+        }
+        const args = timedTimes
+          ? { ...input, ...timedTimes, allDay: false }
+          : allDay
             ? {
                 ...input,
                 ...(input.start !== undefined ? { start: allDayDate(input.start, tz) } : {}),
