@@ -354,9 +354,7 @@ describe("all-day values keep their local date (#165 review)", () => {
       s,
     );
     expect(r.isError).toBeFalsy();
-    expect(String(s.updateEvent.mock.calls[0][2])).toMatch(
-      /RECURRENCE-ID;VALUE=DATE:20261123/,
-    );
+    expect(String(s.updateEvent.mock.calls[0][2])).toMatch(/RECURRENCE-ID;VALUE=DATE:20261123/);
   });
 
   it("update_event with allDay: true writes the local date of a timed value", async () => {
