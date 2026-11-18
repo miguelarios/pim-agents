@@ -581,3 +581,105 @@ describe("update_event switches an all-day event to timed when given a time", ()
     expect(written(s)).toContain("DTSTART;VALUE=DATE:20261118");
   });
 });
+
+describe("update_event all-day → timed, limits (#168 review)", () => {
+  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const SERIES = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:e1",
+    "DTSTART;VALUE=DATE:20261116",
+    "DTEND;VALUE=DATE:20261117",
+    "RRULE:FREQ=WEEKLY;UNTIL=20261214",
+    "EXDATE;VALUE=DATE:20261130",
+    "SUMMARY:Gym",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const ONE_OFF = SERIES.replace(
+    "RRULE:FREQ=WEEKLY;UNTIL=20261214\r\nEXDATE;VALUE=DATE:20261130\r\n",
+    "",
+  );
+
+  function stored(s: ReturnType<typeof mockService>, ics: string, recurring: boolean) {
+    s.getEventWithMeta.mockResolvedValue({
+      event: {
+        ...EVENT,
+        allDay: true,
+        timeZone: null,
+        start: "2026-11-16T00:00:00.000Z",
+        end: "2026-11-17T00:00:00.000Z",
+        isRecurring: recurring,
+        attendees: [],
+        alarms: [],
+        categories: [],
+        organizer: null,
+      },
+      meta: { url: "u", etag: "e" },
+    });
+    s.fetchRawCalendarObject.mockResolvedValue({ data: ics, url: "u", etag: "e" });
+  }
+  const written = (s: ReturnType<typeof mockService>) =>
+    String(s.updateEvent.mock.calls[0]?.[2] ?? "");
+
+  it("leaves a whole all-day series all-day for span all (its exclusions and UNTIL stay valid)", async () => {
+    const s = mockService();
+    stored(s, SERIES, true);
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16T14:00:00",
+        end: "2026-11-16T15:00:00",
+      },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    const ics = written(s);
+    expect(ics).toContain("DTSTART;VALUE=DATE:20261116");
+    expect(ics).toContain("EXDATE;VALUE=DATE:20261130");
+    expect(ics).toContain("RRULE:FREQ=WEEKLY;UNTIL=20261214");
+  });
+
+  it("reads a plain date mixed with a time as local midnight", async () => {
+    const s = mockService();
+    stored(s, ONE_OFF, false);
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16",
+        end: "2026-11-16T15:00:00",
+      },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(written(s)).toContain("DTSTART;TZID=America/Chicago:20261116T000000");
+    expect(written(s)).toContain("DTEND;TZID=America/Chicago:20261116T150000");
+  });
+
+  it("rejects an end before the start rather than write it", async () => {
+    const s = mockService();
+    stored(s, ONE_OFF, false);
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16T14:00:00",
+        end: "2026-11-16",
+      },
+      s,
+    );
+    expect(r.isError).toBe(true);
+    expect(s.updateEvent).not.toHaveBeenCalled();
+  });
+});
