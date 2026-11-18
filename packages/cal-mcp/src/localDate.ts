@@ -34,3 +34,8 @@ export function displayTime(value: string, timezone: string): string {
     ? value
     : formatInTimezone(new Date(ms).toISOString(), usableTimezone(timezone));
 }
+
+/** Whether `value` is a plain date (`YYYY-MM-DD`), with no time part. */
+export function isDateOnly(value: string): boolean {
+  return DATE_ONLY.test(value.trim());
+}

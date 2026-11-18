@@ -335,7 +335,7 @@ describe("all-day values keep their local date (#165 review)", () => {
     );
     expect(r.isError).toBeFalsy();
     const ics = String(s.updateEvent.mock.calls[0][2]);
-    expect(ics).toMatch(/EXDATE;VALUE=DATE(;VALUE=DATE)?:20261123/);
+    expect(ics).toMatch(/EXDATE;VALUE=DATE:20261123/);
   });
 
   it("update_event span=this on an all-day series targets the named day", async () => {
@@ -355,11 +355,11 @@ describe("all-day values keep their local date (#165 review)", () => {
     );
     expect(r.isError).toBeFalsy();
     expect(String(s.updateEvent.mock.calls[0][2])).toMatch(
-      /RECURRENCE-ID;VALUE=DATE(;VALUE=DATE)?:20261123/,
+      /RECURRENCE-ID;VALUE=DATE:20261123/,
     );
   });
 
-  it("update_event on an all-day event writes the local date of a timed value", async () => {
+  it("update_event with allDay: true writes the local date of a timed value", async () => {
     vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
     const s = mockService();
     allDaySeries(s);
@@ -369,14 +369,15 @@ describe("all-day values keep their local date (#165 review)", () => {
         calendar: "prov/Cal",
         uid: "e1",
         span: "all",
+        allDay: true,
         start: "2026-11-16T20:00:00",
         end: "2026-11-17T20:00:00",
       },
       s,
     );
     const ics = String(s.updateEvent.mock.calls[0][2]);
-    expect(ics).toMatch(/DTSTART;VALUE=DATE(;VALUE=DATE)?:20261116/);
-    expect(ics).toMatch(/DTEND;VALUE=DATE(;VALUE=DATE)?:20261117/);
+    expect(ics).toMatch(/DTSTART;VALUE=DATE:20261116/);
+    expect(ics).toMatch(/DTEND;VALUE=DATE:20261117/);
   });
 
   it("reads an absolute alarm trigger with no offset in the zone", async () => {
@@ -432,5 +433,153 @@ describe("all-day values keep their local date (#165 review)", () => {
     );
     expect(JSON.stringify(r)).toContain("2026-11-16T08:30:00-06:00");
     expect(JSON.stringify(r)).not.toContain("14:30:00.000Z");
+  });
+});
+
+describe("update_event switches an all-day event to timed when given a time", () => {
+  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const ALLDAY = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:e1",
+    "DTSTART;VALUE=DATE:20261116",
+    "DTEND;VALUE=DATE:20261117",
+    "SUMMARY:Dentist",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const ALLDAY_SERIES = ALLDAY.replace(
+    "SUMMARY:Dentist",
+    "RRULE:FREQ=WEEKLY;COUNT=5\r\nSUMMARY:Dentist",
+  );
+
+  function stored(s: ReturnType<typeof mockService>, ics: string, recurring: boolean) {
+    s.getEventWithMeta.mockResolvedValue({
+      event: {
+        ...EVENT,
+        allDay: true,
+        timeZone: null,
+        start: "2026-11-16T00:00:00.000Z",
+        end: "2026-11-17T00:00:00.000Z",
+        isRecurring: recurring,
+        attendees: [],
+        alarms: [],
+        categories: [],
+        organizer: null,
+      },
+      meta: { url: "u", etag: "e" },
+    });
+    s.fetchRawCalendarObject.mockResolvedValue({ data: ics, url: "u", etag: "e" });
+  }
+  const written = (s: ReturnType<typeof mockService>) => String(s.updateEvent.mock.calls[0][2]);
+
+  it("writes a timed event, not a zero-length all-day one", async () => {
+    const s = mockService();
+    stored(s, ALLDAY, false);
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16T14:00:00",
+        end: "2026-11-16T15:00:00",
+      },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(written(s)).toContain("DTSTART;TZID=America/Chicago:20261116T140000");
+    expect(written(s)).toContain("DTEND;TZID=America/Chicago:20261116T150000");
+    expect(written(s)).not.toContain("VALUE=DATE");
+  });
+
+  it("does the same for an explicit offset", async () => {
+    const s = mockService();
+    stored(s, ALLDAY, false);
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16T20:00:00Z",
+        end: "2026-11-16T21:00:00Z",
+      },
+      s,
+    );
+    expect(written(s)).toContain("DTSTART;TZID=America/Chicago:20261116T140000");
+  });
+
+  it("moves one occurrence of an all-day series to a time", async () => {
+    const s = mockService();
+    stored(s, ALLDAY_SERIES, true);
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "this",
+        occurrenceDate: "2026-11-23",
+        start: "2026-11-23T14:00:00",
+        end: "2026-11-23T15:00:00",
+      },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    const ics = written(s);
+    // The slot stays a date (it is the series'), the override is timed.
+    expect(ics).toContain("RECURRENCE-ID;VALUE=DATE:20261123");
+    expect(ics).toContain("DTSTART:20261123T200000Z");
+    expect(r.structuredContent.event).toMatchObject({
+      allDay: false,
+      start: "2026-11-23T14:00:00-06:00",
+      occurrenceDate: "2026-11-23",
+    });
+  });
+
+  it("moves an all-day event given only a timed start, keeping it all-day and its length", async () => {
+    const s = mockService();
+    stored(s, ALLDAY, false);
+    const r = await call(
+      "update_event",
+      { calendar: "prov/Cal", uid: "e1", span: "all", start: "2026-11-18T14:00:00" },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(written(s)).toContain("DTSTART;VALUE=DATE:20261118");
+    expect(written(s)).toContain("DTEND;VALUE=DATE:20261119");
+  });
+
+  it("keeps an explicit allDay: true, reducing the times to their local dates", async () => {
+    const s = mockService();
+    stored(s, ALLDAY, false);
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        allDay: true,
+        start: "2026-11-18T14:00:00",
+        end: "2026-11-19T14:00:00",
+      },
+      s,
+    );
+    expect(written(s)).toContain("DTSTART;VALUE=DATE:20261118");
+    expect(written(s)).toContain("DTEND;VALUE=DATE:20261119");
+  });
+
+  it("keeps an all-day event all-day when given plain dates", async () => {
+    const s = mockService();
+    stored(s, ALLDAY, false);
+    await call(
+      "update_event",
+      { calendar: "prov/Cal", uid: "e1", span: "all", start: "2026-11-18", end: "2026-11-19" },
+      s,
+    );
+    expect(written(s)).toContain("DTSTART;VALUE=DATE:20261118");
   });
 });
