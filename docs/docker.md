@@ -9,8 +9,8 @@ Each server has its own image on the GitHub Container Registry:
 | Contacts | `ghcr.io/miguelarios/card-mcp` |
 
 An image's tag is its server's npm version (`ghcr.io/miguelarios/cal-mcp:3.0.1`), and it is
-built from that published package, so the image and `npx @miguelarios/cal-mcp@3.0.1` run the
-same code. Images are built for `linux/amd64` and `linux/arm64`.
+built by installing that published package, as `npx @miguelarios/cal-mcp@3.0.1` would. Images
+are built for `linux/amd64` and `linux/arm64`.
 
 Two ways to run a server, picked by `PIM_MCP_TRANSPORT`:
 
@@ -44,7 +44,10 @@ The examples below follow these conventions:
   (contacts), so they are reachable from this machine alone. **The servers do no
   authentication** — see [Exposing a server beyond your machine](#exposing-a-server-beyond-your-machine).
 - **Pin an exact version tag.** `latest`, `1` and `1.1` also exist and follow the newest
-  release, but a pinned tag is what keeps a restart from changing the server under you.
+  release, but a pinned tag is what keeps a restart from changing the server under you. A
+  version tag is normally built once; if it is ever rebuilt, its dependencies and Node base
+  are resolved afresh. To pin those too, pin the digest
+  (`ghcr.io/miguelarios/cal-mcp:3.0.1@sha256:…`, shown in `docker images --digests`).
 
 ## Email
 
@@ -396,5 +399,6 @@ write its npm cache. Streamable HTTP needs **email-mcp 0.17.0, cal-mcp 0.20.0, c
 | `403 Forbidden: origin not allowed` | A browser-based client. Add its origin to `PIM_MCP_HTTP_ALLOWED_ORIGINS`. |
 | Calendar "today" is off by hours | `PIM_TIMEZONE` is unset, so the container's UTC is used. |
 | stdio client shows no tools, container exits at once | `-i` is missing from the `docker run` arguments, or `PIM_MCP_TRANSPORT=stdio` is. |
+| `(unhealthy)` with `PIM_MCP_HTTP_HOST` set to one address | The health check probes `127.0.0.1`. Leave the host at `0.0.0.0` inside the container and restrict access where the port is published. |
 | stdio container shows `(unhealthy)` | Expected: the health check probes the HTTP port, which stdio does not open. It has no effect on a `--rm` container. |
 | `npm error EACCES` with the `npx` form | The volume is mounted at `/home/node/.npm`, so it was created root-owned. Mount it at `/home/node` instead, and remove the old volume (`docker volume rm <name>`). |

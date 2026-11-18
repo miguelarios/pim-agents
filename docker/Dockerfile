@@ -4,8 +4,9 @@
 #     --build-arg PACKAGE=email-mcp --build-arg VERSION=1.1.1 docker
 #
 # It installs the published npm package rather than building the workspace, so
-# an image holds exactly the bytes npm serves for that version (with their
-# provenance), and a server's image version is its npm version.
+# the server is exactly the bytes npm serves for that version (with their
+# provenance), and a server's image version is its npm version. Its
+# dependencies are resolved at build time, as `npx` would resolve them.
 FROM node:22-alpine
 
 ARG PACKAGE

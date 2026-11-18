@@ -22,6 +22,11 @@ on:
         description: "Published npm version, e.g. 1.1.1"
         required: true
         type: string
+      published:
+        description: "False when the npm publish job failed, so the wait for npm is short"
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       package:
@@ -54,18 +59,29 @@ jobs:
           PACKAGE: ${{ inputs.package }}
           VERSION: ${{ inputs.version }}
           OWNER: ${{ github.repository_owner }}
+          # Empty on workflow_dispatch, which has no such input.
+          PUBLISHED: ${{ inputs.published }}
         run: |
           set -euo pipefail
           case "$PACKAGE" in
             email-mcp|cal-mcp|card-mcp) ;;
             *) echo "::error::No image for '$PACKAGE'"; exit 1 ;;
           esac
+          # npm view accepts ranges and dist-tags (1, ^1, latest), which would
+          # pass the existence check below and build something unintended.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$VERSION' is not an exact version like 1.1.1"
+            exit 1
+          fi
           NAME="@miguelarios/${PACKAGE}"
 
           # The tag job already saw this version, but from another runner;
-          # npm's CDN can still answer 404 here for a few minutes.
+          # npm's CDN can still answer 404 here for a few minutes. When the
+          # publish failed it will never appear, and a long wait would hold
+          # release.yml's concurrency group, so give up after 2m as `tag` does.
+          if [ "$PUBLISHED" = "false" ]; then ATTEMPTS=12; else ATTEMPTS=60; fi
           SEEN=0
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 "$ATTEMPTS"); do
             if npm view --prefer-online "${NAME}@${VERSION}" version >/dev/null 2>&1; then
               SEEN=1
               break
@@ -78,15 +94,16 @@ jobs:
           fi
 
           # Floating tags (latest, 1, 1.1) follow npm's `latest` dist-tag, so a
-          # hand-run rebuild of an older version cannot move them backwards.
+          # hand-run rebuild of an older version cannot move them backwards. A
+          # prerelease never gets them, even if npm made it `latest`.
           NPM_LATEST=$(npm view --prefer-online "$NAME" version)
-          if [ "$NPM_LATEST" = "$VERSION" ]; then FLOAT=true; else FLOAT=false; fi
+          if [ "$NPM_LATEST" = "$VERSION" ] && [[ "$VERSION" != *-* ]]; then FLOAT=true; else FLOAT=false; fi
           echo "npm latest is $NPM_LATEST; floating tags: $FLOAT"
 
           {
             echo "image=ghcr.io/${OWNER,,}/${PACKAGE}"
             echo "float=$FLOAT"
-            echo "description=$(jq -r .description "packages/${PACKAGE}/package.json")"
+            echo "description=$(jq -r '.description | gsub("[\\r\\n]+"; " ")' "packages/${PACKAGE}/package.json")"
           } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
@@ -101,6 +118,9 @@ jobs:
       - name: Tags and labels
         id: meta
         uses: docker/metadata-action@v5
+        env:
+          # GHCR reads a multi-arch package's description from the index.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ${{ steps.target.outputs.image }}
           flavor: latest=false
@@ -110,6 +130,10 @@ jobs:
             type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ steps.target.outputs.float }}
             type=raw,value=latest,enable=${{ steps.target.outputs.float }}
           labels: |
+            org.opencontainers.image.title=${{ inputs.package }}
+            org.opencontainers.image.description=${{ steps.target.outputs.description }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          annotations: |
             org.opencontainers.image.title=${{ inputs.package }}
             org.opencontainers.image.description=${{ steps.target.outputs.description }}
             org.opencontainers.image.version=${{ inputs.version }}
@@ -146,6 +170,7 @@ jobs:
   # its health check, before it can reach a release.
   check:
     if: github.event_name == 'pull_request'
+    name: check (${{ matrix.package }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -190,6 +215,10 @@ jobs:
             sleep 2
           done
           docker logs smoke
+          if [ "$STATUS" != "healthy" ]; then
+            echo "::error::Health status is '$STATUS' after 60s"
+            exit 1
+          fi
           [ "$(curl -fsS http://127.0.0.1:3000/healthz)" = "ok" ]
           [ "$(docker exec smoke id -un)" = "node" ]
           echo "healthy, running as node"

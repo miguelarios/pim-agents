@@ -251,7 +251,7 @@ jobs:
           fi
 
   image:
-    needs: [detect, tag]
+    needs: [detect, publish, tag]
     # `always()` for the same reason as the tag job: one package failing to
     # publish must not cost its siblings their images. docker.yml checks npm
     # itself and fails only the entry whose version never arrived.
@@ -267,3 +267,4 @@ jobs:
     with:
       package: ${{ matrix.release.package }}
       version: ${{ matrix.release.version }}
+      published: ${{ needs.publish.result == 'success' }}
