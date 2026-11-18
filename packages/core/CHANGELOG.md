@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1 (2026-11-18)
+
+- **All-day values are written with one `VALUE=DATE`** (#167). `updateMasterEventIcs`, `createExceptionComponent`, `addExdateToIcs` and `splitRecurrenceIcs` added the parameter on top of the one ical.js writes for a date, producing `DTSTART;VALUE=DATE;VALUE=DATE:…`. Stored data that already has it still parses, and an update rewrites it once.
+- **`updateMasterEventIcs` with a `start` and no `end` moves DTEND too** (#167), keeping the event's wall-clock length (whole days, at least one, for an all-day result). It used to move only DTSTART, so the event could end before it started.
+
 ## 1.2.0 (2026-11-17)
 
 - **New `parseInTimezone(value, timeZone)`** (#164). Reads a caller's date or date-time as the instant it means in a zone:
