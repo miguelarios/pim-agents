@@ -139,8 +139,7 @@ export function createExceptionComponent(
 
   const recurId = ICAL.Time.fromJSDate(new Date(occurrenceDate), true);
   if (allDay) recurId.isDate = true;
-  const recurProp = ex.updatePropertyWithValue("recurrence-id", recurId);
-  if (allDay) recurProp.setParameter("value", "DATE");
+  ex.updatePropertyWithValue("recurrence-id", recurId);
 
   const startIso = overrides.start ?? defaultStart;
   const endIso = overrides.end ?? defaultEnd;
@@ -148,13 +147,11 @@ export function createExceptionComponent(
 
   const dtstart = ICAL.Time.fromJSDate(new Date(startIso), true);
   if (isAllDay) dtstart.isDate = true;
-  const dtstartProp = ex.updatePropertyWithValue("dtstart", dtstart);
-  if (isAllDay) dtstartProp.setParameter("value", "DATE");
+  ex.updatePropertyWithValue("dtstart", dtstart);
 
   const dtend = ICAL.Time.fromJSDate(new Date(endIso), true);
   if (isAllDay) dtend.isDate = true;
-  const dtendProp = ex.updatePropertyWithValue("dtend", dtend);
-  if (isAllDay) dtendProp.setParameter("value", "DATE");
+  ex.updatePropertyWithValue("dtend", dtend);
 
   // SEQUENCE: bump master's
   const masterSeq = masterComp.getFirstPropertyValue("sequence");
@@ -294,8 +291,7 @@ export function addExdateToIcs(
     }
   }
 
-  const exProp = master.addPropertyWithValue("exdate", newDate);
-  if (allDay) exProp.setParameter("value", "DATE");
+  master.addPropertyWithValue("exdate", newDate);
   return root.toString();
 }
 
@@ -321,15 +317,34 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
     const prop = master.updatePropertyWithValue(propName, t);
     prop.removeParameter("tzid");
     prop.removeParameter("value");
-    if (allDay) prop.setParameter("value", "DATE");
-    else if (effectiveTz && ICAL.TimezoneService.get(effectiveTz)) {
+    // No explicit VALUE=DATE: ical.js resets the property's type from the
+    // value (an ICAL.Time with isDate is "date") and writes VALUE=DATE
+    // itself, so adding it here wrote "DTSTART;VALUE=DATE;VALUE=DATE:...".
+    if (!allDay && effectiveTz && ICAL.TimezoneService.get(effectiveTz)) {
       prop.setParameter("tzid", effectiveTz);
     }
   };
   const previousStartMs =
     currentDtstart instanceof ICAL.Time ? currentDtstart.toJSDate().getTime() : null;
+  const currentDtend = master.getFirstPropertyValue("dtend");
+  const previousEndMs =
+    currentDtend instanceof ICAL.Time ? currentDtend.toJSDate().getTime() : null;
   if (updates.start !== undefined) setTime("dtstart", updates.start);
   if (updates.end !== undefined) setTime("dtend", updates.end);
+  else if (updates.start !== undefined && previousStartMs !== null && previousEndMs !== null) {
+    // Moving only the start moves the whole event: the end keeps its
+    // distance, so the event cannot end before it starts. An all-day event
+    // keeps at least a day.
+    const DAY = 86_400_000;
+    const length = Math.max(previousEndMs - previousStartMs, allDay ? DAY : 0);
+    const start = master.getFirstPropertyValue("dtstart");
+    if (start instanceof ICAL.Time) {
+      const startMs = allDay
+        ? Date.UTC(start.year, start.month - 1, start.day)
+        : start.toJSDate().getTime();
+      setTime("dtend", new Date(startMs + length).toISOString());
+    }
+  }
 
   // Moving the series moves its occurrences, so everything that names an
   // occurrence by its old time — EXDATE exclusions, RDATE additions and the
@@ -577,8 +592,10 @@ export function splitRecurrenceIcs(
     const prop = master.updatePropertyWithValue(name, t);
     prop.removeParameter("tzid");
     prop.removeParameter("value");
-    if (allDay) prop.setParameter("value", "DATE");
-    else if (typeof tzid === "string" && ICAL.TimezoneService.get(tzid)) {
+    // No explicit VALUE=DATE: ical.js resets the property's type from the
+    // value (an ICAL.Time with isDate is "date") and writes VALUE=DATE
+    // itself, so adding it here wrote "DTSTART;VALUE=DATE;VALUE=DATE:...".
+    if (!allDay && typeof tzid === "string" && ICAL.TimezoneService.get(tzid)) {
       prop.setParameter("tzid", tzid);
     }
   };
