@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import "../../ics/_tz-init.js";
 import {
   addExdateToIcs,
@@ -277,8 +277,9 @@ describe("updateMasterEventIcs", () => {
     // RRULE keeps resolving 11:00 local across DST rather than drifting.
     expect(out).toContain("DTSTART;TZID=America/New_York:20260302T110000");
     expect(out).not.toMatch(/DTSTART[^\n]*:\d{8}T\d{6}Z/);
-    // The untouched DTEND is unchanged — still zoned, no mismatched pair.
-    expect(out).toContain("DTEND;TZID=America/New_York:20260302T103000");
+    // DTEND moves with it, keeping the 30-minute length, and stays zoned:
+    // no mismatched pair. (It used to stay at 10:30, before the new start.)
+    expect(out).toContain("DTEND;TZID=America/New_York:20260302T113000");
     expect(out).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO");
   });
 
@@ -808,5 +809,205 @@ describe("EXDATE handling (#40)", () => {
     expect(back).toContain("EXDATE;TZID=America/Chicago:20260303T100000\r\n");
     expect(back).not.toContain("20260304T100000");
     expect(starts(back)).toContain("back4@03-04T16:00");
+  });
+});
+
+describe("all-day values carry VALUE=DATE once", () => {
+  const SERIES = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:e1",
+    "DTSTAMP:20260101T000000Z",
+    "DTSTART;VALUE=DATE:20261116",
+    "DTEND;VALUE=DATE:20261117",
+    "RRULE:FREQ=WEEKLY;COUNT=5",
+    "SUMMARY:x",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  /** Every DTSTART/DTEND/EXDATE/RECURRENCE-ID line in `ics`. */
+  const timeLines = (ics: string) =>
+    ics.split(/\r?\n/).filter((l) => /^(DTSTART|DTEND|EXDATE|RECURRENCE-ID)[;:]/.test(l));
+  const once = (ics: string | null) => {
+    expect(ics).not.toBeNull();
+    const lines = timeLines(ics as string);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines)
+      expect(line.match(/VALUE=DATE/gi)?.length ?? 0, line).toBeLessThanOrEqual(1);
+    return lines;
+  };
+
+  it("updateMasterEventIcs", () => {
+    expect(once(updateMasterEventIcs(SERIES, { start: "2026-11-18", end: "2026-11-19" }))).toEqual(
+      expect.arrayContaining(["DTSTART;VALUE=DATE:20261118", "DTEND;VALUE=DATE:20261119"]),
+    );
+  });
+
+  it("addExdateToIcs", () => {
+    expect(once(addExdateToIcs(SERIES, "2026-11-23", true))).toContain(
+      "EXDATE;VALUE=DATE:20261123",
+    );
+  });
+
+  it("createExceptionComponent", () => {
+    expect(
+      once(createExceptionComponent(SERIES, "vevent", "2026-11-23", { title: "y" }, true)),
+    ).toEqual([
+      "RECURRENCE-ID;VALUE=DATE:20261123",
+      "DTSTART;VALUE=DATE:20261123",
+      "DTEND;VALUE=DATE:20261124",
+    ]);
+  });
+
+  it("splitRecurrenceIcs and truncateRecurrenceIcs", () => {
+    const split = splitRecurrenceIcs(SERIES, "2026-11-30", true, "tail");
+    if (!split) throw new Error("expected a split");
+    once(split.before);
+    expect(once(split.after)).toContain("DTSTART;VALUE=DATE:20261130");
+    once(truncateRecurrenceIcs(SERIES, "2026-11-30", true));
+  });
+
+  it("switches a property between date and date-time cleanly", () => {
+    const timed = updateMasterEventIcs(SERIES, {
+      allDay: false,
+      start: "2026-11-16T14:00:00.000Z",
+      end: "2026-11-16T15:00:00.000Z",
+    });
+    expect(timeLines(timed)).toEqual(["DTSTART:20261116T140000Z", "DTEND:20261116T150000Z"]);
+    const back = updateMasterEventIcs(timed, {
+      allDay: true,
+      start: "2026-11-16",
+      end: "2026-11-17",
+    });
+    expect(timeLines(back)).toEqual(["DTSTART;VALUE=DATE:20261116", "DTEND;VALUE=DATE:20261117"]);
+    // ...and parses back to what was written.
+    expect(parseIcsEvents(back)[0]).toMatchObject({
+      allDay: true,
+      start: "2026-11-16T00:00:00.000Z",
+    });
+  });
+});
+
+describe("updateMasterEventIcs keeps the length when only start moves", () => {
+  const event = (start: string, end: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:e1",
+      "DTSTAMP:20260101T000000Z",
+      start,
+      end,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  const times = (ics: string) => ics.split(/\r?\n/).filter((l) => /^DT(START|END)[;:]/.test(l));
+
+  it("for a timed event", () => {
+    const ics = event("DTSTART:20261116T140000Z", "DTEND:20261116T150000Z");
+    expect(times(updateMasterEventIcs(ics, { start: "2026-11-18T14:00:00.000Z" }))).toEqual([
+      "DTSTART:20261118T140000Z",
+      "DTEND:20261118T150000Z",
+    ]);
+  });
+
+  it("for an all-day event spanning days", () => {
+    const ics = event("DTSTART;VALUE=DATE:20261116", "DTEND;VALUE=DATE:20261118");
+    expect(times(updateMasterEventIcs(ics, { start: "2026-11-20" }))).toEqual([
+      "DTSTART;VALUE=DATE:20261120",
+      "DTEND;VALUE=DATE:20261122",
+    ]);
+  });
+
+  it("in its own zone", () => {
+    const ics = event(
+      "DTSTART;TZID=America/Chicago:20261116T083000",
+      "DTEND;TZID=America/Chicago:20261116T093000",
+    );
+    expect(times(updateMasterEventIcs(ics, { start: "2026-11-18T16:00:00.000Z" }))).toEqual([
+      "DTSTART;TZID=America/Chicago:20261118T100000",
+      "DTEND;TZID=America/Chicago:20261118T110000",
+    ]);
+  });
+
+  it("gives at least a day when a timed event turns all-day with only a start", () => {
+    const ics = event("DTSTART:20261116T140000Z", "DTEND:20261116T150000Z");
+    expect(times(updateMasterEventIcs(ics, { allDay: true, start: "2026-11-18" }))).toEqual([
+      "DTSTART;VALUE=DATE:20261118",
+      "DTEND;VALUE=DATE:20261119",
+    ]);
+  });
+
+  it("leaves an explicit end alone, and an end-only update moves only the end", () => {
+    const ics = event("DTSTART:20261116T140000Z", "DTEND:20261116T150000Z");
+    expect(
+      times(
+        updateMasterEventIcs(ics, {
+          start: "2026-11-18T14:00:00.000Z",
+          end: "2026-11-18T18:00:00.000Z",
+        }),
+      ),
+    ).toEqual(["DTSTART:20261118T140000Z", "DTEND:20261118T180000Z"]);
+    expect(times(updateMasterEventIcs(ics, { end: "2026-11-16T16:00:00.000Z" }))).toEqual([
+      "DTSTART:20261116T140000Z",
+      "DTEND:20261116T160000Z",
+    ]);
+  });
+});
+
+describe("updateMasterEventIcs keeps the length in wall-clock time (#167 review)", () => {
+  // Node honours a runtime TZ change: replay on a host that has DST.
+  beforeAll(() => vi.stubEnv("TZ", "America/New_York"));
+  afterAll(() => vi.unstubAllEnvs());
+
+  const event = (start: string, end: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:e1",
+      "DTSTAMP:20260101T000000Z",
+      start,
+      end,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  const times = (ics: string) => ics.split(/\r?\n/).filter((l) => /^DT(START|END)[;:]/.test(l));
+
+  it("really runs on a host with DST", () => {
+    expect(new Date("2026-03-07T12:00:00Z").getTimezoneOffset()).not.toBe(
+      new Date("2026-03-10T12:00:00Z").getTimezoneOffset(),
+    );
+  });
+
+  it("keeps a three-day all-day event three days across the host's spring-forward", () => {
+    const ics = event("DTSTART;VALUE=DATE:20260307", "DTEND;VALUE=DATE:20260310");
+    expect(times(updateMasterEventIcs(ics, { start: "2026-04-01" }))).toEqual([
+      "DTSTART;VALUE=DATE:20260401",
+      "DTEND;VALUE=DATE:20260404",
+    ]);
+  });
+
+  it("keeps a floating event's wall-clock length", () => {
+    const ics = event("DTSTART:20260307T090000", "DTEND:20260309T090000");
+    expect(times(updateMasterEventIcs(ics, { start: "2026-04-01T09:00:00Z" }))).toEqual([
+      "DTSTART:20260401T090000Z",
+      "DTEND:20260403T090000Z",
+    ]);
+  });
+
+  it("keeps a zoned event's wall-clock length across that zone's DST change", () => {
+    // 18:00 to 18:00 over Mar 8 is 47 hours absolute, two days on the wall.
+    const ics = event(
+      "DTSTART;TZID=America/New_York:20260306T180000",
+      "DTEND;TZID=America/New_York:20260308T180000",
+    );
+    expect(times(updateMasterEventIcs(ics, { start: "2026-02-27T23:00:00.000Z" }))).toEqual([
+      "DTSTART;TZID=America/New_York:20260227T180000",
+      "DTEND;TZID=America/New_York:20260301T180000",
+    ]);
   });
 });

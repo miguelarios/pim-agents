@@ -139,8 +139,7 @@ export function createExceptionComponent(
 
   const recurId = ICAL.Time.fromJSDate(new Date(occurrenceDate), true);
   if (allDay) recurId.isDate = true;
-  const recurProp = ex.updatePropertyWithValue("recurrence-id", recurId);
-  if (allDay) recurProp.setParameter("value", "DATE");
+  ex.updatePropertyWithValue("recurrence-id", recurId);
 
   const startIso = overrides.start ?? defaultStart;
   const endIso = overrides.end ?? defaultEnd;
@@ -148,13 +147,11 @@ export function createExceptionComponent(
 
   const dtstart = ICAL.Time.fromJSDate(new Date(startIso), true);
   if (isAllDay) dtstart.isDate = true;
-  const dtstartProp = ex.updatePropertyWithValue("dtstart", dtstart);
-  if (isAllDay) dtstartProp.setParameter("value", "DATE");
+  ex.updatePropertyWithValue("dtstart", dtstart);
 
   const dtend = ICAL.Time.fromJSDate(new Date(endIso), true);
   if (isAllDay) dtend.isDate = true;
-  const dtendProp = ex.updatePropertyWithValue("dtend", dtend);
-  if (isAllDay) dtendProp.setParameter("value", "DATE");
+  ex.updatePropertyWithValue("dtend", dtend);
 
   // SEQUENCE: bump master's
   const masterSeq = masterComp.getFirstPropertyValue("sequence");
@@ -294,8 +291,7 @@ export function addExdateToIcs(
     }
   }
 
-  const exProp = master.addPropertyWithValue("exdate", newDate);
-  if (allDay) exProp.setParameter("value", "DATE");
+  master.addPropertyWithValue("exdate", newDate);
   return root.toString();
 }
 
@@ -321,15 +317,25 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
     const prop = master.updatePropertyWithValue(propName, t);
     prop.removeParameter("tzid");
     prop.removeParameter("value");
-    if (allDay) prop.setParameter("value", "DATE");
-    else if (effectiveTz && ICAL.TimezoneService.get(effectiveTz)) {
+    // No explicit VALUE=DATE: ical.js resets the property's type from the
+    // value (an ICAL.Time with isDate is "date") and writes VALUE=DATE
+    // itself, so adding it here wrote "DTSTART;VALUE=DATE;VALUE=DATE:...".
+    if (!allDay && effectiveTz && ICAL.TimezoneService.get(effectiveTz)) {
       prop.setParameter("tzid", effectiveTz);
     }
   };
   const previousStartMs =
     currentDtstart instanceof ICAL.Time ? currentDtstart.toJSDate().getTime() : null;
+  const currentDtend = master.getFirstPropertyValue("dtend");
   if (updates.start !== undefined) setTime("dtstart", updates.start);
   if (updates.end !== undefined) setTime("dtend", updates.end);
+  else if (
+    updates.start !== undefined &&
+    currentDtstart instanceof ICAL.Time &&
+    currentDtend instanceof ICAL.Time
+  ) {
+    moveEndWithStart(master, currentDtstart, currentDtend);
+  }
 
   // Moving the series moves its occurrences, so everything that names an
   // occurrence by its old time — EXDATE exclusions, RDATE additions and the
@@ -577,8 +583,10 @@ export function splitRecurrenceIcs(
     const prop = master.updatePropertyWithValue(name, t);
     prop.removeParameter("tzid");
     prop.removeParameter("value");
-    if (allDay) prop.setParameter("value", "DATE");
-    else if (typeof tzid === "string" && ICAL.TimezoneService.get(tzid)) {
+    // No explicit VALUE=DATE: ical.js resets the property's type from the
+    // value (an ICAL.Time with isDate is "date") and writes VALUE=DATE
+    // itself, so adding it here wrote "DTSTART;VALUE=DATE;VALUE=DATE:...".
+    if (!allDay && typeof tzid === "string" && ICAL.TimezoneService.get(tzid)) {
       prop.setParameter("tzid", tzid);
     }
   };
@@ -665,4 +673,44 @@ export function splitIcsByUid(icsContent: string): Array<{ uid: string; ics: str
     results.push({ uid, ics: cal.toString() });
   }
   return results;
+}
+
+/**
+ * After DTSTART moved on its own, moves DTEND so the event keeps the length
+ * it had (from `oldStart` to `oldEnd`), so it cannot end before it starts.
+ *
+ * The length is wall-clock time, read from the values' own fields. An
+ * 18:00-to-18:00 two-day block stays 18:00 to 18:00 across a DST change, and
+ * nothing is read in the host process's zone, which is what `toJSDate` does
+ * with a date or a floating time. Only when start and end are in different
+ * zones is the length absolute. An all-day result keeps whole days, at least
+ * one.
+ */
+function moveEndWithStart(master: ICAL.Component, oldStart: ICAL.Time, oldEnd: ICAL.Time): void {
+  const start = master.getFirstPropertyValue("dtstart");
+  if (!(start instanceof ICAL.Time)) return;
+  const wall = (t: ICAL.Time) =>
+    Date.UTC(
+      t.year,
+      t.month - 1,
+      t.day,
+      t.isDate ? 0 : t.hour,
+      t.isDate ? 0 : t.minute,
+      t.isDate ? 0 : t.second,
+    );
+  const sameZone = (oldStart.zone?.tzid ?? null) === (oldEnd.zone?.tzid ?? null);
+  const lengthMs = sameZone
+    ? wall(oldEnd) - wall(oldStart)
+    : oldEnd.toJSDate().getTime() - oldStart.toJSDate().getTime();
+  const end = start.clone();
+  if (start.isDate) {
+    end.adjust(Math.max(1, Math.round(lengthMs / 86_400_000)), 0, 0, 0);
+  } else {
+    end.adjust(0, 0, 0, Math.round(lengthMs / 1000));
+  }
+  const prop = master.updatePropertyWithValue("dtend", end);
+  prop.removeParameter("tzid");
+  prop.removeParameter("value");
+  const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+  if (!start.isDate && typeof tzid === "string") prop.setParameter("tzid", tzid);
 }
