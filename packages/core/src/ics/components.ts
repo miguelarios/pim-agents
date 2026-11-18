@@ -327,23 +327,14 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
   const previousStartMs =
     currentDtstart instanceof ICAL.Time ? currentDtstart.toJSDate().getTime() : null;
   const currentDtend = master.getFirstPropertyValue("dtend");
-  const previousEndMs =
-    currentDtend instanceof ICAL.Time ? currentDtend.toJSDate().getTime() : null;
   if (updates.start !== undefined) setTime("dtstart", updates.start);
   if (updates.end !== undefined) setTime("dtend", updates.end);
-  else if (updates.start !== undefined && previousStartMs !== null && previousEndMs !== null) {
-    // Moving only the start moves the whole event: the end keeps its
-    // distance, so the event cannot end before it starts. An all-day event
-    // keeps at least a day.
-    const DAY = 86_400_000;
-    const length = Math.max(previousEndMs - previousStartMs, allDay ? DAY : 0);
-    const start = master.getFirstPropertyValue("dtstart");
-    if (start instanceof ICAL.Time) {
-      const startMs = allDay
-        ? Date.UTC(start.year, start.month - 1, start.day)
-        : start.toJSDate().getTime();
-      setTime("dtend", new Date(startMs + length).toISOString());
-    }
+  else if (
+    updates.start !== undefined &&
+    currentDtstart instanceof ICAL.Time &&
+    currentDtend instanceof ICAL.Time
+  ) {
+    moveEndWithStart(master, currentDtstart, currentDtend);
   }
 
   // Moving the series moves its occurrences, so everything that names an
@@ -682,4 +673,44 @@ export function splitIcsByUid(icsContent: string): Array<{ uid: string; ics: str
     results.push({ uid, ics: cal.toString() });
   }
   return results;
+}
+
+/**
+ * After DTSTART moved on its own, moves DTEND so the event keeps the length
+ * it had (from `oldStart` to `oldEnd`), so it cannot end before it starts.
+ *
+ * The length is wall-clock time, read from the values' own fields. An
+ * 18:00-to-18:00 two-day block stays 18:00 to 18:00 across a DST change, and
+ * nothing is read in the host process's zone, which is what `toJSDate` does
+ * with a date or a floating time. Only when start and end are in different
+ * zones is the length absolute. An all-day result keeps whole days, at least
+ * one.
+ */
+function moveEndWithStart(master: ICAL.Component, oldStart: ICAL.Time, oldEnd: ICAL.Time): void {
+  const start = master.getFirstPropertyValue("dtstart");
+  if (!(start instanceof ICAL.Time)) return;
+  const wall = (t: ICAL.Time) =>
+    Date.UTC(
+      t.year,
+      t.month - 1,
+      t.day,
+      t.isDate ? 0 : t.hour,
+      t.isDate ? 0 : t.minute,
+      t.isDate ? 0 : t.second,
+    );
+  const sameZone = (oldStart.zone?.tzid ?? null) === (oldEnd.zone?.tzid ?? null);
+  const lengthMs = sameZone
+    ? wall(oldEnd) - wall(oldStart)
+    : oldEnd.toJSDate().getTime() - oldStart.toJSDate().getTime();
+  const end = start.clone();
+  if (start.isDate) {
+    end.adjust(Math.max(1, Math.round(lengthMs / 86_400_000)), 0, 0, 0);
+  } else {
+    end.adjust(0, 0, 0, Math.round(lengthMs / 1000));
+  }
+  const prop = master.updatePropertyWithValue("dtend", end);
+  prop.removeParameter("tzid");
+  prop.removeParameter("value");
+  const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+  if (!start.isDate && typeof tzid === "string") prop.setParameter("tzid", tzid);
 }

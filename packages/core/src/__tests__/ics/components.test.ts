@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import "../../ics/_tz-init.js";
 import {
   addExdateToIcs,
@@ -953,6 +953,61 @@ describe("updateMasterEventIcs keeps the length when only start moves", () => {
     expect(times(updateMasterEventIcs(ics, { end: "2026-11-16T16:00:00.000Z" }))).toEqual([
       "DTSTART:20261116T140000Z",
       "DTEND:20261116T160000Z",
+    ]);
+  });
+});
+
+describe("updateMasterEventIcs keeps the length in wall-clock time (#167 review)", () => {
+  // Node honours a runtime TZ change: replay on a host that has DST.
+  beforeAll(() => vi.stubEnv("TZ", "America/New_York"));
+  afterAll(() => vi.unstubAllEnvs());
+
+  const event = (start: string, end: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:e1",
+      "DTSTAMP:20260101T000000Z",
+      start,
+      end,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  const times = (ics: string) => ics.split(/\r?\n/).filter((l) => /^DT(START|END)[;:]/.test(l));
+
+  it("really runs on a host with DST", () => {
+    expect(new Date("2026-03-07T12:00:00Z").getTimezoneOffset()).not.toBe(
+      new Date("2026-03-10T12:00:00Z").getTimezoneOffset(),
+    );
+  });
+
+  it("keeps a three-day all-day event three days across the host's spring-forward", () => {
+    const ics = event("DTSTART;VALUE=DATE:20260307", "DTEND;VALUE=DATE:20260310");
+    expect(times(updateMasterEventIcs(ics, { start: "2026-04-01" }))).toEqual([
+      "DTSTART;VALUE=DATE:20260401",
+      "DTEND;VALUE=DATE:20260404",
+    ]);
+  });
+
+  it("keeps a floating event's wall-clock length", () => {
+    const ics = event("DTSTART:20260307T090000", "DTEND:20260309T090000");
+    expect(times(updateMasterEventIcs(ics, { start: "2026-04-01T09:00:00Z" }))).toEqual([
+      "DTSTART:20260401T090000Z",
+      "DTEND:20260403T090000Z",
+    ]);
+  });
+
+  it("keeps a zoned event's wall-clock length across that zone's DST change", () => {
+    // 18:00 to 18:00 over Mar 8 is 47 hours absolute, two days on the wall.
+    const ics = event(
+      "DTSTART;TZID=America/New_York:20260306T180000",
+      "DTEND;TZID=America/New_York:20260308T180000",
+    );
+    expect(times(updateMasterEventIcs(ics, { start: "2026-02-27T23:00:00.000Z" }))).toEqual([
+      "DTSTART;TZID=America/New_York:20260227T180000",
+      "DTEND;TZID=America/New_York:20260301T180000",
     ]);
   });
 });
