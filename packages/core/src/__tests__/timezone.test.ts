@@ -11,23 +11,49 @@ import {
 describe("getTimezone", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   it("returns OS timezone by default", () => {
+    vi.stubEnv("TZ", undefined);
     const tz = getTimezone();
     // IANA timezone: "Area/Location" (e.g., "America/Chicago") or bare "UTC"
     expect(tz).toMatch(/^([A-Za-z]+\/[A-Za-z_]+|UTC)$/);
   });
 
-  it("returns PIM_TIMEZONE env var when set", () => {
-    vi.stubEnv("PIM_TIMEZONE", "America/New_York");
+  it("returns TZ when set, as a container sets it", () => {
+    vi.stubEnv("TZ", "America/New_York");
     expect(getTimezone()).toBe("America/New_York");
   });
 
-  it("falls back to OS timezone when PIM_TIMEZONE is empty", () => {
-    vi.stubEnv("PIM_TIMEZONE", "");
+  it("accepts TZ in its POSIX ':Area/Location' form", () => {
+    vi.stubEnv("TZ", ":Europe/Berlin");
+    expect(getTimezone()).toBe("Europe/Berlin");
+  });
+
+  it("falls back to UTC for a TZ Intl does not know, rather than undefined", () => {
+    // Node then reports the zone as undefined instead of a string.
+    vi.stubEnv("TZ", "Not/AZone");
+    expect(getTimezone()).toBe("UTC");
+  });
+
+  it("falls back to UTC for an empty TZ, a zone Intl itself rejects", () => {
+    // `TZ: ${TZ}` in Compose with the host variable unset. Node runs in UTC
+    // and reports "Etc/Unknown", which new Intl.DateTimeFormat then refuses.
+    vi.stubEnv("TZ", "");
     const tz = getTimezone();
-    expect(tz).toMatch(/^([A-Za-z]+\/[A-Za-z_]+|UTC)$/);
+    expect(tz).toBe("UTC");
+    expect(() => new Intl.DateTimeFormat("en-US", { timeZone: tz })).not.toThrow();
+  });
+
+  it("no longer reads PIM_TIMEZONE, and says so once", () => {
+    vi.stubEnv("TZ", "America/Chicago");
+    vi.stubEnv("PIM_TIMEZONE", "Asia/Tokyo");
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(getTimezone()).toBe("America/Chicago");
+    expect(getTimezone()).toBe("America/Chicago");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/PIM_TIMEZONE is no longer read.*TZ=Asia\/Tokyo/);
   });
 });
 

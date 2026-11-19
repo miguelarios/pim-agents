@@ -306,7 +306,7 @@ describe("buildSearchCriteria with materialized default arguments", () => {
   });
 });
 
-describe("date filters are read in PIM_TIMEZONE (not UTC)", () => {
+describe("date filters are read in TZ (not UTC)", () => {
   const CHICAGO = "America/Chicago";
   const req = createRequire(import.meta.url);
   const { searchCompiler } = req("imapflow/lib/search-compiler.js") as {

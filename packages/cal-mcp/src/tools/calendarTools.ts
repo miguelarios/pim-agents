@@ -675,7 +675,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         // An all-day result takes the local date of whatever start/end says;
         // only here is it known whether the event is (or stays) all-day.
         const tz = getTimezone();
-        // A plain date beside a time is midnight in PIM_TIMEZONE, not UTC
+        // A plain date beside a time is midnight in TZ, not UTC
         // midnight (the evening before, west of Greenwich).
         const instant = (v: string) => (isDateOnly(v) ? parseInTimezone(v, tz).toISOString() : v);
         const timedTimes = becomesTimed
@@ -1255,7 +1255,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
           includeAllDayAsBusy: args.includeAllDayAsBusy ?? false,
           ignoreTentative: args.ignoreTentative ?? false,
         });
-        // Rendered in PIM_TIMEZONE like every other time this server returns.
+        // Rendered in TZ like every other time this server returns.
         const zone = usableTimezone(getTimezone());
         const local = (iso: string) => formatInTimezone(iso, zone);
         return ok({
@@ -1358,5 +1358,5 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
   },
 ];
 
-/** Every tool, with its time arguments read in PIM_TIMEZONE (see `zonedArgs`). */
+/** Every tool, with its time arguments read in TZ (see `zonedArgs`). */
 export const CALENDAR_TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = TOOLS.map(withZonedArgs);

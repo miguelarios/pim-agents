@@ -1,5 +1,5 @@
 /**
- * Reads the times a caller passes in, in PIM_TIMEZONE, the zone results are
+ * Reads the times a caller passes in, in TZ, the zone results are
  * given in. Before this, `new Date` read them: a date-only range bound became
  * UTC midnight (the previous evening west of Greenwich), and a date-time with
  * no offset became the host's wall-clock time, which is UTC in a container.
@@ -116,7 +116,7 @@ export function zoneArgs(name: string, args: Args, timezone: string = getTimezon
   return out;
 }
 
-/** `tool` with its time arguments read in PIM_TIMEZONE before its handler runs. */
+/** `tool` with its time arguments read in TZ before its handler runs. */
 export function withZonedArgs<S>(tool: ToolDef<S>): ToolDef<S> {
   if (!TIME_ARGS[tool.name]) return tool;
   const handler = tool.handler;

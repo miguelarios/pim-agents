@@ -284,8 +284,8 @@ describe.each<Era>(["legacy", "modern"])("cal-mcp over the wire (%s era)", (era)
     expect((result.structuredContent as { events: unknown[] }).events).toHaveLength(1);
   });
 
-  it("sends timed events in PIM_TIMEZONE and all-day events as dates, schema-valid", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+  it("sends timed events in TZ and all-day events as dates, schema-valid", async () => {
+    vi.stubEnv("TZ", "America/Chicago");
     const service = fakeService();
     service.listEvents.mockResolvedValue([
       { ...EVENT, start: "2026-11-16T14:30:00.000Z", end: "2026-11-16T15:30:00.000Z" },

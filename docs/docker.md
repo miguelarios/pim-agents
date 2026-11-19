@@ -65,7 +65,7 @@ SMTP_PASS=your-app-password
 # IMAP_PORT=993
 # SMTP_PORT=465
 # SMTP_FROM_NAME=Your Name
-# PIM_TIMEZONE=America/Chicago
+# TZ=America/Chicago
 ```
 
 ### Streamable HTTP
@@ -148,11 +148,13 @@ CALDAV_MAILBOX_PASS=app-password
 # CALDAV_NEXTCLOUD_PASS=app-password
 
 # The container's clock is UTC; set your zone so "today" and local times are yours
-PIM_TIMEZONE=America/Chicago
+TZ=America/Chicago
 ```
 
-**Set `PIM_TIMEZONE`.** Outside Docker the server defaults to the host's zone; inside a
-container that is UTC, so `get_today_events` and `find_free_slots` would work in the wrong day.
+**Set `TZ`.** It is the same variable every other container takes, LinuxServer images
+included. Outside Docker the server defaults to the host's zone; inside a container that is
+UTC, so `get_today_events` and `find_free_slots` would work in the wrong day. The image needs
+no `tzdata`: Node carries its own zone database.
 
 cal-mcp caches calendar URLs under `/home/node/.cache/cal-mcp`. Mount a named volume at
 `/home/node` to keep that cache across restarts; it is optional.
@@ -283,7 +285,7 @@ services:
     image: ghcr.io/miguelarios/cal-mcp:3.0.1
     env_file: cal.env
     environment:
-      PIM_TIMEZONE: America/Chicago
+      TZ: America/Chicago
     ports: ["127.0.0.1:3002:3000"]
     volumes: [cal-mcp-home:/home/node]
 
@@ -397,7 +399,8 @@ write its npm cache. Streamable HTTP needs **email-mcp 0.17.0, cal-mcp 0.20.0, c
 | `denied` or `unauthorized` pulling from ghcr.io | The image tag does not exist (check the version), or the package is private and this machine has not run `docker login ghcr.io`. |
 | The client gets `404 Session not found` | The server restarted, or the session sat idle over 30 minutes. Clients re-initialize on their own; a hand-written client must too. |
 | `403 Forbidden: origin not allowed` | A browser-based client. Add its origin to `PIM_MCP_HTTP_ALLOWED_ORIGINS`. |
-| Calendar "today" is off by hours | `PIM_TIMEZONE` is unset, so the container's UTC is used. |
+| Calendar "today" is off by hours | `TZ` is unset, so the container's UTC is used. |
+| `PIM_TIMEZONE is no longer read; set TZ=… instead` | An env file from before cal-mcp 4.0.0 / email-mcp 2.0.0. Rename the variable to `TZ`. |
 | stdio client shows no tools, container exits at once | `-i` is missing from the `docker run` arguments, or `PIM_MCP_TRANSPORT=stdio` is. |
 | `(unhealthy)` with `PIM_MCP_HTTP_HOST` set to one address | The health check probes `127.0.0.1`. Leave the host at `0.0.0.0` inside the container and restrict access where the port is published. |
 | stdio container shows `(unhealthy)` | Expected: the health check probes the HTTP port, which stdio does not open. It has no effect on a `--rm` container. |

@@ -625,7 +625,7 @@ describe("calendarTools", () => {
     });
 
     it("get_free_busy passes the calendars and options through and wraps the result (#48)", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
       mockService.getFreeBusy.mockResolvedValueOnce({
         busy: [
           { start: "2026-03-10T09:00:00.000Z", end: "2026-03-10T10:00:00.000Z", type: "busy" },
@@ -650,7 +650,7 @@ describe("calendarTools", () => {
         "2026-03-10T17:00:00Z",
         { includeAllDayAsBusy: false, ignoreTentative: true },
       );
-      // Rendered in PIM_TIMEZONE, like every other time cal-mcp returns.
+      // Rendered in TZ, like every other time cal-mcp returns.
       expect(JSON.parse(result.content[0].text)).toEqual({
         start: "2026-03-10T08:00:00+00:00",
         end: "2026-03-10T17:00:00+00:00",
@@ -728,7 +728,7 @@ describe("calendarTools", () => {
     });
 
     it("list_events detailLevel=full fetches full events in one call (no per-event getEvent)", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
       mockService.listEventsFull.mockResolvedValueOnce([fullEventFixture()]);
 
       const result = await handleCalendarTool(
@@ -806,7 +806,7 @@ describe("calendarTools", () => {
     });
 
     it("list_events with an empty `calendars` falls back to every calendar (#49)", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
       mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Only" }]);
       mockService.listEvents.mockResolvedValue([]);
 
@@ -817,7 +817,7 @@ describe("calendarTools", () => {
       );
 
       expect(mockService.listCalendars).toHaveBeenCalledTimes(1);
-      // Date-only bounds are midnight in PIM_TIMEZONE (UTC here).
+      // Date-only bounds are midnight in TZ (UTC here).
       expect(mockService.listEvents).toHaveBeenCalledWith(
         "prov/Only",
         "2026-03-01T00:00:00.000Z",
@@ -865,7 +865,7 @@ describe("calendarTools", () => {
     });
 
     it("get_today_events detailLevel=full uses listEventsFull", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
       mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Cal" }]);
       mockService.listEventsFull.mockResolvedValueOnce([
         fullEventFixture({
@@ -889,8 +889,8 @@ describe("calendarTools", () => {
       expect(mockService.getEvent).not.toHaveBeenCalled();
     });
 
-    it("get_today_events computes day bounds in PIM_TIMEZONE, not host time", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    it("get_today_events computes day bounds in TZ", async () => {
+      vi.stubEnv("TZ", "America/Chicago");
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-07-10T03:00:00Z")); // still July 9 in Chicago
       mockService.listCalendars.mockResolvedValueOnce([{ calendarId: "prov/Cal" }]);
@@ -932,7 +932,7 @@ describe("calendarTools", () => {
     });
 
     it("answers span=this on an all-day series with dates, not the previous evening", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+      vi.stubEnv("TZ", "America/Chicago");
       const masterIcs = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -1354,7 +1354,7 @@ describe("calendarTools", () => {
       vi.clearAllMocks();
       // The new series' DTSTART is written in the configured zone; pin it so
       // the assertions below do not depend on the host clock.
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
       mockService.getEventWithMeta.mockResolvedValue({
         event: EXISTING,
         meta: { url: "/cal/standup.ics", etag: '"s1"' },
@@ -2120,7 +2120,7 @@ describe("calendarTools", () => {
       vi.clearAllMocks();
       // The handler writes DTSTART in the configured zone; pin it so the
       // assertions below do not depend on the host clock.
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
       mockService.getEventWithMeta.mockResolvedValue({
         event: EXISTING,
         meta: { url: "/cal/fwd-1.ics", etag: '"e1"' },
@@ -2238,7 +2238,7 @@ describe("calendarTools", () => {
     });
 
     it("list_events across all calendars returns what it could read and says what it skipped", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
       nextcloudDown();
       mockService.listEvents.mockResolvedValueOnce([]);
       const result = await handleCalendarTool(

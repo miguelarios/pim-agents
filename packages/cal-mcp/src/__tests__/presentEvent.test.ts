@@ -102,7 +102,7 @@ describe("presentPayload", () => {
   });
 });
 
-describe("event tools render times in PIM_TIMEZONE", () => {
+describe("event tools render times in TZ", () => {
   const service = {
     listCalendars: vi.fn(async () => [{ calendarId: "caldav/Personal" }]),
     listReachableCalendars: vi.fn(async () => ({
@@ -114,7 +114,7 @@ describe("event tools render times in PIM_TIMEZONE", () => {
   };
 
   beforeEach(() => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    vi.stubEnv("TZ", "America/Chicago");
   });
   afterEach(() => {
     vi.unstubAllEnvs();

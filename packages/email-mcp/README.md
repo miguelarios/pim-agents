@@ -40,7 +40,7 @@ Add the server to your MCP client config (Claude Desktop, Claude Code, etc.). Cr
 }
 ```
 
-Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`, `PIM_TIMEZONE`.
+Optional env vars: `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`, `TZ` (IANA timezone for dates; defaults to the host's).
 
 - `EMAIL_MAX_INLINE_BYTES` — bytes above which `download_attachment` and `get_email_raw`
   return a resource link instead of embedding the payload. Defaults to `262144` (256 KB),

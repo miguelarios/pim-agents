@@ -66,8 +66,9 @@ hand.
 - Tests must not depend on the host. `vitest.setup.ts` deletes your own
   `CALDAV_*`, `CARDDAV_*`, `IMAP_*`, `SMTP_*`, `EMAIL_*` and `PIM_*`
   variables before each test file, so a test that needs one sets it with
-  `vi.stubEnv`. The host `TZ` is not cleared: pin `PIM_TIMEZONE` in a block
-  that asserts on wall-clock times, and undo it in that block's `afterEach`.
+  `vi.stubEnv`. The host `TZ` is not cleared: pin it with `vi.stubEnv("TZ", …)`
+  in a block that asserts on wall-clock times, and undo it in that block's
+  `afterEach`. Node applies a runtime `TZ` change at once.
   Don't call `vi.unstubAllEnvs()` to "clear" a variable mid-test; it restores
   the original instead.
 - Test data uses the reserved synthetic identities, such as `Alice Smith` /

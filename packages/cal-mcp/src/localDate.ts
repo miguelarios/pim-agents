@@ -3,7 +3,7 @@
  *
  * The ICS layer reads an all-day value by its *UTC* date, which is only right
  * for a plain date (`2026-11-16`, anchored at UTC midnight). A date-time read
- * in PIM_TIMEZONE, such as midnight in Berlin (23:00Z the day before), would
+ * in TZ, such as midnight in Berlin (23:00Z the day before), would
  * land on the wrong day. So everything except a plain date is reduced to its
  * local date first, and the plain date is kept as written.
  */
