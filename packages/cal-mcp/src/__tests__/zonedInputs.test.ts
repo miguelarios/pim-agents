@@ -3,6 +3,7 @@
  * given in: a date-only range bound is local midnight, and a date-time with
  * no offset is local wall-clock time. Not UTC, and not the host's zone.
  */
+import { parseIcsEvents } from "@miguelarios/pim-core/ics";
 import { dispatchTool } from "@miguelarios/pim-core/mcp";
 import type { ServerContext } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -625,7 +626,7 @@ describe("update_event all-day → timed, limits (#168 review)", () => {
   const written = (s: ReturnType<typeof mockService>) =>
     String(s.updateEvent.mock.calls[0]?.[2] ?? "");
 
-  it("leaves a whole all-day series all-day for span all (its exclusions and UNTIL stay valid)", async () => {
+  it("makes a whole all-day series timed for span all, converting its exclusions and UNTIL", async () => {
     const s = mockService();
     stored(s, SERIES, true);
     const r = await call(
@@ -641,9 +642,48 @@ describe("update_event all-day → timed, limits (#168 review)", () => {
     );
     expect(r.isError).toBeFalsy();
     const ics = written(s);
-    expect(ics).toContain("DTSTART;VALUE=DATE:20261116");
-    expect(ics).toContain("EXDATE;VALUE=DATE:20261130");
-    expect(ics).toContain("RRULE:FREQ=WEEKLY;UNTIL=20261214");
+    expect(ics).toContain("DTSTART;TZID=America/Chicago:20261116T140000");
+    expect(ics).toContain("EXDATE;TZID=America/Chicago:20261130T140000");
+    expect(ics).toContain("RRULE:FREQ=WEEKLY;UNTIL=20261214T200000Z");
+    // Every remaining occurrence, the last included, at 14:00 Chicago.
+    const occ = parseIcsEvents(ics, { start: "2026-11-01T00:00:00Z", end: "2027-01-01T00:00:00Z" });
+    expect(occ.map((e) => e.start)).toEqual([
+      "2026-11-16T20:00:00.000Z",
+      "2026-11-23T20:00:00.000Z",
+      "2026-12-07T20:00:00.000Z",
+      "2026-12-14T20:00:00.000Z",
+    ]);
+  });
+
+  it("makes the rest of an all-day series timed for span future", async () => {
+    const s = mockService();
+    stored(s, SERIES, true);
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "future",
+        occurrenceDate: "2026-12-07",
+        start: "2026-12-07T14:00:00",
+        end: "2026-12-07T15:00:00",
+      },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    const tail = String(s.createEvent.mock.calls[0][1]);
+    expect(tail).toContain("DTSTART;TZID=America/Chicago:20261207T140000");
+    expect(tail).toMatch(/RRULE:FREQ=WEEKLY;UNTIL=20261214T200000Z/);
+    const occ = parseIcsEvents(tail, {
+      start: "2026-11-01T00:00:00Z",
+      end: "2027-01-01T00:00:00Z",
+    });
+    expect(occ.map((e) => e.start)).toEqual([
+      "2026-12-07T20:00:00.000Z",
+      "2026-12-14T20:00:00.000Z",
+    ]);
+    // The earlier part stays all-day, ending before the cut.
+    expect(String(s.updateEvent.mock.calls[0][2])).toContain("DTSTART;VALUE=DATE:20261116");
   });
 
   it("reads a plain date mixed with a time as local midnight", async () => {

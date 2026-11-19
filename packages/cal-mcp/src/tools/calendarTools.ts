@@ -609,7 +609,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         allDay: {
           type: "boolean",
           description:
-            "All-day event flag. If omitted, the event keeps its current kind, except that giving a one-off all-day event, or one occurrence (span 'this'), both a start and an end with a time makes it timed. To change a whole recurring series, pass allDay explicitly.",
+            "All-day event flag. If omitted, the event keeps its current kind, except that giving an all-day event both a start and an end with a time makes it timed (for the span chosen).",
         },
         location: { type: "string", description: "New location" },
         description: { type: "string", description: "New description" },
@@ -655,19 +655,13 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         // both values cut to dates, which wrote a zero-length all-day event
         // when they fell on one day. A start or end alone still moves the
         // all-day event, keeping its length, as before. Plain dates keep it
-        // all-day, and an explicit allDay always wins.
-        //
-        // Only one event is switched this way: a one-off, or one occurrence
-        // (span "this"). Switching a whole all-day series would also have to
-        // turn its EXDATE/RDATE/RECURRENCE-ID dates and its RRULE UNTIL into
-        // date-times. The ICS layer does not do that, so a series keeps its
-        // old behaviour.
+        // all-day, and an explicit allDay always wins. For a whole series
+        // (span "all" or "future"), updateMasterEventIcs converts its
+        // EXDATE/RDATE/RECURRENCE-ID slots and RRULE UNTIL along with DTSTART.
         const timed = (v: string | undefined) => typeof v === "string" && !isDateOnly(v);
-        const wholeSeries = existing.isRecurring && span !== "this";
         const becomesTimed =
           input.allDay === undefined &&
           existing.allDay &&
-          !wholeSeries &&
           input.start !== undefined &&
           input.end !== undefined &&
           (timed(input.start) || timed(input.end));

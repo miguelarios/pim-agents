@@ -80,18 +80,6 @@ function removeExdate(master: ICAL.Component, occurrenceMs: number, allDay: bool
   return removed;
 }
 
-/**
- * Shifts a date or date-time by `deltaMs`, in wall-clock terms for a zoned
- * value (so a series moved from 10:00 to 11:00 keeps its exclusions at the
- * same local hour across a DST change) and by whole days for a DATE.
- */
-function shiftTime(time: ICAL.Time, deltaMs: number): ICAL.Time {
-  const shifted = time.clone();
-  if (time.isDate) shifted.adjust(Math.round(deltaMs / 86_400_000), 0, 0, 0);
-  else shifted.adjust(0, 0, 0, Math.round(deltaMs / 1000));
-  return shifted;
-}
-
 export function createExceptionComponent(
   masterIcs: string,
   componentType: "vevent" | "vtodo",
@@ -324,8 +312,6 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
       prop.setParameter("tzid", effectiveTz);
     }
   };
-  const previousStartMs =
-    currentDtstart instanceof ICAL.Time ? currentDtstart.toJSDate().getTime() : null;
   const currentDtend = master.getFirstPropertyValue("dtend");
   if (updates.start !== undefined) setTime("dtstart", updates.start);
   if (updates.end !== undefined) setTime("dtend", updates.end);
@@ -342,31 +328,16 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
   // RECURRENCE-ID of each override — has to move with it. Left at the old
   // times they would match nothing: cancelled occurrences would come back,
   // added ones would stay pinned at the old slot, and per-occurrence edits
-  // would silently detach.
+  // would silently detach. When the series also changes between all-day and
+  // timed, they change type with it, and so does the RRULE's UNTIL.
   const newDtstart = master.getFirstPropertyValue("dtstart");
   if (
     updates.start !== undefined &&
-    previousStartMs !== null &&
+    currentDtstart instanceof ICAL.Time &&
     newDtstart instanceof ICAL.Time &&
     master.getFirstProperty("rrule")
   ) {
-    const deltaMs = newDtstart.toJSDate().getTime() - previousStartMs;
-    if (deltaMs !== 0) {
-      for (const name of ["exdate", "rdate"] as const) {
-        for (const prop of master.getAllProperties(name)) {
-          prop.setValues(
-            prop.getValues().map((v) => (v instanceof ICAL.Time ? shiftTime(v, deltaMs) : v)),
-          );
-        }
-      }
-      for (const comp of root.getAllSubcomponents("vevent")) {
-        const recurProp = comp.getFirstProperty("recurrence-id");
-        const recurId = recurProp?.getFirstValue();
-        if (recurProp && recurId instanceof ICAL.Time) {
-          recurProp.setValue(shiftTime(recurId, deltaMs));
-        }
-      }
-    }
+    moveSeriesSlots(root, master, currentDtstart, newDtstart);
   }
 
   const setOrRemove = (propName: string, value: string | undefined) => {
@@ -713,4 +684,151 @@ function moveEndWithStart(master: ICAL.Component, oldStart: ICAL.Time, oldEnd: I
   prop.removeParameter("value");
   const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
   if (!start.isDate && typeof tzid === "string") prop.setParameter("tzid", tzid);
+}
+
+const DAY_MS = 86_400_000;
+
+/** Whole days from `a`'s calendar date to `b`'s, read from their own fields. */
+function dayDiff(a: ICAL.Time, b: ICAL.Time): number {
+  return Math.round(
+    (Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / DAY_MS,
+  );
+}
+
+/** `t` as wall-clock time in `ref`'s zone, when both are zoned and differ. */
+function inZoneOf(t: ICAL.Time, ref: ICAL.Time): ICAL.Time {
+  const floating = (z: ICAL.Timezone | undefined | null) => !z || z === ICAL.Timezone.localTimezone;
+  if (t.isDate || floating(t.zone) || floating(ref.zone) || t.zone?.tzid === ref.zone?.tzid)
+    return t;
+  return t.convertToZone(ref.zone as ICAL.Timezone);
+}
+
+/**
+ * The occurrence slot `slot` of a series that started at `oldStart`, for the
+ * series once it starts at `newStart`.
+ *
+ * - **Timed to timed:** the slot moves by the same instant delta, as before.
+ * - **All-day to all-day:** it moves by whole days.
+ * - **Across kinds:** it keeps its day offset from the series start. It takes
+ *   the new start's time of day and zone when the series becomes timed, or
+ *   its local date when the series becomes all-day.
+ */
+function moveSlot(slot: ICAL.Time, oldStart: ICAL.Time, newStart: ICAL.Time): ICAL.Time {
+  if (!oldStart.isDate && !newStart.isDate && !slot.isDate) {
+    const deltaS = Math.round(
+      (newStart.toJSDate().getTime() - oldStart.toJSDate().getTime()) / 1000,
+    );
+    const moved = slot.clone();
+    moved.adjust(0, 0, 0, deltaS);
+    return moved;
+  }
+  const days = dayDiff(inZoneOf(oldStart, oldStart), inZoneOf(slot, oldStart));
+  const moved = newStart.clone();
+  moved.adjust(days, 0, 0, 0);
+  return moved;
+}
+
+/**
+ * Writes `values` to `prop`. When their type changed (date ↔ date-time), the
+ * parameters are rewritten for the new type: the series' TZID for a zoned
+ * date-time, none for a date or UTC. Otherwise they're kept, so a UTC
+ * exclusion on a zoned series stays UTC.
+ */
+function setSlotValues(
+  prop: ICAL.Property,
+  values: ICAL.Time[],
+  like: ICAL.Time,
+  tzid: unknown,
+  typeChanged: boolean,
+): void {
+  if (typeChanged) {
+    prop.removeParameter("tzid");
+    prop.removeParameter("value");
+  }
+  if (values.length === 1) prop.setValue(values[0]);
+  else prop.setValues(values);
+  if (
+    typeChanged &&
+    !like.isDate &&
+    typeof tzid === "string" &&
+    like.zone !== ICAL.Timezone.utcTimezone
+  ) {
+    prop.setParameter("tzid", tzid);
+  }
+}
+
+/**
+ * Moves every slot of the series `master` from a start at `oldStart` to
+ * `newStart`: EXDATE, RDATE (date and date-time values; periods are left
+ * alone), the RECURRENCE-ID of each override, and, when the series changes
+ * between all-day and timed, the RRULE's UNTIL. An UNTIL keeps its own last
+ * day. A timed series takes it at the new start's time, in UTC as RFC 5545
+ * §3.3.10 requires for a zoned DTSTART, and an all-day series takes its local
+ * date.
+ */
+function moveSeriesSlots(
+  root: ICAL.Component,
+  master: ICAL.Component,
+  oldStart: ICAL.Time,
+  newStart: ICAL.Time,
+): void {
+  const kindChanged = oldStart.isDate !== newStart.isDate;
+  const unchanged =
+    !kindChanged &&
+    (newStart.isDate
+      ? dayDiff(oldStart, newStart) === 0
+      : newStart.toJSDate().getTime() === oldStart.toJSDate().getTime());
+  if (unchanged) return;
+  const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+
+  for (const name of ["exdate", "rdate"] as const) {
+    for (const prop of master.getAllProperties(name)) {
+      const values = prop.getValues();
+      if (!values.every((v) => v instanceof ICAL.Time)) continue; // RDATE periods
+      const slots = values as ICAL.Time[];
+      const moved = slots.map((v) => moveSlot(v, oldStart, newStart));
+      setSlotValues(
+        prop,
+        moved,
+        newStart,
+        tzid,
+        slots.some((v) => v.isDate !== newStart.isDate),
+      );
+    }
+  }
+  for (const comp of root.getAllSubcomponents("vevent")) {
+    const recurProp = comp.getFirstProperty("recurrence-id");
+    const recurId = recurProp?.getFirstValue();
+    if (recurProp && recurId instanceof ICAL.Time) {
+      const moved = moveSlot(recurId, oldStart, newStart);
+      setSlotValues(recurProp, [moved], newStart, tzid, recurId.isDate !== newStart.isDate);
+    }
+  }
+
+  if (!kindChanged) return;
+  const rruleProp = master.getFirstProperty("rrule");
+  const rule = rruleProp?.getFirstValue();
+  if (!rruleProp || !(rule instanceof ICAL.Recur) || !(rule.until instanceof ICAL.Time)) return;
+  const until = rule.until;
+  if (newStart.isDate) {
+    // The series' last day is the day of its last occurrence at or before
+    // UNTIL. When UNTIL's local time is earlier than the series' start time
+    // (truncateRecurrenceIcs writes one second before the cut), that's the
+    // day before UNTIL's own date.
+    let local = inZoneOf(until, oldStart);
+    const secondsOfDay = (t: ICAL.Time) =>
+      t.isDate ? 0 : t.hour * 3600 + t.minute * 60 + t.second;
+    if (secondsOfDay(local) < secondsOfDay(inZoneOf(oldStart, oldStart))) {
+      local = local.clone();
+      local.adjust(-1, 0, 0, 0);
+    }
+    rule.until = ICAL.Time.fromDateString(
+      `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`,
+    );
+  } else {
+    const last = newStart.clone();
+    last.adjust(dayDiff(newStart, until), 0, 0, 0);
+    rule.until = last.convertToZone(ICAL.Timezone.utcTimezone);
+  }
+  rruleProp.setValue(rule);
 }

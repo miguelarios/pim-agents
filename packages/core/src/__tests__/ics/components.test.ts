@@ -1011,3 +1011,177 @@ describe("updateMasterEventIcs keeps the length in wall-clock time (#167 review)
     ]);
   });
 });
+
+describe("updateMasterEventIcs converts a series between all-day and timed", () => {
+  // Weekly from Mon Nov 16, last on Dec 14; Nov 30 cancelled, an extra day on
+  // Thu Dec 3, and the Nov 23 occurrence renamed.
+  const ALLDAY_SERIES = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:s1",
+    "DTSTAMP:20260101T000000Z",
+    "DTSTART;VALUE=DATE:20261116",
+    "DTEND;VALUE=DATE:20261117",
+    "RRULE:FREQ=WEEKLY;UNTIL=20261214",
+    "EXDATE;VALUE=DATE:20261130",
+    "RDATE;VALUE=DATE:20261203",
+    "SUMMARY:Gym",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:s1",
+    "DTSTAMP:20260101T000000Z",
+    "RECURRENCE-ID;VALUE=DATE:20261123",
+    "DTSTART;VALUE=DATE:20261123",
+    "DTEND;VALUE=DATE:20261124",
+    "SUMMARY:Gym (moved)",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const RANGE = { start: "2026-11-01T00:00:00Z", end: "2027-01-01T00:00:00Z" };
+  const lines = (ics: string, re: RegExp) => ics.split(/\r?\n/).filter((l) => re.test(l));
+
+  it("all-day → timed keeps every occurrence, exclusion, addition and override", () => {
+    const out = updateMasterEventIcs(ALLDAY_SERIES, {
+      allDay: false,
+      start: "2026-11-16T20:00:00.000Z", // 14:00 Chicago
+      end: "2026-11-16T21:00:00.000Z",
+      timezone: "America/Chicago",
+    });
+    expect(lines(out, /^(DTSTART|DTEND|RRULE|EXDATE|RDATE|RECURRENCE-ID)[;:]/)).toEqual([
+      "DTSTART;TZID=America/Chicago:20261116T140000",
+      "DTEND;TZID=America/Chicago:20261116T150000",
+      // UNTIL is UTC with a zoned DTSTART (RFC 5545 §3.3.10), at the last day's start.
+      "RRULE:FREQ=WEEKLY;UNTIL=20261214T200000Z",
+      "EXDATE;TZID=America/Chicago:20261130T140000",
+      "RDATE;TZID=America/Chicago:20261203T140000",
+      "RECURRENCE-ID;TZID=America/Chicago:20261123T140000",
+      "DTSTART;VALUE=DATE:20261123",
+      "DTEND;VALUE=DATE:20261124",
+    ]);
+    const occ = parseIcsEvents(out, RANGE).map((e) => [e.start, e.title]);
+    expect(occ).toEqual([
+      ["2026-11-16T20:00:00.000Z", "Gym"],
+      ["2026-11-23T00:00:00.000Z", "Gym (moved)"], // the override keeps its own times
+      ["2026-12-03T20:00:00.000Z", "Gym"],
+      ["2026-12-07T20:00:00.000Z", "Gym"],
+      ["2026-12-14T20:00:00.000Z", "Gym"],
+    ]);
+  });
+
+  it("all-day → timed moved to another day shifts the slots by whole days", () => {
+    const out = updateMasterEventIcs(ALLDAY_SERIES, {
+      allDay: false,
+      start: "2026-11-17T20:00:00.000Z", // Tue 14:00 Chicago
+      end: "2026-11-17T21:00:00.000Z",
+      timezone: "America/Chicago",
+    });
+    expect(lines(out, /^(EXDATE|RDATE|RECURRENCE-ID)[;:]/)).toEqual([
+      "EXDATE;TZID=America/Chicago:20261201T140000",
+      "RDATE;TZID=America/Chicago:20261204T140000",
+      "RECURRENCE-ID;TZID=America/Chicago:20261124T140000",
+    ]);
+  });
+
+  it("all-day → timed in UTC writes Z values", () => {
+    const out = updateMasterEventIcs(ALLDAY_SERIES, {
+      allDay: false,
+      start: "2026-11-16T09:00:00.000Z",
+      end: "2026-11-16T10:00:00.000Z",
+    });
+    expect(lines(out, /^(DTSTART|RRULE|EXDATE)[;:]/).slice(0, 3)).toEqual([
+      "DTSTART:20261116T090000Z",
+      "RRULE:FREQ=WEEKLY;UNTIL=20261214T090000Z",
+      "EXDATE:20261130T090000Z",
+    ]);
+  });
+
+  it("timed → all-day converts back to the local dates", () => {
+    const timed = updateMasterEventIcs(ALLDAY_SERIES, {
+      allDay: false,
+      start: "2026-11-17T04:00:00.000Z", // 22:00 Chicago on Mon Nov 16: UTC is already Tuesday
+      end: "2026-11-17T05:00:00.000Z",
+      timezone: "America/Chicago",
+    });
+    const back = updateMasterEventIcs(timed, {
+      allDay: true,
+      start: "2026-11-16",
+      end: "2026-11-17",
+    });
+    expect(
+      lines(back, /^(DTSTART|DTEND|RRULE|EXDATE|RDATE|RECURRENCE-ID)[;:]/).slice(0, 6),
+    ).toEqual([
+      "DTSTART;VALUE=DATE:20261116",
+      "DTEND;VALUE=DATE:20261117",
+      "RRULE:FREQ=WEEKLY;UNTIL=20261214",
+      "EXDATE;VALUE=DATE:20261130",
+      "RDATE;VALUE=DATE:20261203",
+      "RECURRENCE-ID;VALUE=DATE:20261123",
+    ]);
+    expect(parseIcsEvents(back, RANGE).map((e) => e.start.slice(0, 10))).toEqual([
+      "2026-11-16",
+      "2026-11-23",
+      "2026-12-03",
+      "2026-12-07",
+      "2026-12-14",
+    ]);
+  });
+
+  it("an all-day series moved by date keeps its exclusions on whole days", () => {
+    const out = updateMasterEventIcs(ALLDAY_SERIES, { start: "2026-11-17", end: "2026-11-18" });
+    expect(lines(out, /^(EXDATE|RECURRENCE-ID)[;:]/)).toEqual([
+      "EXDATE;VALUE=DATE:20261201",
+      "RECURRENCE-ID;VALUE=DATE:20261124",
+    ]);
+  });
+});
+
+describe("timed → all-day keeps the series' real last day (#173 review)", () => {
+  const daily = (start: string, rrule: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:d1",
+      "DTSTAMP:20260101T000000Z",
+      start,
+      start.replace("DTSTART", "DTEND").replace("T100000", "T110000"),
+      rrule,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  const RANGE = { start: "2026-11-01T00:00:00Z", end: "2026-12-31T00:00:00Z" };
+  const days = (ics: string) => parseIcsEvents(ics, RANGE).map((e) => e.start.slice(0, 10));
+  const toAllDay = (ics: string) =>
+    updateMasterEventIcs(ics, { allDay: true, start: "2026-11-16", end: "2026-11-17" });
+
+  it("after a span=future cut, does not bring the cut day back", () => {
+    const series = daily("DTSTART;TZID=America/Los_Angeles:20261116T100000", "RRULE:FREQ=DAILY");
+    // Cut at the Nov 20 occurrence (10:00 LA): UNTIL lands one second before it.
+    const cut = truncateRecurrenceIcs(series, "2026-11-20T18:00:00.000Z", false);
+    expect(cut).not.toBeNull();
+    expect(days(cut as string)).toEqual(["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]);
+    const allDay = toAllDay(cut as string);
+    expect(allDay).toContain("RRULE:FREQ=DAILY;UNTIL=20261119");
+    expect(days(allDay)).toEqual(["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]);
+  });
+
+  it("with an UNTIL written in another zone", () => {
+    const series = daily(
+      "DTSTART;TZID=Europe/Berlin:20261116T100000",
+      "RRULE:FREQ=DAILY;UNTIL=20261120T235959Z",
+    );
+    const before = days(series);
+    expect(before.at(-1)).toBe("2026-11-20");
+    expect(days(toAllDay(series))).toEqual(before);
+  });
+
+  it("keeps an UNTIL that is exactly an occurrence", () => {
+    const series = daily(
+      "DTSTART;TZID=America/Chicago:20261116T100000",
+      "RRULE:FREQ=DAILY;UNTIL=20261120T160000Z",
+    );
+    expect(days(toAllDay(series)).at(-1)).toBe("2026-11-20");
+  });
+});
