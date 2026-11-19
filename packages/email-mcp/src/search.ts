@@ -168,7 +168,7 @@ function filled(value: string | undefined): string | undefined {
  * makes IMAP match nothing — a silent empty result rather than a usable error.
  */
 function parseDate(value: string, field: "since" | "before", timezone: string): Date {
-  // A date is midnight in PIM_TIMEZONE, not UTC midnight (the previous
+  // A date is midnight in TZ, not UTC midnight (the previous
   // evening west of Greenwich).
   const parsed = parseInTimezone(value, timezone);
   if (Number.isNaN(parsed.getTime())) {

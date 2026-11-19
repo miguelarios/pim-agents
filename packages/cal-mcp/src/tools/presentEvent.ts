@@ -5,7 +5,7 @@
  * do its own zone conversion, and an all-day `2026-11-16T00:00:00Z` reads as
  * the previous evening anywhere west of Greenwich. So at the tool boundary:
  *
- * - a timed value becomes local wall-clock time in `PIM_TIMEZONE` with its
+ * - a timed value becomes local wall-clock time in `TZ` with its
  *   offset (`2026-11-16T08:30:00-06:00`), the same instant, as
  *   `find_free_slots` already returns;
  * - an all-day value becomes a plain date (`2026-11-16`); `end` stays
@@ -38,7 +38,7 @@ function asLocal(iso: string, timezone: string): string {
 }
 
 /**
- * `timezone` if Intl knows it, else UTC. A bad `PIM_TIMEZONE` must not turn a
+ * `timezone` if Intl knows it, else UTC. A bad `TZ` must not turn a
  * write that already reached the server into a reported failure.
  */
 function usableZone(timezone: string): string {

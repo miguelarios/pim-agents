@@ -100,7 +100,7 @@ describe("CalDavService", () => {
   let service: CalDavService;
 
   beforeAll(() => {
-    vi.stubEnv("PIM_TIMEZONE", "UTC");
+    vi.stubEnv("TZ", "UTC");
   });
 
   afterAll(() => {
@@ -1958,7 +1958,7 @@ describe("CalDavService", () => {
       expect(firstSlotHour).toBeGreaterThanOrEqual(9);
     });
 
-    it("splits preferred hours in PIM_TIMEZONE, not UTC (9 AM Chicago, DST-safe)", async () => {
+    it("splits preferred hours in TZ, not UTC (9 AM Chicago, DST-safe)", async () => {
       const { __mockClient } = (await import("tsdav")) as any;
       const { parseIcsEvents } = (await import("@miguelarios/pim-core/ics")) as any;
 
@@ -1966,8 +1966,8 @@ describe("CalDavService", () => {
       parseIcsEvents.mockReturnValue([]);
 
       // Must stub the timezone BEFORE constructing the service — the service
-      // reads PIM_TIMEZONE once in its constructor via getTimezone().
-      vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+      // reads TZ once in its constructor via getTimezone().
+      vi.stubEnv("TZ", "America/Chicago");
       const chicagoService = new CalDavService(TEST_CONFIG);
 
       const slots = await chicagoService.findFreeSlots(
@@ -1983,7 +1983,7 @@ describe("CalDavService", () => {
       expect(new Date(slots[0].start).toISOString()).toBe("2026-03-10T14:00:00.000Z");
 
       // Restore for subsequent tests in this file, which assume UTC.
-      vi.stubEnv("PIM_TIMEZONE", "UTC");
+      vi.stubEnv("TZ", "UTC");
     });
   });
 

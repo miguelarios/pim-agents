@@ -262,8 +262,8 @@ describe("ImapService", () => {
       );
     });
 
-    it("searches the local day in PIM_TIMEZONE, shaped for the server's capabilities", async () => {
-      vi.stubEnv("PIM_TIMEZONE", "Europe/Berlin");
+    it("searches the local day in TZ, shaped for the server's capabilities", async () => {
+      vi.stubEnv("TZ", "Europe/Berlin");
       const local = new ImapService(testConfig);
       try {
         // No WITHIN: UTC midnight of the local dates, so imapflow sends
@@ -2543,17 +2543,17 @@ describe("ImapService", () => {
   });
 
   describe("timezone formatting", () => {
-    const originalTz = process.env.PIM_TIMEZONE;
+    const originalTz = process.env.TZ;
 
     beforeAll(() => {
-      process.env.PIM_TIMEZONE = "America/Chicago";
+      process.env.TZ = "America/Chicago";
     });
 
     afterAll(() => {
       if (originalTz !== undefined) {
-        process.env.PIM_TIMEZONE = originalTz;
+        process.env.TZ = originalTz;
       } else {
-        delete process.env.PIM_TIMEZONE;
+        delete process.env.TZ;
       }
     });
 

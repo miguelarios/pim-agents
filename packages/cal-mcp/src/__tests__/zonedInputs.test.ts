@@ -1,5 +1,5 @@
 /**
- * Times a caller passes in are read in PIM_TIMEZONE, the zone results are
+ * Times a caller passes in are read in TZ, the zone results are
  * given in: a date-only range bound is local midnight, and a date-time with
  * no offset is local wall-clock time. Not UTC, and not the host's zone.
  */
@@ -46,7 +46,7 @@ const call = (name: string, args: Record<string, unknown>, service: unknown, ctx
   dispatchTool(CALENDAR_TOOLS, name, args, service as never, ctx) as Promise<any>;
 
 describe("range bounds", () => {
-  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  beforeEach(() => vi.stubEnv("TZ", "America/Chicago"));
   afterEach(() => vi.unstubAllEnvs());
 
   it("list_events reads a date as local midnight", async () => {
@@ -106,8 +106,8 @@ describe("range bounds", () => {
 describe("get_free_busy answers in local time", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("renders the range and every period in PIM_TIMEZONE", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+  it("renders the range and every period in TZ", async () => {
+    vi.stubEnv("TZ", "America/Chicago");
     const s = mockService();
     s.getFreeBusy.mockResolvedValueOnce({
       busy: [{ start: "2026-11-16T14:30:00.000Z", end: "2026-11-16T15:30:00.000Z", type: "busy" }],
@@ -128,7 +128,7 @@ describe("get_free_busy answers in local time", () => {
   });
 
   it("falls back to UTC for a zone Intl does not know", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "Not/AZone");
+    vi.stubEnv("TZ", "Not/AZone");
     const s = mockService();
     const r = await call(
       "get_free_busy",
@@ -141,7 +141,7 @@ describe("get_free_busy answers in local time", () => {
 });
 
 describe("event times", () => {
-  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  beforeEach(() => vi.stubEnv("TZ", "America/Chicago"));
   afterEach(() => vi.unstubAllEnvs());
 
   const written = (s: ReturnType<typeof mockService>, n = 0) =>
@@ -164,7 +164,7 @@ describe("event times", () => {
   });
 
   it("create_event keeps an all-day date as that date, east of UTC too", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "Europe/Berlin");
+    vi.stubEnv("TZ", "Europe/Berlin");
     const s = mockService();
     await call(
       "create_event",
@@ -290,7 +290,7 @@ describe("all-day values keep their local date (#165 review)", () => {
   }
 
   it("create_event with allDay and midnight date-times writes those dates, east of UTC", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "Europe/Berlin");
+    vi.stubEnv("TZ", "Europe/Berlin");
     const s = mockService();
     await call(
       "create_event",
@@ -309,7 +309,7 @@ describe("all-day values keep their local date (#165 review)", () => {
   });
 
   it("create_events_batch does the same west of UTC with evening times", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    vi.stubEnv("TZ", "America/Chicago");
     const s = mockService();
     await call(
       "create_events_batch",
@@ -325,7 +325,7 @@ describe("all-day values keep their local date (#165 review)", () => {
   });
 
   it("delete_event span=this excludes the named day of an all-day series", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "Asia/Tokyo");
+    vi.stubEnv("TZ", "Asia/Tokyo");
     const s = mockService();
     allDaySeries(s);
     const r = await call(
@@ -339,7 +339,7 @@ describe("all-day values keep their local date (#165 review)", () => {
   });
 
   it("update_event span=this on an all-day series targets the named day", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "Asia/Tokyo");
+    vi.stubEnv("TZ", "Asia/Tokyo");
     const s = mockService();
     allDaySeries(s);
     const r = await call(
@@ -358,7 +358,7 @@ describe("all-day values keep their local date (#165 review)", () => {
   });
 
   it("update_event with allDay: true writes the local date of a timed value", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    vi.stubEnv("TZ", "America/Chicago");
     const s = mockService();
     allDaySeries(s);
     await call(
@@ -379,7 +379,7 @@ describe("all-day values keep their local date (#165 review)", () => {
   });
 
   it("reads an absolute alarm trigger with no offset in the zone", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    vi.stubEnv("TZ", "America/Chicago");
     const s = mockService();
     await call(
       "create_event",
@@ -398,7 +398,7 @@ describe("all-day values keep their local date (#165 review)", () => {
   });
 
   it("asks about a span=future cut in local time", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    vi.stubEnv("TZ", "America/Chicago");
     const s = mockService();
     const master = [
       "BEGIN:VCALENDAR",
@@ -435,7 +435,7 @@ describe("all-day values keep their local date (#165 review)", () => {
 });
 
 describe("update_event switches an all-day event to timed when given a time", () => {
-  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  beforeEach(() => vi.stubEnv("TZ", "America/Chicago"));
   afterEach(() => vi.unstubAllEnvs());
 
   const ALLDAY = [
@@ -583,7 +583,7 @@ describe("update_event switches an all-day event to timed when given a time", ()
 });
 
 describe("update_event all-day → timed, limits (#168 review)", () => {
-  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  beforeEach(() => vi.stubEnv("TZ", "America/Chicago"));
   afterEach(() => vi.unstubAllEnvs());
 
   const SERIES = [

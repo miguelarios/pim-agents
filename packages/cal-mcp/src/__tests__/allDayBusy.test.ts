@@ -1,5 +1,5 @@
 /**
- * An all-day event blocks its day where the user is (PIM_TIMEZONE), not the
+ * An all-day event blocks its day where the user is (TZ), not the
  * UTC day it is anchored to, which ends at 6 PM in Chicago. Runs the real
  * ICS parser; only tsdav is mocked.
  */
@@ -50,7 +50,7 @@ async function service() {
 
 describe("all-day events block the local day", () => {
   beforeEach(() => {
-    vi.stubEnv("PIM_TIMEZONE", "America/Chicago");
+    vi.stubEnv("TZ", "America/Chicago");
     // The server declines free-busy-query, so the busy time is computed.
     vi.stubGlobal(
       "fetch",
@@ -94,7 +94,7 @@ describe("all-day events block the local day", () => {
   });
 
   it("covers the whole day east of UTC too", async () => {
-    vi.stubEnv("PIM_TIMEZONE", "Europe/Berlin");
+    vi.stubEnv("TZ", "Europe/Berlin");
     const s = await service();
     const { busy } = await s.getFreeBusy(
       ["mb/Work"],
@@ -109,7 +109,7 @@ describe("all-day events block the local day", () => {
 });
 
 describe("all-day events in local ranges (#165 review)", () => {
-  beforeEach(() => vi.stubEnv("PIM_TIMEZONE", "America/Chicago"));
+  beforeEach(() => vi.stubEnv("TZ", "America/Chicago"));
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();

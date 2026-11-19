@@ -123,7 +123,7 @@ Add the servers to your MCP client config (Claude Desktop, Claude Code, etc.). C
 Optional email env vars:
 
 - `IMAP_PORT` (default 993), `IMAP_SECURE` (default true), `SMTP_PORT` (default 465), `SMTP_SECURE` (default true), `SMTP_FROM_NAME`.
-- `PIM_TIMEZONE` — IANA timezone (e.g. `America/Chicago`) for rendering email dates. Defaults to the host timezone.
+- `TZ` — IANA timezone (e.g. `America/Chicago`) for rendering email dates and reading search dates. Defaults to the host timezone.
 - `EMAIL_MAX_INLINE_BYTES` — bytes above which `download_attachment` and `get_email_raw` return a resource link instead of embedding the payload. Defaults to `262144` (256 KB); `0` links everything.
 - `EMAIL_ATTACHMENT_DIR` — directory that gates `send_email` file attachments. **Path-based attachments (`attachments[].path`) are rejected unless this is set**, and only files resolving inside it are allowed (a guard against exfiltrating arbitrary files via prompt injection). Use `attachments[].content` for inline content without setting this.
 - `URL_RESOLVE_DISABLE` — set to `1` or `true` to skip all network link-resolution when rendering email to markdown (avoids outbound requests to links in a message). Link/tracker URLs are left unresolved in the output.
@@ -175,7 +175,7 @@ Add multiple providers by using different IDs: `CALDAV_NEXTCLOUD_URL`, `CALDAV_N
 
 Optional calendar env vars:
 
-- `PIM_TIMEZONE` — IANA timezone used for "today", free-slot searches and local times. Defaults to the host timezone, which in a container is usually UTC.
+- `TZ` — IANA timezone used for "today", free-slot searches and local times. Defaults to the host timezone, which in a container is usually UTC.
 - `CAL_MCP_DEBUG` — set to `1` to attach per-step CalDAV timings to tool results under `_meta`, for diagnosing a slow provider.
 
 ### Contacts
@@ -203,7 +203,7 @@ Optional contacts env var: `CARDDAV_SERVER_SEARCH` — set to `off` to never sea
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `PIM_MCP_CONFIRM` | *(on)* | Set to `off` to run irreversible operations without asking. For headless use |
-| `PIM_TIMEZONE` | host zone | IANA timezone for dates and "today" |
+| `TZ` | host zone | IANA timezone for dates and "today", the standard variable any container takes. Replaces `PIM_TIMEZONE`, which is no longer read |
 | `PIM_MCP_TRANSPORT` | `stdio` | `stdio` or `http` — see [Over Streamable HTTP](#over-streamable-http) |
 
 ### All three together
@@ -283,7 +283,7 @@ services:
     restart: unless-stopped
     env_file: cal.env
     environment:
-      PIM_TIMEZONE: America/Chicago
+      TZ: America/Chicago
     ports: ["127.0.0.1:3002:3000"]
   card-mcp:
     image: ghcr.io/miguelarios/card-mcp:1.1.0

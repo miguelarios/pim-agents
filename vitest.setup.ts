@@ -8,7 +8,7 @@
  * limits like EMAIL_MAX_INLINE_BYTES. Any of those changes what the code
  * under test does. Clearing them here gives every test CI's clean
  * environment; a test that needs one sets it with vi.stubEnv. The host's TZ
- * is left alone on purpose, since tests that depend on it pin PIM_TIMEZONE
+ * is left alone on purpose, since tests that depend on it pin TZ themselves
  * and the ICS fixture runner replays under a second zone.
  */
 const PIM_CONFIG = /^(CALDAV|CARDDAV|IMAP|SMTP|EMAIL|PIM)_/;

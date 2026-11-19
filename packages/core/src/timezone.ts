@@ -1,7 +1,21 @@
+let warnedPimTimezone = false;
+
+/**
+ * The zone the servers work in: `TZ`, the variable every container image
+ * (LinuxServer's included) takes, else the host's zone. Node applies `TZ`
+ * itself, from its own zone database, so it works on images without tzdata.
+ *
+ * `PIM_TIMEZONE`, which this replaced, is ignored. Setting it gets one warning
+ * naming the `TZ` to set instead, rather than a silent move to UTC.
+ */
 export function getTimezone(): string {
-  const envTz = process.env.PIM_TIMEZONE;
-  if (envTz?.trim()) return envTz.trim();
-  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const legacy = process.env.PIM_TIMEZONE?.trim();
+  if (legacy && !warnedPimTimezone) {
+    warnedPimTimezone = true;
+    console.error(`PIM_TIMEZONE is no longer read; set TZ=${legacy} instead.`);
+  }
+  // An unknown TZ makes Node report no zone at all, so name the UTC it uses.
+  return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
 }
 
 export function formatInTimezone(isoUtcString: string, timezone: string): string {
