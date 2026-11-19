@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0 (2026-11-19)
+
+- **Breaking: `getTimezone()` reports the zone Node runs in, set by `TZ`, and no longer reads `PIM_TIMEZONE`** (#171). An unknown `TZ` reports `"UTC"`, the zone Node then uses. A leftover `PIM_TIMEZONE` logs a one-time warning to stderr.
+- **`updateMasterEventIcs` converts a recurring series between all-day and timed** (#173). EXDATE and RDATE values and override RECURRENCE-IDs move with DTSTART by kind:
+  - **Timed to timed:** by the instant delta, as before.
+  - **All-day to all-day:** by whole days.
+  - **Across kinds:** keeping their day offset, at the new start's time and zone, or as the local date.
+
+  Their TZID/VALUE parameters change only when their type does. On a change of kind, the RRULE's `UNTIL` converts too and keeps the series' last day.
+
 ## 1.2.1 (2026-11-18)
 
 - **All-day values are written with one `VALUE=DATE`** (#167). `updateMasterEventIcs`, `createExceptionComponent`, `addExdateToIcs` and `splitRecurrenceIcs` added the parameter on top of the one ical.js writes for a date, producing `DTSTART;VALUE=DATE;VALUE=DATE:…`. Stored data that already has it still parses, and an update rewrites it once.
