@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0 (2026-11-19)
+
+- **Breaking: the time zone comes from `TZ`, and `PIM_TIMEZONE` is no longer read** (#171). `TZ` is the variable every container image takes, so one setting covers a whole stack. Rename `PIM_TIMEZONE=America/Chicago` to `TZ=America/Chicago`. A leftover `PIM_TIMEZONE` is ignored, with a one-time warning on stderr naming the `TZ` to set. An unknown `TZ` falls back to UTC.
+- Requires `@miguelarios/pim-core` 2.0.0.
+
 ## 1.1.1 (2026-11-17)
 
 - **`search_emails` `since`/`before` are read in `PIM_TIMEZONE`** (#164). A date was UTC midnight, so in Chicago a search for Nov 16 covered 6 PM Nov 15 to 6 PM Nov 16 on servers with the WITHIN extension (Dovecot). On other servers an evening time could lose its day (`2026-11-16T20:00-06:00` became `SINCE 17-Nov`). A date now means the local day, and a time with no offset is read in the zone. The search sent to the server is shaped to its capabilities: exact instants for WITHIN, and the local calendar date otherwise.

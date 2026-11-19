@@ -274,19 +274,19 @@ Each server has its own image — `ghcr.io/miguelarios/email-mcp`, `cal-mcp` and
 ```yaml
 services:
   email-mcp:
-    image: ghcr.io/miguelarios/email-mcp:1.1.1
+    image: ghcr.io/miguelarios/email-mcp:2.0.0
     restart: unless-stopped
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
   cal-mcp:
-    image: ghcr.io/miguelarios/cal-mcp:3.0.1
+    image: ghcr.io/miguelarios/cal-mcp:4.0.0
     restart: unless-stopped
     env_file: cal.env
     environment:
       TZ: America/Chicago
     ports: ["127.0.0.1:3002:3000"]
   card-mcp:
-    image: ghcr.io/miguelarios/card-mcp:1.1.0
+    image: ghcr.io/miguelarios/card-mcp:1.1.1
     restart: unless-stopped
     env_file: card.env
     ports: ["127.0.0.1:3003:3000"]

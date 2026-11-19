@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.0 (2026-11-19)
+
+- **Breaking: the time zone comes from `TZ`, and `PIM_TIMEZONE` is no longer read** (#171). `TZ` is the variable every container image takes, so one setting covers a whole stack. Rename `PIM_TIMEZONE=America/Chicago` to `TZ=America/Chicago`. A leftover `PIM_TIMEZONE` is ignored, with a one-time warning on stderr naming the `TZ` to set. An unknown `TZ` falls back to UTC.
+- **A recurring series switches cleanly between all-day and timed** (#173). With `allDay: false`, or `span: "future"`, the series used to keep its cancelled days, added days and edited occurrences as dates (and sometimes a day late), with a date `UNTIL`. Cancelled days came back, per-occurrence edits were lost and the series ended early. Each of them now converts with the series, and `UNTIL` keeps the series' last day.
+- **`update_event` makes a whole all-day series timed** (#173) when given a timed `start` and `end` with `allDay` left out, for `span: "all"` and the new series of `span: "future"`. 3.0.1 did this only for a one-off event or one occurrence.
+- Requires `@miguelarios/pim-core` 2.0.0.
+
 ## 3.0.1 (2026-11-18)
 
 - **`update_event` makes an all-day event timed when given a timed start and end** (#168). With `allDay` left out, the event used to stay all-day and both values were cut to dates. A same-day pair (`14:00` to `15:00`) wrote a zero-length all-day event, and the times were lost.
