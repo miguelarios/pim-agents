@@ -8,8 +8,8 @@ Each server has its own image on the GitHub Container Registry:
 | Calendar | `ghcr.io/miguelarios/cal-mcp` |
 | Contacts | `ghcr.io/miguelarios/card-mcp` |
 
-An image's tag is its server's npm version (`ghcr.io/miguelarios/cal-mcp:3.0.1`), and it is
-built by installing that published package, as `npx @miguelarios/cal-mcp@3.0.1` would. Images
+An image's tag is its server's npm version (`ghcr.io/miguelarios/cal-mcp:4.0.0`), and it is
+built by installing that published package, as `npx @miguelarios/cal-mcp@4.0.0` would. Images
 are built for `linux/amd64` and `linux/arm64`.
 
 Two ways to run a server, picked by `PIM_MCP_TRANSPORT`:
@@ -47,7 +47,7 @@ The examples below follow these conventions:
   release, but a pinned tag is what keeps a restart from changing the server under you. A
   version tag is normally built once; if it is ever rebuilt, its dependencies and Node base
   are resolved afresh. To pin those too, pin the digest
-  (`ghcr.io/miguelarios/cal-mcp:3.0.1@sha256:…`, shown in `docker images --digests`).
+  (`ghcr.io/miguelarios/cal-mcp:4.0.0@sha256:…`, shown in `docker images --digests`).
 
 ## Email
 
@@ -74,7 +74,7 @@ SMTP_PASS=your-app-password
 docker run -d --name email-mcp --restart unless-stopped \
   --env-file email.env \
   -p 127.0.0.1:3001:3000 \
-  ghcr.io/miguelarios/email-mcp:1.1.1
+  ghcr.io/miguelarios/email-mcp:2.0.0
 ```
 
 Or in Compose:
@@ -82,7 +82,7 @@ Or in Compose:
 ```yaml
 services:
   email-mcp:
-    image: ghcr.io/miguelarios/email-mcp:1.1.1
+    image: ghcr.io/miguelarios/email-mcp:2.0.0
     restart: unless-stopped
     env_file: email.env
     ports:
@@ -105,7 +105,7 @@ The client starts the container itself. Note `-i` (stdio needs an open stdin) an
         "run", "-i", "--rm",
         "--env-file", "/absolute/path/to/email.env",
         "-e", "PIM_MCP_TRANSPORT=stdio",
-        "ghcr.io/miguelarios/email-mcp:1.1.1"
+        "ghcr.io/miguelarios/email-mcp:2.0.0"
       ]
     }
   }
@@ -166,7 +166,7 @@ docker run -d --name cal-mcp --restart unless-stopped \
   --env-file cal.env \
   -p 127.0.0.1:3002:3000 \
   -v cal-mcp-home:/home/node \
-  ghcr.io/miguelarios/cal-mcp:3.0.1
+  ghcr.io/miguelarios/cal-mcp:4.0.0
 ```
 
 Or in Compose:
@@ -174,7 +174,7 @@ Or in Compose:
 ```yaml
 services:
   cal-mcp:
-    image: ghcr.io/miguelarios/cal-mcp:3.0.1
+    image: ghcr.io/miguelarios/cal-mcp:4.0.0
     restart: unless-stopped
     env_file: cal.env
     ports:
@@ -200,7 +200,7 @@ The endpoint is `http://127.0.0.1:3002/mcp`.
         "--env-file", "/absolute/path/to/cal.env",
         "-e", "PIM_MCP_TRANSPORT=stdio",
         "-v", "cal-mcp-home:/home/node",
-        "ghcr.io/miguelarios/cal-mcp:3.0.1"
+        "ghcr.io/miguelarios/cal-mcp:4.0.0"
       ]
     }
   }
@@ -226,7 +226,7 @@ CARDDAV_PASS=your-app-password
 docker run -d --name card-mcp --restart unless-stopped \
   --env-file card.env \
   -p 127.0.0.1:3003:3000 \
-  ghcr.io/miguelarios/card-mcp:1.1.0
+  ghcr.io/miguelarios/card-mcp:1.1.1
 ```
 
 Or in Compose:
@@ -234,7 +234,7 @@ Or in Compose:
 ```yaml
 services:
   card-mcp:
-    image: ghcr.io/miguelarios/card-mcp:1.1.0
+    image: ghcr.io/miguelarios/card-mcp:1.1.1
     restart: unless-stopped
     env_file: card.env
     ports:
@@ -254,7 +254,7 @@ The endpoint is `http://127.0.0.1:3003/mcp`.
         "run", "-i", "--rm",
         "--env-file", "/absolute/path/to/card.env",
         "-e", "PIM_MCP_TRANSPORT=stdio",
-        "ghcr.io/miguelarios/card-mcp:1.1.0"
+        "ghcr.io/miguelarios/card-mcp:1.1.1"
       ]
     }
   }
@@ -273,7 +273,7 @@ x-mcp: &mcp
 services:
   email-mcp:
     <<: *mcp
-    image: ghcr.io/miguelarios/email-mcp:1.1.1
+    image: ghcr.io/miguelarios/email-mcp:2.0.0
     env_file: email.env
     environment:
       EMAIL_ATTACHMENT_DIR: /attachments
@@ -282,7 +282,7 @@ services:
 
   cal-mcp:
     <<: *mcp
-    image: ghcr.io/miguelarios/cal-mcp:3.0.1
+    image: ghcr.io/miguelarios/cal-mcp:4.0.0
     env_file: cal.env
     environment:
       TZ: America/Chicago
@@ -291,7 +291,7 @@ services:
 
   card-mcp:
     <<: *mcp
-    image: ghcr.io/miguelarios/card-mcp:1.1.0
+    image: ghcr.io/miguelarios/card-mcp:1.1.1
     env_file: card.env
     ports: ["127.0.0.1:3003:3000"]
 
@@ -381,7 +381,7 @@ docker run -d --name email-mcp --restart unless-stopped \
   -p 127.0.0.1:3001:3000 \
   -v email-mcp-home:/home/node \
   node:22-alpine \
-  npx -y @miguelarios/email-mcp@1.1.1
+  npx -y @miguelarios/email-mcp@2.0.0
 ```
 
 The named volume at `/home/node` caches the downloaded package so only the first start

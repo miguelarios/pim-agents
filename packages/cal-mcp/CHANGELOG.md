@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.0 (2026-11-19)
+
+- **Breaking: the time zone comes from `TZ`, not `PIM_TIMEZONE`** (#171). `TZ` is the variable every container takes (LinuxServer images included), so `TZ: America/Chicago` now sets cal-mcp along with the rest of a stack. Everything that used `PIM_TIMEZONE` uses it: "today", free slots, the times events are returned in, and how time arguments are read. **Rename `PIM_TIMEZONE` to `TZ`**; a leftover `PIM_TIMEZONE` is ignored and logs `PIM_TIMEZONE is no longer read; set TZ=… instead.` at startup.
+- **An empty or unknown `TZ` means UTC** (#171). An empty `TZ` used to reach new events as `Etc/Unknown`, a zone `Intl` rejects.
+- Requires `@miguelarios/pim-core` 2.0.0.
+
 ## 3.0.1 (2026-11-18)
 
 - **`update_event` makes an all-day event timed when given a timed start and end** (#168). With `allDay` left out, the event used to stay all-day and both values were cut to dates. A same-day pair (`14:00` to `15:00`) wrote a zero-length all-day event, and the times were lost.

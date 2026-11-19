@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0 (2026-11-19)
+
+- **Breaking: the time zone comes from `TZ`, not `PIM_TIMEZONE`** (#171). It sets how email dates are rendered and how `search_emails` reads `since`/`before`. `TZ` is the variable every container takes (LinuxServer images included), so one `TZ` now sets email-mcp along with the rest of a stack. **Rename `PIM_TIMEZONE` to `TZ`**; a leftover `PIM_TIMEZONE` is ignored and logs `PIM_TIMEZONE is no longer read; set TZ=… instead.` the first time the zone is read.
+- **An empty or unknown `TZ` means UTC** (#171) instead of a zone name that date formatting throws on.
+- Requires `@miguelarios/pim-core` 2.0.0.
+
 ## 1.1.1 (2026-11-17)
 
 - **`search_emails` `since`/`before` are read in `PIM_TIMEZONE`** (#164). A date was UTC midnight, so in Chicago a search for Nov 16 covered 6 PM Nov 15 to 6 PM Nov 16 on servers with the WITHIN extension (Dovecot). On other servers an evening time could lose its day (`2026-11-16T20:00-06:00` became `SINCE 17-Nov`). A date now means the local day, and a time with no offset is read in the zone. The search sent to the server is shaped to its capabilities: exact instants for WITHIN, and the local calendar date otherwise.

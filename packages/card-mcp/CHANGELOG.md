@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1 (2026-11-19)
+
+- Requires `@miguelarios/pim-core` 2.0.0, the version this release is tested against. No change in behaviour: card-mcp does not read the time zone, so pim-core 2.0.0's move from `PIM_TIMEZONE` to `TZ` (#171) does not affect it.
+
 ## 1.1.0 (2026-11-15)
 
 - **`resolve_contact` and `get_group` use a contact's preferred email** (#159, #160). Both used to answer with the first EMAIL on the card, ignoring the preferred one (vCard 3 `TYPE=pref`, vCard 4 `PREF=1`) that Apple clients and Nextcloud default to. They now take the preferred email, else the first. This applies to a single `resolve_contact` match, to each `ambiguous` candidate, and to each `get_group` member.

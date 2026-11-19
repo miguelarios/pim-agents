@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0 (2026-11-19)
+
+- **Breaking: `getTimezone()` reads `TZ`, not `PIM_TIMEZONE`** (#171). It returns the zone Node runs in, which Node takes from `TZ`, the variable every container image takes, so one `TZ` now sets the servers and the rest of a stack. Node applies `TZ` from its own zone database, so it works on `node:alpine` without `tzdata`, and accepts the POSIX `:Area/Location` form. `PIM_TIMEZONE` is ignored; setting it logs one line to stderr naming the `TZ` to set instead (`PIM_TIMEZONE is no longer read; set TZ=America/Chicago instead.`).
+- **`getTimezone()` always returns a zone Intl accepts** (#171). An unknown `TZ` made Node report no zone (`undefined`), and an empty one (`TZ: ${TZ}` in Compose with the host variable unset) `"Etc/Unknown"`, which `Intl.DateTimeFormat` rejects with `Invalid time zone specified`. Both now return `"UTC"`, the zone Node actually runs in then.
+- A major version so that email-mcp 1.x and cal-mcp 3.x, which accept `^1`, never pick this up and silently stop reading `PIM_TIMEZONE`.
+
 ## 1.2.1 (2026-11-18)
 
 - **All-day values are written with one `VALUE=DATE`** (#167). `updateMasterEventIcs`, `createExceptionComponent`, `addExdateToIcs` and `splitRecurrenceIcs` added the parameter on top of the one ical.js writes for a date, producing `DTSTART;VALUE=DATE;VALUE=DATE:…`. Stored data that already has it still parses, and an update rewrites it once.
