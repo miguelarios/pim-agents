@@ -15,7 +15,7 @@ describe("getTimezone", () => {
   });
 
   it("returns OS timezone by default", () => {
-    vi.stubEnv("TZ", "");
+    vi.stubEnv("TZ", undefined);
     const tz = getTimezone();
     // IANA timezone: "Area/Location" (e.g., "America/Chicago") or bare "UTC"
     expect(tz).toMatch(/^([A-Za-z]+\/[A-Za-z_]+|UTC)$/);
@@ -35,6 +35,15 @@ describe("getTimezone", () => {
     // Node then reports the zone as undefined instead of a string.
     vi.stubEnv("TZ", "Not/AZone");
     expect(getTimezone()).toBe("UTC");
+  });
+
+  it("falls back to UTC for an empty TZ, a zone Intl itself rejects", () => {
+    // `TZ: ${TZ}` in Compose with the host variable unset. Node runs in UTC
+    // and reports "Etc/Unknown", which new Intl.DateTimeFormat then refuses.
+    vi.stubEnv("TZ", "");
+    const tz = getTimezone();
+    expect(tz).toBe("UTC");
+    expect(() => new Intl.DateTimeFormat("en-US", { timeZone: tz })).not.toThrow();
   });
 
   it("no longer reads PIM_TIMEZONE, and says so once", () => {

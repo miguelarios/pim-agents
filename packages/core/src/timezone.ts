@@ -14,8 +14,12 @@ export function getTimezone(): string {
     warnedPimTimezone = true;
     console.error(`PIM_TIMEZONE is no longer read; set TZ=${legacy} instead.`);
   }
-  // An unknown TZ makes Node report no zone at all, so name the UTC it uses.
-  return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  // Node runs in UTC when TZ names no zone it knows, but does not say so: an
+  // unknown name reports no zone at all, and an empty TZ (`TZ: ${TZ}` in
+  // Compose with the host variable unset) reports "Etc/Unknown", which Intl
+  // itself then rejects. Callers write this zone into events and format with
+  // it, so name the UTC Node actually uses.
+  return usableTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC");
 }
 
 export function formatInTimezone(isoUtcString: string, timezone: string): string {
