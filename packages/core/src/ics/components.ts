@@ -80,12 +80,6 @@ function removeExdate(master: ICAL.Component, occurrenceMs: number, allDay: bool
   return removed;
 }
 
-/**
- * Shifts a date or date-time by `deltaMs`, in wall-clock terms for a zoned
- * value (so a series moved from 10:00 to 11:00 keeps its exclusions at the
- * same local hour across a DST change) and by whole days for a DATE.
- */
-
 export function createExceptionComponent(
   masterIcs: string,
   componentType: "vevent" | "vtodo",
@@ -817,7 +811,17 @@ function moveSeriesSlots(
   if (!rruleProp || !(rule instanceof ICAL.Recur) || !(rule.until instanceof ICAL.Time)) return;
   const until = rule.until;
   if (newStart.isDate) {
-    const local = inZoneOf(until, oldStart);
+    // The series' last day is the day of its last occurrence at or before
+    // UNTIL. When UNTIL's local time is earlier than the series' start time
+    // (truncateRecurrenceIcs writes one second before the cut), that's the
+    // day before UNTIL's own date.
+    let local = inZoneOf(until, oldStart);
+    const secondsOfDay = (t: ICAL.Time) =>
+      t.isDate ? 0 : t.hour * 3600 + t.minute * 60 + t.second;
+    if (secondsOfDay(local) < secondsOfDay(inZoneOf(oldStart, oldStart))) {
+      local = local.clone();
+      local.adjust(-1, 0, 0, 0);
+    }
     rule.until = ICAL.Time.fromDateString(
       `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`,
     );

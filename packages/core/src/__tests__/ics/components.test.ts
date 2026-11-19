@@ -1135,3 +1135,53 @@ describe("updateMasterEventIcs converts a series between all-day and timed", () 
     ]);
   });
 });
+
+describe("timed → all-day keeps the series' real last day (#173 review)", () => {
+  const daily = (start: string, rrule: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:d1",
+      "DTSTAMP:20260101T000000Z",
+      start,
+      start.replace("DTSTART", "DTEND").replace("T100000", "T110000"),
+      rrule,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  const RANGE = { start: "2026-11-01T00:00:00Z", end: "2026-12-31T00:00:00Z" };
+  const days = (ics: string) => parseIcsEvents(ics, RANGE).map((e) => e.start.slice(0, 10));
+  const toAllDay = (ics: string) =>
+    updateMasterEventIcs(ics, { allDay: true, start: "2026-11-16", end: "2026-11-17" });
+
+  it("after a span=future cut, does not bring the cut day back", () => {
+    const series = daily("DTSTART;TZID=America/Los_Angeles:20261116T100000", "RRULE:FREQ=DAILY");
+    // Cut at the Nov 20 occurrence (10:00 LA): UNTIL lands one second before it.
+    const cut = truncateRecurrenceIcs(series, "2026-11-20T18:00:00.000Z", false);
+    expect(cut).not.toBeNull();
+    expect(days(cut as string)).toEqual(["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]);
+    const allDay = toAllDay(cut as string);
+    expect(allDay).toContain("RRULE:FREQ=DAILY;UNTIL=20261119");
+    expect(days(allDay)).toEqual(["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]);
+  });
+
+  it("with an UNTIL written in another zone", () => {
+    const series = daily(
+      "DTSTART;TZID=Europe/Berlin:20261116T100000",
+      "RRULE:FREQ=DAILY;UNTIL=20261120T235959Z",
+    );
+    const before = days(series);
+    expect(before.at(-1)).toBe("2026-11-20");
+    expect(days(toAllDay(series))).toEqual(before);
+  });
+
+  it("keeps an UNTIL that is exactly an occurrence", () => {
+    const series = daily(
+      "DTSTART;TZID=America/Chicago:20261116T100000",
+      "RRULE:FREQ=DAILY;UNTIL=20261120T160000Z",
+    );
+    expect(days(toAllDay(series)).at(-1)).toBe("2026-11-20");
+  });
+});
