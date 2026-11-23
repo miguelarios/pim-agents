@@ -37,3 +37,4 @@ export {
   splitRecurrenceIcs,
 } from "./components.js";
 export type { ExceptionOverrides, MasterEventUpdates } from "./components.js";
+export { isWritableTimezone } from "./components.js";

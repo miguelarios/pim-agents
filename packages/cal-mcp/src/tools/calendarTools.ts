@@ -18,6 +18,7 @@ import {
   createExceptionComponent,
   formatTriggerHuman,
   generateEventIcs,
+  isWritableTimezone,
   removeExceptionFromIcs,
   splitIcsByUid,
   splitRecurrenceIcs,
@@ -766,15 +767,14 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         // London's DST, not Chicago's. The input is already an instant (read in
         // TZ by zonedArgs), so only where it's written changes.
         //
-        // Only a zone this server can resolve is kept: UTC, or an IANA name
-        // Intl knows. Outlook's Windows names ("Central Standard Time") resolve
-        // in the bundled data to fixed offsets with no DST. A custom zone
-        // ("Customized Time Zone") or an unknown one can't be written at all.
-        // Those, like an event with no zone (floating, or all-day becoming
-        // timed), are written in TZ, as before.
+        // Only a zone the event can be written in and read back the same is
+        // kept: UTC, or a zone whose bundled definition matches the runtime's
+        // IANA data (isWritableTimezone). Outlook's Windows names, names the
+        // bundled data gets wrong or lacks, and custom or unknown zones, like
+        // an event with no zone (floating, or all-day becoming timed), are
+        // written in TZ, as before.
         const ownZone = existing.timeZone;
-        const keepsOwnZone =
-          ownZone !== null && (ownZone === "UTC" || usableTimezone(ownZone) === ownZone);
+        const keepsOwnZone = ownZone !== null && isWritableTimezone(ownZone);
         const updates: MasterEventUpdates = keepsOwnZone ? {} : { timezone: getTimezone() };
         for (const field of UPDATABLE_FIELDS) copyDefined(updates, args, field);
 

@@ -952,6 +952,31 @@ describe("update_event keeps only a zone it can resolve (#176 review)", () => {
     expect(count).toBe(19); // 20 minus the excluded Mar 22
   });
 
+  it("falls back to TZ for a zone the bundled data lacks (Europe/Kyiv) or gets wrong (EST)", async () => {
+    for (const zone of ["Europe/Kyiv", "EST"]) {
+      const { written, hours } = await hoursAfterMove(ics(zone, false), zone);
+      expect(written, zone).toContain("DTSTART;TZID=America/Chicago:20270104T100000");
+      expect(hours, zone).toEqual(["10 AM"]);
+    }
+  });
+
+  it("keeps an Etc/UTC event in UTC, as a plain Z time", async () => {
+    const s = mockService();
+    store(s, ics("Etc/UTC", false), "Etc/UTC");
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2027-01-04T10:00:00",
+        end: "2027-01-04T11:00:00",
+      },
+      s,
+    );
+    expect(String(s.updateEvent.mock.calls[0][2])).toContain("DTSTART:20270104T160000Z");
+  });
+
   it("writes a TZID=UTC event as a plain UTC time", async () => {
     const s = mockService();
     store(s, ics("UTC", false), "UTC");

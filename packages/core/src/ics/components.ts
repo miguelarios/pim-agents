@@ -299,8 +299,11 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
   const setTime = (propName: "dtstart" | "dtend", iso: string) => {
     const existing = master.getFirstProperty(propName);
     const existingTzid = existing?.getParameter("tzid");
-    const effectiveTz =
-      updates.timezone ?? (typeof existingTzid === "string" ? existingTzid : undefined);
+    const named = updates.timezone ?? (typeof existingTzid === "string" ? existingTzid : undefined);
+    // A UTC alias (Etc/UTC, Zulu…) is written as a plain Z time: the bundled
+    // zone for it isn't ical.js's UTC, so it would come out with neither a
+    // TZID nor a Z, i.e. floating.
+    const effectiveTz = named && isUtcZone(named) ? undefined : named;
     const t = toIcalTime(iso, allDay, effectiveTz);
     const prop = master.updatePropertyWithValue(propName, t);
     prop.removeParameter("tzid");
@@ -775,12 +778,18 @@ function setSlotValues(
   tzid: unknown,
   rewrite: boolean,
 ): void {
-  if (rewrite) {
+  // A slot named in a UTC alias is written as a plain Z time (RFC 5545 §3.3.5).
+  const own = prop.getParameter("tzid");
+  const utcNamed = typeof own === "string" && isUtcZone(own);
+  if (rewrite || utcNamed) {
     prop.removeParameter("tzid");
     prop.removeParameter("value");
   }
-  if (values.length === 1) prop.setValue(values[0]);
-  else prop.setValues(values);
+  const written = utcNamed
+    ? values.map((v) => (v.isDate ? v : v.convertToZone(ICAL.Timezone.utcTimezone)))
+    : values;
+  if (written.length === 1) prop.setValue(written[0]);
+  else prop.setValues(written);
   if (
     rewrite &&
     !like.isDate &&
@@ -810,6 +819,7 @@ function moveSeriesSlots(
   const kindChanged = oldStart.isDate !== newStart.isDate;
   const unchanged =
     !kindChanged &&
+    zoneKey(oldStart) === zoneKey(newStart) &&
     (newStart.isDate
       ? dayDiff(oldStart, newStart) === 0
       : newStart.toJSDate().getTime() === oldStart.toJSDate().getTime());
@@ -969,4 +979,40 @@ function moveRuleDays(master: ICAL.Component, oldStart: ICAL.Time, newStart: ICA
   }
 
   if (changed) rruleProp.setValue(rule);
+}
+
+/**
+ * Whether an event can be written in `tzid` and read back the same anywhere:
+ * UTC, or a zone the bundled data has under that exact name with the same
+ * UTC offsets as the runtime's IANA data, checked in winter and in summer.
+ *
+ * That rejects Outlook's Windows names ("Central Standard Time", a fixed
+ * offset in the bundled data), names the bundled data gets wrong ("EST" is
+ * Halifax time there, "Etc/GMT+5" has its sign inverted), names it lacks
+ * ("Europe/Kyiv"), other spellings ("europe/london"), and custom or unknown
+ * zones. A caller writes those in a zone it can resolve instead.
+ */
+export function isWritableTimezone(tzid: string): boolean {
+  if (!tzid) return false;
+  if (isUtcZone(tzid)) return true;
+  const zone = ICAL.TimezoneService.get(tzid);
+  if (!zone) return false;
+  let intl: Intl.DateTimeFormat;
+  try {
+    intl = new Intl.DateTimeFormat("en-US", { timeZone: tzid, timeZoneName: "longOffset" });
+  } catch {
+    return false;
+  }
+  for (const probe of [Date.UTC(2027, 0, 15, 12), Date.UTC(2027, 6, 15, 12)]) {
+    const name =
+      intl.formatToParts(new Date(probe)).find((p) => p.type === "timeZoneName")?.value ?? "";
+    const m = /GMT(?:([+-])(\d{2}):(\d{2}))?/.exec(name);
+    if (!m) return false;
+    const intlSeconds = m[1]
+      ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 3600 + Number(m[3]) * 60)
+      : 0;
+    const icalSeconds = zone.utcOffset(ICAL.Time.fromJSDate(new Date(probe), true));
+    if (intlSeconds !== icalSeconds) return false;
+  }
+  return true;
 }
