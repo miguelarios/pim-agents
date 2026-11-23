@@ -723,3 +723,113 @@ describe("update_event all-day → timed, limits (#168 review)", () => {
     expect(s.updateEvent).not.toHaveBeenCalled();
   });
 });
+
+describe("update_event keeps an event in its own time zone", () => {
+  beforeEach(() => vi.stubEnv("TZ", "America/Chicago"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const stored = (s: ReturnType<typeof mockService>, ics: string, timeZone: string | null) => {
+    s.getEventWithMeta.mockResolvedValue({
+      event: {
+        ...EVENT,
+        timeZone,
+        isRecurring: ics.includes("RRULE"),
+        attendees: [],
+        alarms: [],
+        categories: [],
+        organizer: null,
+      },
+      meta: { url: "u", etag: "e" },
+    });
+    s.fetchRawCalendarObject.mockResolvedValue({ data: ics, url: "u", etag: "e" });
+  };
+  const event = (start: string, end: string, extra = "") =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:e1",
+      start,
+      end,
+      extra,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+  const written = (s: ReturnType<typeof mockService>) => String(s.updateEvent.mock.calls[0][2]);
+
+  it("moves a London series in London time, so both countries' DST changes don't shift it", async () => {
+    const s = mockService();
+    stored(
+      s,
+      event(
+        "DTSTART;TZID=Europe/London:20270301T090000",
+        "DTEND;TZID=Europe/London:20270301T100000",
+        "RRULE:FREQ=WEEKLY;COUNT=6",
+      ),
+      "Europe/London",
+    );
+    // 03:30 Chicago on Mar 1 is 09:30 London.
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2027-03-01T03:30:00",
+        end: "2027-03-01T04:30:00",
+      },
+      s,
+    );
+    const ics = written(s);
+    expect(ics).toContain("DTSTART;TZID=Europe/London:20270301T093000");
+    expect(ics).toContain("DTEND;TZID=Europe/London:20270301T103000");
+    const london = parseIcsEvents(ics, {
+      start: "2027-02-01T00:00:00Z",
+      end: "2027-05-01T00:00:00Z",
+    }).map((e) =>
+      new Date(e.start).toLocaleTimeString("en-GB", {
+        timeZone: "Europe/London",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    );
+    expect(london).toEqual(["09:30", "09:30", "09:30", "09:30", "09:30", "09:30"]);
+  });
+
+  it("keeps a UTC event in UTC", async () => {
+    const s = mockService();
+    stored(s, event("DTSTART:20261116T140000Z", "DTEND:20261116T150000Z"), "UTC");
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16T09:00:00",
+        end: "2026-11-16T10:00:00",
+      },
+      s,
+    );
+    expect(written(s)).toContain("DTSTART:20261116T150000Z");
+  });
+
+  it("still uses your zone for an event that has none (floating)", async () => {
+    const s = mockService();
+    stored(s, event("DTSTART:20261116T090000", "DTEND:20261116T100000"), null);
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2026-11-16T10:00:00",
+        end: "2026-11-16T11:00:00",
+      },
+      s,
+    );
+    expect(written(s)).toContain("DTSTART;TZID=America/Chicago:20261116T100000");
+  });
+});
