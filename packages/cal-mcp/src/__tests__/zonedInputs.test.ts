@@ -977,6 +977,56 @@ describe("update_event keeps only a zone it can resolve (#176 review)", () => {
     expect(String(s.updateEvent.mock.calls[0][2])).toContain("DTSTART:20270104T160000Z");
   });
 
+  it("keeps a custom-zone series' exclusions on span=future", async () => {
+    const s = mockService();
+    store(
+      s,
+      ics(
+        "Customized Time Zone",
+        true,
+        [
+          "EXDATE;TZID=Customized Time Zone:20270308T090000",
+          "EXDATE;TZID=Customized Time Zone:20270503T090000",
+          "EXDATE:20270510T140000Z",
+        ].join("\r\n"),
+      ).replace("COUNT=20", "COUNT=30"),
+      "Customized Time Zone",
+    );
+    const r = await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "future",
+        occurrenceDate: "2027-03-01T15:00:00.000Z",
+        start: "2027-03-01T10:00:00",
+        end: "2027-03-01T11:00:00",
+      },
+      s,
+    );
+    expect(r.isError).toBeFalsy();
+    const tail = String(s.createEvent.mock.calls[0][1]);
+    const occ = parseIcsEvents(
+      tail,
+      { start: "2027-01-01T00:00:00Z", end: "2028-01-01T00:00:00Z" },
+      "America/Chicago",
+    );
+    const days = occ.map((e) =>
+      new Date(e.start).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }),
+    );
+    for (const excluded of ["2027-03-08", "2027-05-03", "2027-05-10"])
+      expect(days).not.toContain(excluded);
+    const hours = new Set(
+      occ.map((e) =>
+        new Date(e.start).toLocaleTimeString("en-US", {
+          timeZone: "America/Chicago",
+          hour: "numeric",
+        }),
+      ),
+    );
+    expect([...hours]).toEqual(["10 AM"]);
+  });
+
   it("writes a TZID=UTC event as a plain UTC time", async () => {
     const s = mockService();
     store(s, ics("UTC", false), "UTC");

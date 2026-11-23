@@ -774,7 +774,7 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         // an event with no zone (floating, or all-day becoming timed), are
         // written in TZ, as before.
         const ownZone = existing.timeZone;
-        const keepsOwnZone = ownZone !== null && isWritableTimezone(ownZone);
+        const keepsOwnZone = ownZone !== null && isWritableTimezone(ownZone, rawObj.data);
         const updates: MasterEventUpdates = keepsOwnZone ? {} : { timezone: getTimezone() };
         for (const field of UPDATABLE_FIELDS) copyDefined(updates, args, field);
 

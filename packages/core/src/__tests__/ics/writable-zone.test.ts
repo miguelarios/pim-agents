@@ -109,3 +109,95 @@ describe("moveSeriesSlots on a zone change with no change of time", () => {
     expect(occ).toHaveLength(29);
   });
 });
+
+describe("isWritableTimezone, stricter (#176 third review)", () => {
+  it("rejects zones whose bundled rules differ from Intl outside winter and summer", () => {
+    // The bundled Jerusalem rule (-1FR) misses some years' spring change.
+    expect(isWritableTimezone("Asia/Jerusalem")).toBe(false);
+  });
+
+  it("rejects a zone whose embedded definition disagrees with Intl", () => {
+    const outdatedMoscow = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VTIMEZONE",
+      "TZID:Europe/Moscow",
+      "BEGIN:STANDARD",
+      "DTSTART:19701025T030000",
+      "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10",
+      "TZOFFSETFROM:+0400",
+      "TZOFFSETTO:+0300",
+      "END:STANDARD",
+      "BEGIN:DAYLIGHT",
+      "DTSTART:19700329T020000",
+      "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3",
+      "TZOFFSETFROM:+0300",
+      "TZOFFSETTO:+0400",
+      "END:DAYLIGHT",
+      "END:VTIMEZONE",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    expect(isWritableTimezone("Europe/Moscow")).toBe(true);
+    expect(isWritableTimezone("Europe/Moscow", outdatedMoscow)).toBe(false);
+  });
+
+  it("accepts an embedded definition that agrees", () => {
+    const ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR";
+    expect(isWritableTimezone("America/Chicago", ics)).toBe(true);
+  });
+});
+
+describe("moveSeriesSlots across zones, UTC and UTC-named slots (#176 third review)", () => {
+  const RANGE = { start: "2027-01-01T00:00:00Z", end: "2027-12-31T00:00:00Z" };
+
+  it("moves a UTC series' UTC exclusions with its occurrences into a zone with DST", () => {
+    // A UTC series at 15:00Z weekly, excluding May 10 (still 15:00Z), moved to 10:00 Chicago.
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:u2",
+      "DTSTAMP:20260101T000000Z",
+      "DTSTART:20270301T150000Z",
+      "DTEND:20270301T160000Z",
+      "RRULE:FREQ=WEEKLY;COUNT=20",
+      "EXDATE:20270510T150000Z",
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const out = updateMasterEventIcs(ics, {
+      start: "2027-03-01T16:00:00.000Z",
+      end: "2027-03-01T17:00:00.000Z",
+      timezone: "America/Chicago",
+    });
+    const occ = parseIcsEvents(out, RANGE);
+    expect(occ).toHaveLength(19);
+    expect(occ.some((e) => e.start.startsWith("2027-05-10"))).toBe(false);
+  });
+
+  it("never writes a series TZID on a UTC time when a UTC-named slot moves into a zone", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:u3",
+      "DTSTAMP:20260101T000000Z",
+      "DTSTART;TZID=Etc/UTC:20270104T160000",
+      "DTEND;TZID=Etc/UTC:20270104T170000",
+      "RRULE:FREQ=WEEKLY;COUNT=10",
+      "EXDATE;TZID=Etc/UTC:20270111T160000",
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const out = updateMasterEventIcs(ics, {
+      start: "2027-01-04T16:00:00.000Z",
+      end: "2027-01-04T17:00:00.000Z",
+      timezone: "America/Chicago",
+    });
+    expect(out).not.toMatch(/TZID=[^:]+:\d{8}T\d{6}Z/);
+    expect(out).toContain("EXDATE;TZID=America/Chicago:20270111T100000");
+    expect(parseIcsEvents(out, RANGE)).toHaveLength(9);
+  });
+});
