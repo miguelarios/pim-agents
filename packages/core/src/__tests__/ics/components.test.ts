@@ -1185,3 +1185,121 @@ describe("timed → all-day keeps the series' real last day (#173 review)", () =
     expect(days(toAllDay(series)).at(-1)).toBe("2026-11-20");
   });
 });
+
+describe("updateMasterEventIcs keeps the rule's days in step with a moved start", () => {
+  const series = (rrule: string, start = "20261118T100000") =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:w1",
+      "DTSTAMP:20260101T000000Z",
+      `DTSTART;TZID=America/Chicago:${start}`,
+      `DTEND;TZID=America/Chicago:${start.replace("T10", "T11")}`,
+      rrule,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  /** The RRULE line with its parts sorted: their order carries no meaning. */
+  const rule = (ics: string) => {
+    const line = ics.split(/\r?\n/).find((l) => l.startsWith("RRULE:")) ?? "";
+    return `RRULE:${line.slice(6).split(";").sort().join(";")}`;
+  };
+  const sorted = (r: string) => `RRULE:${r.slice(6).split(";").sort().join(";")}`;
+  const RANGE = { start: "2026-11-01T00:00:00Z", end: "2027-03-01T00:00:00Z" };
+  const weekdays = (ics: string) =>
+    parseIcsEvents(ics, RANGE).map((e) =>
+      new Date(e.start).toLocaleDateString("en-US", {
+        timeZone: "America/Chicago",
+        weekday: "short",
+      }),
+    );
+  // Wed Nov 18 10:00 Chicago → Thu Nov 19 10:00 Chicago.
+  const toThursday = {
+    start: "2026-11-19T16:00:00.000Z",
+    end: "2026-11-19T17:00:00.000Z",
+    timezone: "America/Chicago",
+  };
+
+  it("moves a weekly BYDAY with the start", () => {
+    const out = updateMasterEventIcs(series("RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=4"), toThursday);
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=WEEKLY;BYDAY=TH;COUNT=4"));
+    expect(weekdays(out)).toEqual(["Thu", "Thu", "Thu", "Thu"]);
+  });
+
+  it("shifts every day of a multi-day weekly rule by the same amount", () => {
+    const out = updateMasterEventIcs(series("RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4"), toThursday);
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=WEEKLY;BYDAY=TU,TH;COUNT=4"));
+  });
+
+  it("wraps around the week", () => {
+    // Wed → Mon of the following week is +5 days: WE → MO.
+    const out = updateMasterEventIcs(series("RRULE:FREQ=WEEKLY;BYDAY=WE,SA;COUNT=4"), {
+      ...toThursday,
+      start: "2026-11-23T16:00:00.000Z",
+      end: "2026-11-23T17:00:00.000Z",
+    });
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=4"));
+  });
+
+  it("keeps the ordinal of a monthly BYDAY (third Wednesday → third Thursday)", () => {
+    const out = updateMasterEventIcs(series("RRULE:FREQ=MONTHLY;BYDAY=3WE;COUNT=3"), toThursday);
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=MONTHLY;BYDAY=3TH;COUNT=3"));
+  });
+
+  it("moves a BYMONTHDAY that names the start's day", () => {
+    const out = updateMasterEventIcs(
+      series("RRULE:FREQ=MONTHLY;BYMONTHDAY=18;COUNT=3"),
+      toThursday,
+    );
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=MONTHLY;BYMONTHDAY=19;COUNT=3"));
+  });
+
+  it("leaves a rule alone when only the time changes", () => {
+    const out = updateMasterEventIcs(series("RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=4"), {
+      start: "2026-11-18T17:00:00.000Z",
+      end: "2026-11-18T18:00:00.000Z",
+      timezone: "America/Chicago",
+    });
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=4"));
+  });
+
+  it("reads the weekday in the event's own zone, not UTC", () => {
+    // 21:00 Wed → 21:00 Thu Chicago: both are the next day in UTC.
+    const out = updateMasterEventIcs(
+      series("RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=4", "20261118T210000"),
+      {
+        start: "2026-11-20T03:00:00.000Z",
+        end: "2026-11-20T04:00:00.000Z",
+        timezone: "America/Chicago",
+      },
+    );
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=WEEKLY;BYDAY=TH;COUNT=4"));
+  });
+
+  it("leaves a rule whose days never included the start's day", () => {
+    // DTSTART on a Wednesday with BYDAY=FR: an odd rule, not ours to guess at.
+    const out = updateMasterEventIcs(series("RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=4"), toThursday);
+    expect(rule(out)).toBe(sorted("RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=4"));
+  });
+
+  it("does the same for an all-day series", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:w2",
+      "DTSTAMP:20260101T000000Z",
+      "DTSTART;VALUE=DATE:20261118",
+      "DTEND;VALUE=DATE:20261119",
+      "RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=4",
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    expect(rule(updateMasterEventIcs(ics, { start: "2026-11-19", end: "2026-11-20" }))).toBe(
+      sorted("RRULE:FREQ=WEEKLY;BYDAY=TH;COUNT=4"),
+    );
+  });
+});

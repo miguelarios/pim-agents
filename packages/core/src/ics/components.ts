@@ -338,6 +338,7 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
     master.getFirstProperty("rrule")
   ) {
     moveSeriesSlots(root, master, currentDtstart, newDtstart);
+    moveRuleDays(master, currentDtstart, newDtstart);
   }
 
   const setOrRemove = (propName: string, value: string | undefined) => {
@@ -831,4 +832,56 @@ function moveSeriesSlots(
     rule.until = last.convertToZone(ICAL.Timezone.utcTimezone);
   }
   rruleProp.setValue(rule);
+}
+
+const WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
+
+/**
+ * After DTSTART moved to another day, moves the RRULE's day parts with it:
+ * BYDAY (keeping any ordinal, so the third Wednesday becomes the third
+ * Thursday) and BYMONTHDAY. Without this, a weekly BYDAY=WE series moved to
+ * Thursday kept recurring on Wednesdays and lost the moved first occurrence,
+ * which matches no rule day.
+ *
+ * A part moves only when it named the old start's own day, which is how a
+ * client that writes BYDAY for a plain weekly event (Apple, Google) puts it.
+ * Then every day in it moves by the same amount, so MO,WE moved a day later
+ * becomes TU,TH. A rule whose days never included the start is left alone:
+ * there is no move to follow. Days are read in each start's own zone.
+ */
+function moveRuleDays(master: ICAL.Component, oldStart: ICAL.Time, newStart: ICAL.Time): void {
+  const rruleProp = master.getFirstProperty("rrule");
+  const rule = rruleProp?.getFirstValue();
+  if (!rruleProp || !(rule instanceof ICAL.Recur)) return;
+  const days = dayDiff(oldStart, newStart);
+  if (days === 0) return;
+  let changed = false;
+
+  const byDay = rule.parts.BYDAY as string[] | undefined;
+  if (byDay && byDay.length > 0) {
+    const oldDay = WEEKDAYS[oldStart.dayOfWeek() - 1];
+    const parsed = byDay.map((d) => /^([+-]?\d*)([A-Z]{2})$/.exec(d));
+    if (parsed.every(Boolean) && parsed.some((m) => m?.[2] === oldDay)) {
+      const shift = ((days % 7) + 7) % 7;
+      rule.parts.BYDAY = parsed.map((m) => {
+        const [, ordinal, day] = m as RegExpExecArray;
+        const index = WEEKDAYS.indexOf(day as (typeof WEEKDAYS)[number]);
+        return `${ordinal}${WEEKDAYS[(index + shift) % 7]}`;
+      });
+      changed = true;
+    }
+  }
+
+  const byMonthDay = rule.parts.BYMONTHDAY as number[] | undefined;
+  if (byMonthDay?.includes(oldStart.day)) {
+    const delta = newStart.day - oldStart.day;
+    const moved = byMonthDay.map((d) => (d > 0 ? d + delta : d));
+    // A day pushed outside 1..31 has no meaning: leave the rule as it was.
+    if (moved.every((d) => d < 0 || (d >= 1 && d <= 31))) {
+      rule.parts.BYMONTHDAY = moved;
+      changed = true;
+    }
+  }
+
+  if (changed) rruleProp.setValue(rule);
 }
