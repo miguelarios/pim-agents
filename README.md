@@ -279,7 +279,7 @@ services:
     env_file: email.env
     ports: ["127.0.0.1:3001:3000"]
   cal-mcp:
-    image: ghcr.io/miguelarios/cal-mcp:4.0.0
+    image: ghcr.io/miguelarios/cal-mcp:4.0.1
     restart: unless-stopped
     env_file: cal.env
     environment:

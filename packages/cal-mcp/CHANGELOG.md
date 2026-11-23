@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.0.1 (2026-11-23)
+
+- **A series moved to another day recurs on the new day** (#175). A weekly series whose rule names its weekday (`BYDAY=WE`, which Apple and Google write even for a plain weekly event) moved to Thursday kept recurring on Wednesdays and lost its first occurrence. Now:
+  - The weekday moves with the start, keeping the week of the month for rules like "third Wednesday".
+  - A day of the month, and a yearly rule's month, move too.
+  - Rules the move doesn't make unambiguous are left alone: "every weekday", "last weekday". So is the series' end date.
+- **A moved event keeps its own time zone** (#176). A London meeting moved by someone in Chicago used to be re-saved in Chicago time and follow Chicago's DST, so for two weeks in March it sat an hour off in London.
+  - **Kept:** UTC, or a zone this server's zone data matches exactly. Outlook's Windows names, custom zones and zones the bundled data gets wrong are written in `TZ`, as before.
+  - **Split series:** `span: "future"` starts the new series in the original zone, so its exclusions still match.
+  - **UTC aliases** like `Etc/UTC` are written as plain UTC times.
+- Requires `@miguelarios/pim-core` 2.1.0.
+
 ## 4.0.0 (2026-11-19)
 
 - **Breaking: the time zone comes from `TZ`, and `PIM_TIMEZONE` is no longer read** (#171). `TZ` is the variable every container image takes, so one setting covers a whole stack. Rename `PIM_TIMEZONE=America/Chicago` to `TZ=America/Chicago`. A leftover `PIM_TIMEZONE` is ignored, with a one-time warning on stderr naming the `TZ` to set. An unknown `TZ` falls back to UTC.
