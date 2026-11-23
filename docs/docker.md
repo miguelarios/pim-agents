@@ -8,8 +8,8 @@ Each server has its own image on the GitHub Container Registry:
 | Calendar | `ghcr.io/miguelarios/cal-mcp` |
 | Contacts | `ghcr.io/miguelarios/card-mcp` |
 
-An image's tag is its server's npm version (`ghcr.io/miguelarios/cal-mcp:4.0.0`), and it is
-built by installing that published package, as `npx @miguelarios/cal-mcp@4.0.0` would. Images
+An image's tag is its server's npm version (`ghcr.io/miguelarios/cal-mcp:4.0.1`), and it is
+built by installing that published package, as `npx @miguelarios/cal-mcp@4.0.1` would. Images
 are built for `linux/amd64` and `linux/arm64`.
 
 Two ways to run a server, picked by `PIM_MCP_TRANSPORT`:
@@ -47,7 +47,7 @@ The examples below follow these conventions:
   release, but a pinned tag is what keeps a restart from changing the server under you. A
   version tag is normally built once; if it is ever rebuilt, its dependencies and Node base
   are resolved afresh. To pin those too, pin the digest
-  (`ghcr.io/miguelarios/cal-mcp:4.0.0@sha256:…`, shown in `docker images --digests`).
+  (`ghcr.io/miguelarios/cal-mcp:4.0.1@sha256:…`, shown in `docker images --digests`).
 
 ## Email
 
@@ -166,7 +166,7 @@ docker run -d --name cal-mcp --restart unless-stopped \
   --env-file cal.env \
   -p 127.0.0.1:3002:3000 \
   -v cal-mcp-home:/home/node \
-  ghcr.io/miguelarios/cal-mcp:4.0.0
+  ghcr.io/miguelarios/cal-mcp:4.0.1
 ```
 
 Or in Compose:
@@ -174,7 +174,7 @@ Or in Compose:
 ```yaml
 services:
   cal-mcp:
-    image: ghcr.io/miguelarios/cal-mcp:4.0.0
+    image: ghcr.io/miguelarios/cal-mcp:4.0.1
     restart: unless-stopped
     env_file: cal.env
     ports:
@@ -200,7 +200,7 @@ The endpoint is `http://127.0.0.1:3002/mcp`.
         "--env-file", "/absolute/path/to/cal.env",
         "-e", "PIM_MCP_TRANSPORT=stdio",
         "-v", "cal-mcp-home:/home/node",
-        "ghcr.io/miguelarios/cal-mcp:4.0.0"
+        "ghcr.io/miguelarios/cal-mcp:4.0.1"
       ]
     }
   }
@@ -282,7 +282,7 @@ services:
 
   cal-mcp:
     <<: *mcp
-    image: ghcr.io/miguelarios/cal-mcp:4.0.0
+    image: ghcr.io/miguelarios/cal-mcp:4.0.1
     env_file: cal.env
     environment:
       TZ: America/Chicago

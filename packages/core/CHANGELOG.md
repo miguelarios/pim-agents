@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.0 (2026-11-23)
+
+- **New `isWritableTimezone(tzid, ics?)`** (#176): whether an event can be written in a zone and read back the same. That means UTC, or a zone the bundled data has under that exact name with the same UTC offsets as `Intl`, compared weekly over four years, and as the event's own embedded VTIMEZONE when `ics` is given.
+- **`updateMasterEventIcs` moves the RRULE's day parts with a moved start** (#175), when they named the old start's day:
+  - `BYDAY`: the weekday moves, and an ordinal is recomputed from the new date.
+  - `BYMONTHDAY`, and `BYMONTH` in yearly rules, move with the date.
+  - Rules that already include the new day, or use `BYSETPOS`, are left alone, and so is `UNTIL`.
+- **A series moving to another zone takes its slots with it** (#176). EXDATE, RDATE and RECURRENCE-ID values in the series' own zone keep their wall-clock offset and move into the new zone, even when the instant doesn't change.
+- **UTC aliases are written as `Z` times** (#176), never with a `TZID` (RFC 5545 §3.3.5).
+- **`splitRecurrenceIcs` starts the new series at the cut occurrence in the series' own zone** (#176). It used to write an unresolvable zone (an embedded custom VTIMEZONE, an unknown TZID) as UTC.
+
 ## 2.0.0 (2026-11-19)
 
 - **Breaking: `getTimezone()` reports the zone Node runs in, set by `TZ`, and no longer reads `PIM_TIMEZONE`** (#171). An unknown `TZ` reports `"UTC"`, the zone Node then uses. A leftover `PIM_TIMEZONE` logs a one-time warning to stderr.
