@@ -833,3 +833,141 @@ describe("update_event keeps an event in its own time zone", () => {
     expect(written(s)).toContain("DTSTART;TZID=America/Chicago:20261116T100000");
   });
 });
+
+describe("update_event keeps only a zone it can resolve (#176 review)", () => {
+  beforeEach(() => vi.stubEnv("TZ", "America/Chicago"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const vtimezone = (tzid: string) =>
+    [
+      "BEGIN:VTIMEZONE",
+      `TZID:${tzid}`,
+      "BEGIN:STANDARD",
+      "DTSTART:16011104T020000",
+      "RRULE:FREQ=YEARLY;BYDAY=1SU;BYMONTH=11",
+      "TZOFFSETFROM:-0500",
+      "TZOFFSETTO:-0600",
+      "END:STANDARD",
+      "BEGIN:DAYLIGHT",
+      "DTSTART:16010311T020000",
+      "RRULE:FREQ=YEARLY;BYDAY=2SU;BYMONTH=3",
+      "TZOFFSETFROM:-0600",
+      "TZOFFSETTO:-0500",
+      "END:DAYLIGHT",
+      "END:VTIMEZONE",
+    ].join("\r\n");
+  const ics = (tzid: string, withDefinition: boolean, extra = "") =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      ...(withDefinition ? [vtimezone(tzid)] : []),
+      "BEGIN:VEVENT",
+      "UID:e1",
+      `DTSTART;TZID=${tzid}:20270104T090000`,
+      `DTEND;TZID=${tzid}:20270104T100000`,
+      "RRULE:FREQ=WEEKLY;COUNT=20",
+      extra,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+  const store = (s: ReturnType<typeof mockService>, data: string, timeZone: string) => {
+    s.getEventWithMeta.mockResolvedValue({
+      event: {
+        ...EVENT,
+        timeZone,
+        isRecurring: true,
+        attendees: [],
+        alarms: [],
+        categories: [],
+        organizer: null,
+      },
+      meta: { url: "u", etag: "e" },
+    });
+    s.fetchRawCalendarObject.mockResolvedValue({ data, url: "u", etag: "e" });
+  };
+  /** Every occurrence's local Chicago hour after the series is moved to 10:00 Chicago. */
+  const hoursAfterMove = async (data: string, timeZone: string) => {
+    const s = mockService();
+    store(s, data, timeZone);
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2027-01-04T10:00:00",
+        end: "2027-01-04T11:00:00",
+      },
+      s,
+    );
+    const written = String(s.updateEvent.mock.calls[0][2]);
+    // Parsed as the service does: floating times (an unknown zone) in TZ.
+    const occ = parseIcsEvents(
+      written,
+      { start: "2027-01-01T00:00:00Z", end: "2027-06-01T00:00:00Z" },
+      "America/Chicago",
+    );
+    return {
+      written,
+      hours: [
+        ...new Set(
+          occ.map((e) =>
+            new Date(e.start).toLocaleTimeString("en-US", {
+              timeZone: "America/Chicago",
+              hour: "numeric",
+            }),
+          ),
+        ),
+      ],
+      count: occ.length,
+    };
+  };
+
+  it("falls back to TZ for an Outlook zone name, keeping 10:00 through DST", async () => {
+    const { written, hours } = await hoursAfterMove(
+      ics("Central Standard Time", true),
+      "Central Standard Time",
+    );
+    expect(written).toContain("DTSTART;TZID=America/Chicago:20270104T100000");
+    expect(hours).toEqual(["10 AM"]);
+  });
+
+  it("falls back to TZ for a custom zone the server has no name for", async () => {
+    const { hours } = await hoursAfterMove(
+      ics("Customized Time Zone", true),
+      "Customized Time Zone",
+    );
+    expect(hours).toEqual(["10 AM"]);
+  });
+
+  it("falls back to TZ for an unknown zone, keeping its exclusions", async () => {
+    const { hours, count } = await hoursAfterMove(
+      ics("Foo/Bar", false, "EXDATE;TZID=Foo/Bar:20270322T090000"),
+      "Foo/Bar",
+    );
+    expect(hours).toEqual(["10 AM"]);
+    expect(count).toBe(19); // 20 minus the excluded Mar 22
+  });
+
+  it("writes a TZID=UTC event as a plain UTC time", async () => {
+    const s = mockService();
+    store(s, ics("UTC", false), "UTC");
+    await call(
+      "update_event",
+      {
+        calendar: "prov/Cal",
+        uid: "e1",
+        span: "all",
+        start: "2027-01-04T10:00:00",
+        end: "2027-01-04T11:00:00",
+      },
+      s,
+    );
+    const written = String(s.updateEvent.mock.calls[0][2]);
+    expect(written).toContain("DTSTART:20270104T160000Z");
+    expect(written).not.toContain("TZID=UTC");
+  });
+});

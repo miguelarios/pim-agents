@@ -764,11 +764,18 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
         // An event keeps the zone it was written in: a London meeting moved by
         // someone in Chicago is still a London meeting, and has to follow
         // London's DST, not Chicago's. The input is already an instant (read in
-        // TZ by zonedArgs), so only where it's written changes. TZ is used only
-        // for an event with no zone of its own: floating, or all-day (becoming
-        // timed).
-        const updates: MasterEventUpdates =
-          existing.timeZone === null ? { timezone: getTimezone() } : {};
+        // TZ by zonedArgs), so only where it's written changes.
+        //
+        // Only a zone this server can resolve is kept: UTC, or an IANA name
+        // Intl knows. Outlook's Windows names ("Central Standard Time") resolve
+        // in the bundled data to fixed offsets with no DST. A custom zone
+        // ("Customized Time Zone") or an unknown one can't be written at all.
+        // Those, like an event with no zone (floating, or all-day becoming
+        // timed), are written in TZ, as before.
+        const ownZone = existing.timeZone;
+        const keepsOwnZone =
+          ownZone !== null && (ownZone === "UTC" || usableTimezone(ownZone) === ownZone);
+        const updates: MasterEventUpdates = keepsOwnZone ? {} : { timezone: getTimezone() };
         for (const field of UPDATABLE_FIELDS) copyDefined(updates, args, field);
 
         // Inject ORGANIZER only when the event will have attendees but has none
