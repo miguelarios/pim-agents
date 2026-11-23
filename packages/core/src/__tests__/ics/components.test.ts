@@ -1387,3 +1387,42 @@ describe("moveRuleDays leaves alone what it can't move unambiguously (#175 revie
     expect(dates(out)).toEqual(["2027-02-01"]); // COUNT 3 runs past the range end
   });
 });
+
+describe("moveSeriesSlots follows the series into a new zone", () => {
+  const RANGE = { start: "2027-01-01T00:00:00Z", end: "2027-06-01T00:00:00Z" };
+  const ics = (tz: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:z1",
+      "DTSTAMP:20260101T000000Z",
+      `DTSTART;TZID=${tz}:20270104T090000`,
+      `DTEND;TZID=${tz}:20270104T100000`,
+      "RRULE:FREQ=WEEKLY;COUNT=20",
+      `EXDATE;TZID=${tz}:20270322T090000`,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  const move = (src: string) =>
+    updateMasterEventIcs(src, {
+      start: "2027-01-04T16:00:00.000Z", // 10:00 Chicago
+      end: "2027-01-04T17:00:00.000Z",
+      timezone: "America/Chicago",
+    });
+
+  it("moves an unknown-zone (floating) series' exclusions into the new zone", () => {
+    const out = move(ics("Foo/Bar"));
+    expect(out).toContain("EXDATE;TZID=America/Chicago:20270322T100000");
+    const occ = parseIcsEvents(out, RANGE, "America/Chicago");
+    expect(occ).toHaveLength(19);
+    expect(occ.some((e) => e.start.startsWith("2027-03-22"))).toBe(false);
+  });
+
+  it("moves a zoned series' exclusions with it when the zone changes", () => {
+    const out = move(ics("Europe/London"));
+    expect(out).toContain("EXDATE;TZID=America/Chicago:20270322T100000");
+    expect(parseIcsEvents(out, RANGE)).toHaveLength(19);
+  });
+});

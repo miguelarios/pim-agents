@@ -18,6 +18,7 @@ import {
   createExceptionComponent,
   formatTriggerHuman,
   generateEventIcs,
+  isWritableTimezone,
   removeExceptionFromIcs,
   splitIcsByUid,
   splitRecurrenceIcs,
@@ -761,7 +762,20 @@ const TOOLS: ReadonlyArray<ToolDef<IcsCalendarBackend>> = [
 
         const rawObj = await service.fetchRawCalendarObject(args.calendar, args.uid);
 
-        const updates: MasterEventUpdates = { timezone: getTimezone() };
+        // An event keeps the zone it was written in: a London meeting moved by
+        // someone in Chicago is still a London meeting, and has to follow
+        // London's DST, not Chicago's. The input is already an instant (read in
+        // TZ by zonedArgs), so only where it's written changes.
+        //
+        // Only a zone the event can be written in and read back the same is
+        // kept: UTC, or a zone whose bundled definition matches the runtime's
+        // IANA data (isWritableTimezone). Outlook's Windows names, names the
+        // bundled data gets wrong or lacks, and custom or unknown zones, like
+        // an event with no zone (floating, or all-day becoming timed), are
+        // written in TZ, as before.
+        const ownZone = existing.timeZone;
+        const keepsOwnZone = ownZone !== null && isWritableTimezone(ownZone, rawObj.data);
+        const updates: MasterEventUpdates = keepsOwnZone ? {} : { timezone: getTimezone() };
         for (const field of UPDATABLE_FIELDS) copyDefined(updates, args, field);
 
         // Inject ORGANIZER only when the event will have attendees but has none

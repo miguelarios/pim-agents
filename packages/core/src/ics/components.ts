@@ -299,8 +299,11 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
   const setTime = (propName: "dtstart" | "dtend", iso: string) => {
     const existing = master.getFirstProperty(propName);
     const existingTzid = existing?.getParameter("tzid");
-    const effectiveTz =
-      updates.timezone ?? (typeof existingTzid === "string" ? existingTzid : undefined);
+    const named = updates.timezone ?? (typeof existingTzid === "string" ? existingTzid : undefined);
+    // A UTC alias (Etc/UTC, Zulu…) is written as a plain Z time: the bundled
+    // zone for it isn't ical.js's UTC, so it would come out with neither a
+    // TZID nor a Z, i.e. floating.
+    const effectiveTz = named && isUtcZone(named) ? undefined : named;
     const t = toIcalTime(iso, allDay, effectiveTz);
     const prop = master.updatePropertyWithValue(propName, t);
     prop.removeParameter("tzid");
@@ -308,7 +311,13 @@ export function updateMasterEventIcs(rawIcs: string, updates: MasterEventUpdates
     // No explicit VALUE=DATE: ical.js resets the property's type from the
     // value (an ICAL.Time with isDate is "date") and writes VALUE=DATE
     // itself, so adding it here wrote "DTSTART;VALUE=DATE;VALUE=DATE:...".
-    if (!allDay && effectiveTz && ICAL.TimezoneService.get(effectiveTz)) {
+    // RFC 5545 §3.3.5: a UTC time carries no TZID, even when the event had TZID=UTC.
+    if (
+      !allDay &&
+      effectiveTz &&
+      !isUtcZone(effectiveTz) &&
+      ICAL.TimezoneService.get(effectiveTz)
+    ) {
       prop.setParameter("tzid", effectiveTz);
     }
   };
@@ -521,16 +530,23 @@ export function splitRecurrenceIcs(
   const recur = ICAL.Recur.fromString(rruleValue.toString());
   const iterator = recur.iterator(dtstart);
   let consumed = 0;
-  let isOccurrence = master
+  // The cut occurrence as the series itself names it: in its own zone, which
+  // may be one the bundled data can't resolve (an embedded VTIMEZONE, an
+  // unknown TZID read as floating). The new series starts there.
+  let cutTime = master
     .getAllProperties("rdate")
     .flatMap((p) => p.getValues())
-    .some((v) => v instanceof ICAL.Time && timeMatches(v, cutMs, allDay));
+    .find((v): v is ICAL.Time => v instanceof ICAL.Time && timeMatches(v, cutMs, allDay));
+  let isOccurrence = cutTime !== undefined;
   for (let next = iterator.next(); next; next = iterator.next()) {
     if (timeIsBefore(next, cutMs, allDay)) {
       consumed++;
       continue;
     }
-    if (timeMatches(next, cutMs, allDay)) isOccurrence = true;
+    if (timeMatches(next, cutMs, allDay)) {
+      isOccurrence = true;
+      cutTime = next;
+    }
     break;
   }
   if (!isOccurrence) {
@@ -562,8 +578,38 @@ export function splitRecurrenceIcs(
       prop.setParameter("tzid", tzid);
     }
   };
-  setTime("dtstart", cutMs);
-  if (dtend instanceof ICAL.Time) setTime("dtend", cutMs + durationMs);
+  if (cutTime && !allDay) {
+    // Start the tail at the cut as the series names it, keeping its TZID, so
+    // a zone the bundled data can't resolve isn't rewritten as UTC (which
+    // made the tail's exclusions and overrides miss after DST). The end keeps
+    // the series' wall-clock length.
+    const keepZone = (prop: ICAL.Property) => {
+      prop.removeParameter("tzid");
+      prop.removeParameter("value");
+      if (
+        typeof tzid === "string" &&
+        !isUtcZone(tzid) &&
+        cutTime?.zone !== ICAL.Timezone.utcTimezone
+      ) {
+        prop.setParameter("tzid", tzid);
+      }
+    };
+    const start = cutTime.clone();
+    keepZone(master.updatePropertyWithValue("dtstart", start));
+    if (dtend instanceof ICAL.Time) {
+      const end = start.clone();
+      end.adjust(
+        0,
+        0,
+        0,
+        zoneKey(dtstart) === zoneKey(dtend) ? wallSeconds(dtstart, dtend) : durationMs / 1000,
+      );
+      keepZone(master.updatePropertyWithValue("dtend", end));
+    }
+  } else {
+    setTime("dtstart", cutMs);
+    if (dtend instanceof ICAL.Time) setTime("dtend", cutMs + durationMs);
+  }
 
   for (const name of ["rdate", "exdate"] as const) {
     for (const prop of master.getAllProperties(name)) {
@@ -684,7 +730,13 @@ function moveEndWithStart(master: ICAL.Component, oldStart: ICAL.Time, oldEnd: I
   prop.removeParameter("tzid");
   prop.removeParameter("value");
   const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
-  if (!start.isDate && typeof tzid === "string") prop.setParameter("tzid", tzid);
+  if (!start.isDate && typeof tzid === "string" && !isUtcZone(tzid))
+    prop.setParameter("tzid", tzid);
+}
+
+/** Whether `tzid` names UTC, which RFC 5545 writes as a Z time rather than a TZID. */
+function isUtcZone(tzid: string): boolean {
+  return /^(utc|gmt|etc\/(utc|gmt|zulu|universal)|z|zulu|universal)$/i.test(tzid.trim());
 }
 
 const DAY_MS = 86_400_000;
@@ -714,7 +766,29 @@ function inZoneOf(t: ICAL.Time, ref: ICAL.Time): ICAL.Time {
  *   the new start's time of day and zone when the series becomes timed, or
  *   its local date when the series becomes all-day.
  */
+/** The zone a time is written in, for comparing two times' zones ("floating" when none). */
+function zoneKey(t: ICAL.Time): string {
+  if (t.isDate) return "date";
+  const tzid = t.zone?.tzid;
+  return !tzid || t.zone === ICAL.Timezone.localTimezone ? "floating" : tzid;
+}
+
+/** Wall-clock seconds from `a` to `b`, read from their own fields (no zone conversion). */
+function wallSeconds(a: ICAL.Time, b: ICAL.Time): number {
+  const ms = (t: ICAL.Time) => Date.UTC(t.year, t.month - 1, t.day, t.hour, t.minute, t.second);
+  return Math.round((ms(b) - ms(a)) / 1000);
+}
+
 function moveSlot(slot: ICAL.Time, oldStart: ICAL.Time, newStart: ICAL.Time): ICAL.Time {
+  if (!oldStart.isDate && !newStart.isDate && !slot.isDate && zoneKey(slot) === zoneKey(oldStart)) {
+    // A slot written in the series' own zone keeps its wall-clock offset from
+    // the start, and moves into the new start's zone with it. Read as an
+    // instant instead, a floating or unknown-zone start depends on the host's
+    // zone, and a series that changed zone would leave its slots behind.
+    const moved = newStart.clone();
+    moved.adjust(0, 0, 0, wallSeconds(oldStart, slot));
+    return moved;
+  }
   if (!oldStart.isDate && !newStart.isDate && !slot.isDate) {
     const deltaS = Math.round(
       (newStart.toJSDate().getTime() - oldStart.toJSDate().getTime()) / 1000,
@@ -730,28 +804,40 @@ function moveSlot(slot: ICAL.Time, oldStart: ICAL.Time, newStart: ICAL.Time): IC
 }
 
 /**
- * Writes `values` to `prop`. When their type changed (date ↔ date-time), the
- * parameters are rewritten for the new type: the series' TZID for a zoned
- * date-time, none for a date or UTC. Otherwise they're kept, so a UTC
- * exclusion on a zoned series stays UTC.
+ * Writes `values` to `prop`. With `rewrite`, the parameters are rewritten for
+ * the new values: the series' TZID for a zoned date-time, none for a date or
+ * UTC. Otherwise they're kept.
  */
 function setSlotValues(
   prop: ICAL.Property,
   values: ICAL.Time[],
   like: ICAL.Time,
   tzid: unknown,
-  typeChanged: boolean,
+  rewrite: boolean,
 ): void {
-  if (typeChanged) {
+  // A slot named in a UTC alias is written as a plain Z time (RFC 5545 §3.3.5).
+  const own = prop.getParameter("tzid");
+  const utcNamed = typeof own === "string" && isUtcZone(own);
+  if (rewrite || utcNamed) {
     prop.removeParameter("tzid");
     prop.removeParameter("value");
   }
-  if (values.length === 1) prop.setValue(values[0]);
-  else prop.setValues(values);
+  // A rewritten slot takes the series' zone; one only named in a UTC alias
+  // becomes a plain Z time. Either way the value matches its parameters.
+  const zoned =
+    rewrite && !like.isDate && like.zone && like.zone !== ICAL.Timezone.localTimezone
+      ? like.zone
+      : utcNamed
+        ? ICAL.Timezone.utcTimezone
+        : null;
+  const written = zoned ? values.map((v) => (v.isDate ? v : v.convertToZone(zoned))) : values;
+  if (written.length === 1) prop.setValue(written[0]);
+  else prop.setValues(written);
   if (
-    typeChanged &&
+    rewrite &&
     !like.isDate &&
     typeof tzid === "string" &&
+    !isUtcZone(tzid) &&
     like.zone !== ICAL.Timezone.utcTimezone
   ) {
     prop.setParameter("tzid", tzid);
@@ -776,11 +862,19 @@ function moveSeriesSlots(
   const kindChanged = oldStart.isDate !== newStart.isDate;
   const unchanged =
     !kindChanged &&
+    zoneKey(oldStart) === zoneKey(newStart) &&
     (newStart.isDate
       ? dayDiff(oldStart, newStart) === 0
       : newStart.toJSDate().getTime() === oldStart.toJSDate().getTime());
   if (unchanged) return;
   const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+  // A slot's parameters are rewritten when its type changes (date ↔
+  // date-time), or when it was in the series' own zone and the series moved
+  // to another one. Otherwise they're kept, so a UTC exclusion on a zoned
+  // series stays UTC.
+  const zoneChanged = zoneKey(oldStart) !== zoneKey(newStart);
+  const rezoned = (slot: ICAL.Time) =>
+    slot.isDate !== newStart.isDate || (zoneChanged && zoneKey(slot) === zoneKey(oldStart));
 
   for (const name of ["exdate", "rdate"] as const) {
     for (const prop of master.getAllProperties(name)) {
@@ -793,7 +887,7 @@ function moveSeriesSlots(
         moved,
         newStart,
         tzid,
-        slots.some((v) => v.isDate !== newStart.isDate),
+        slots.some((v) => rezoned(v)),
       );
     }
   }
@@ -802,7 +896,7 @@ function moveSeriesSlots(
     const recurId = recurProp?.getFirstValue();
     if (recurProp && recurId instanceof ICAL.Time) {
       const moved = moveSlot(recurId, oldStart, newStart);
-      setSlotValues(recurProp, [moved], newStart, tzid, recurId.isDate !== newStart.isDate);
+      setSlotValues(recurProp, [moved], newStart, tzid, rezoned(recurId));
     }
   }
 
@@ -928,4 +1022,61 @@ function moveRuleDays(master: ICAL.Component, oldStart: ICAL.Time, newStart: ICA
   }
 
   if (changed) rruleProp.setValue(rule);
+}
+
+/** The UTC offset Intl gives `tzid` at `ms`, in seconds, or null if it can't say. */
+function intlOffset(intl: Intl.DateTimeFormat, ms: number): number | null {
+  const name = intl.formatToParts(new Date(ms)).find((p) => p.type === "timeZoneName")?.value ?? "";
+  const m = /^GMT(?:([+-])(\d{2}):(\d{2}))?$/.exec(name);
+  if (!m) return null;
+  return m[1] ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 3600 + Number(m[3]) * 60) : 0;
+}
+
+/**
+ * Whether an event can be written in `tzid` and read back the same anywhere:
+ * UTC, or a zone the bundled data has under that exact name with the same UTC
+ * offsets as the runtime's IANA data, compared weekly over four years so a
+ * rule that differs only around one DST change (Asia/Jerusalem's) is caught.
+ * When the event's own `ics` embeds a VTIMEZONE for `tzid`, that definition
+ * is what readers use, so it has to agree too.
+ *
+ * That rejects Outlook's Windows names ("Central Standard Time", a fixed
+ * offset in the bundled data), names the bundled data gets wrong ("EST" is
+ * Halifax time there, "Etc/GMT+5" has its sign inverted), names it lacks
+ * ("Europe/Kyiv"), other spellings ("europe/london"), custom or unknown
+ * zones, and outdated embedded definitions. A caller writes those in a zone
+ * it can resolve instead.
+ */
+export function isWritableTimezone(tzid: string, ics?: string): boolean {
+  if (!tzid) return false;
+  if (isUtcZone(tzid)) return true;
+  const zone = ICAL.TimezoneService.get(tzid);
+  if (!zone) return false;
+  let intl: Intl.DateTimeFormat;
+  try {
+    intl = new Intl.DateTimeFormat("en-US", { timeZone: tzid, timeZoneName: "longOffset" });
+  } catch {
+    return false;
+  }
+  let embedded: ICAL.Timezone | undefined;
+  if (ics) {
+    try {
+      const vtz = ICAL.Component.fromString(ics)
+        .getAllSubcomponents("vtimezone")
+        .find((c) => c.getFirstPropertyValue("tzid") === tzid);
+      if (vtz) embedded = new ICAL.Timezone({ component: vtz });
+    } catch {
+      return false;
+    }
+  }
+  const WEEK = 7 * 86_400_000;
+  const from = Date.UTC(new Date().getUTCFullYear(), 0, 1, 12);
+  for (let ms = from; ms < from + 4 * 53 * WEEK; ms += WEEK) {
+    const expected = intlOffset(intl, ms);
+    if (expected === null) return false;
+    const at = ICAL.Time.fromJSDate(new Date(ms), true);
+    if (zone.utcOffset(at) !== expected) return false;
+    if (embedded && embedded.utcOffset(at) !== expected) return false;
+  }
+  return true;
 }
