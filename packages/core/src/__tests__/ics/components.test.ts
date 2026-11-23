@@ -1303,3 +1303,87 @@ describe("updateMasterEventIcs keeps the rule's days in step with a moved start"
     );
   });
 });
+
+describe("moveRuleDays leaves alone what it can't move unambiguously (#175 review)", () => {
+  const at = (date: string, rrule: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:r1",
+      "DTSTAMP:20260101T000000Z",
+      `DTSTART;TZID=America/Chicago:${date}T090000`,
+      `DTEND;TZID=America/Chicago:${date}T100000`,
+      rrule,
+      "SUMMARY:x",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+  const parts = (ics: string) => {
+    const line = ics.split(/\r?\n/).find((l) => l.startsWith("RRULE:")) ?? "";
+    return Object.fromEntries(
+      line
+        .slice(6)
+        .split(";")
+        .map((p) => p.split("=")),
+    );
+  };
+  /** Moves the 09:00 Chicago start to `date` (CST, so 15:00Z). */
+  const moveTo = (ics: string, date: string) =>
+    updateMasterEventIcs(ics, {
+      start: `${date}T15:00:00.000Z`,
+      end: `${date}T16:00:00.000Z`,
+      timezone: "America/Chicago",
+    });
+  const dates = (ics: string) =>
+    parseIcsEvents(ics, { start: "2026-11-01T00:00:00Z", end: "2028-01-01T00:00:00Z" }).map((e) =>
+      new Date(e.start).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }),
+    );
+
+  it("keeps an every-weekday rule when its start moves to another weekday", () => {
+    const out = moveTo(
+      at("20261116", "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;COUNT=8"),
+      "2026-11-17",
+    );
+    expect(parts(out).BYDAY).toBe("MO,TU,WE,TH,FR");
+    expect(dates(out)).not.toContain("2026-11-21"); // no Saturday
+  });
+
+  it("keeps a last-weekday (BYSETPOS) rule", () => {
+    const out = moveTo(
+      at("20261130", "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;COUNT=3"),
+      "2026-12-01",
+    );
+    expect(parts(out).BYDAY).toBe("MO,TU,WE,TH,FR");
+  });
+
+  it("never turns a shifted day of the month into a count from the end", () => {
+    const a = moveTo(at("20270131", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15,31;COUNT=6"), "2027-02-01");
+    expect(parts(a).BYMONTHDAY).not.toMatch(/-/);
+    const b = moveTo(at("20261115", "RRULE:FREQ=MONTHLY;BYMONTHDAY=1,15;COUNT=6"), "2026-12-01");
+    expect(parts(b).BYMONTHDAY).not.toMatch(/-/);
+  });
+
+  it("recomputes an ordinal from the new date", () => {
+    // Sat Nov 7 (1st Saturday) → Sun Nov 8, the 2nd Sunday.
+    const a = moveTo(at("20261107", "RRULE:FREQ=MONTHLY;BYDAY=1SA;COUNT=4"), "2026-11-08");
+    expect(parts(a).BYDAY).toBe("2SU");
+    expect(dates(a)[0]).toBe("2026-11-08");
+    // 3rd Wednesday Nov 18 → Nov 25, the 4th Wednesday.
+    const b = moveTo(at("20261118", "RRULE:FREQ=MONTHLY;BYDAY=3WE;COUNT=4"), "2026-11-25");
+    expect(parts(b).BYDAY).toBe("4WE");
+    expect(dates(b)[0]).toBe("2026-11-25");
+    // Last Friday Nov 27 → last Monday Nov 30.
+    const c = moveTo(at("20261127", "RRULE:FREQ=MONTHLY;BYDAY=-1FR;COUNT=4"), "2026-11-30");
+    expect(parts(c).BYDAY).toBe("-1MO");
+  });
+
+  it("moves a yearly rule's month with its date", () => {
+    const out = moveTo(
+      at("20270131", "RRULE:FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=31;COUNT=3"),
+      "2027-02-01",
+    );
+    expect(parts(out)).toMatchObject({ BYMONTH: "2", BYMONTHDAY: "1" });
+    expect(dates(out)).toEqual(["2027-02-01"]); // COUNT 3 runs past the range end
+  });
+});

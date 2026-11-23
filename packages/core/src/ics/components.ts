@@ -837,50 +837,94 @@ function moveSeriesSlots(
 const WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
 
 /**
- * After DTSTART moved to another day, moves the RRULE's day parts with it:
- * BYDAY (keeping any ordinal, so the third Wednesday becomes the third
- * Thursday) and BYMONTHDAY. Without this, a weekly BYDAY=WE series moved to
- * Thursday kept recurring on Wednesdays and lost the moved first occurrence,
- * which matches no rule day.
+ * Which week of its month `t` falls in: 1-5 counting from the start, or -1 to
+ * -5 counting from the end, as an ordinal BYDAY (3WE, -1FR) names it.
+ */
+function weekOfMonth(t: ICAL.Time, fromEnd: boolean): number {
+  if (!fromEnd) return Math.ceil(t.day / 7);
+  return -Math.ceil((ICAL.Time.daysInMonth(t.month, t.year) - t.day + 1) / 7);
+}
+
+/**
+ * After DTSTART moved to another day, moves the RRULE's day parts with it.
+ * Without this, a weekly BYDAY=WE series moved to Thursday kept recurring on
+ * Wednesdays and lost the moved first occurrence, which matches no rule day.
  *
- * A part moves only when it named the old start's own day, which is how a
- * client that writes BYDAY for a plain weekly event (Apple, Google) puts it.
- * Then every day in it moves by the same amount, so MO,WE moved a day later
- * becomes TU,TH. A rule whose days never included the start is left alone:
- * there is no move to follow. Days are read in each start's own zone.
+ * Only what is unambiguous moves. A part moves only when it named the old
+ * start's day, which is how a client that writes BYDAY for a plain weekly
+ * event (Apple, Google) puts it. Days are read in each start's own zone.
+ *
+ * - **Plain BYDAY** (WE, or MO,WE): left alone if it already includes the new
+ *   weekday (an every-weekday MO..FR rule, or a BYSETPOS rule, which picks
+ *   from the set). Otherwise every day moves by the same amount, so MO,WE a
+ *   day later is TU,TH.
+ * - **Ordinal BYDAY** (3WE, -1FR): a single entry takes the new weekday, with
+ *   the week of the month recomputed from the new date. Nov 8 is the 2nd
+ *   Sunday, so 1SA moved to Nov 8 becomes 2SU. Several ordinal entries are
+ *   left alone.
+ * - **BYMONTHDAY:** positive days move by the change in day of the month,
+ *   unless one would leave 1..31. Counts from the end (-1) are kept.
+ * - **BYMONTH** (yearly rules): moves with the date's month.
  */
 function moveRuleDays(master: ICAL.Component, oldStart: ICAL.Time, newStart: ICAL.Time): void {
   const rruleProp = master.getFirstProperty("rrule");
   const rule = rruleProp?.getFirstValue();
   if (!rruleProp || !(rule instanceof ICAL.Recur)) return;
-  const days = dayDiff(oldStart, newStart);
-  if (days === 0) return;
+  if (dayDiff(oldStart, newStart) === 0) return;
   let changed = false;
 
+  const oldDay = WEEKDAYS[oldStart.dayOfWeek() - 1];
+  const newDay = WEEKDAYS[newStart.dayOfWeek() - 1];
   const byDay = rule.parts.BYDAY as string[] | undefined;
-  if (byDay && byDay.length > 0) {
-    const oldDay = WEEKDAYS[oldStart.dayOfWeek() - 1];
-    const parsed = byDay.map((d) => /^([+-]?\d*)([A-Z]{2})$/.exec(d));
-    if (parsed.every(Boolean) && parsed.some((m) => m?.[2] === oldDay)) {
-      const shift = ((days % 7) + 7) % 7;
-      rule.parts.BYDAY = parsed.map((m) => {
-        const [, ordinal, day] = m as RegExpExecArray;
-        const index = WEEKDAYS.indexOf(day as (typeof WEEKDAYS)[number]);
-        return `${ordinal}${WEEKDAYS[(index + shift) % 7]}`;
-      });
-      changed = true;
+  const parsed = (byDay ?? []).map((d) => /^([+-]?\d*)([A-Z]{2})$/.exec(d));
+  if (byDay && byDay.length > 0 && parsed.every(Boolean)) {
+    const entries = parsed.map((m) => ({
+      ordinal: (m as RegExpExecArray)[1],
+      day: (m as RegExpExecArray)[2],
+    }));
+    if (entries.some((e) => e.ordinal !== "")) {
+      const [only] = entries;
+      if (entries.length === 1 && only.day === oldDay) {
+        const week = weekOfMonth(newStart, Number(only.ordinal) < 0);
+        const next = `${week}${newDay}`;
+        if (next !== byDay[0]) {
+          rule.parts.BYDAY = [next];
+          changed = true;
+        }
+      }
+    } else {
+      const days = entries.map((e) => e.day);
+      if (newDay !== oldDay && days.includes(oldDay) && !days.includes(newDay)) {
+        const shift = (WEEKDAYS.indexOf(newDay) - WEEKDAYS.indexOf(oldDay) + 7) % 7;
+        rule.parts.BYDAY = days.map(
+          (d) => WEEKDAYS[(WEEKDAYS.indexOf(d as (typeof WEEKDAYS)[number]) + shift) % 7],
+        );
+        changed = true;
+      }
     }
   }
 
   const byMonthDay = rule.parts.BYMONTHDAY as number[] | undefined;
-  if (byMonthDay?.includes(oldStart.day)) {
+  if (byMonthDay?.includes(oldStart.day) && newStart.day !== oldStart.day) {
     const delta = newStart.day - oldStart.day;
     const moved = byMonthDay.map((d) => (d > 0 ? d + delta : d));
-    // A day pushed outside 1..31 has no meaning: leave the rule as it was.
-    if (moved.every((d) => d < 0 || (d >= 1 && d <= 31))) {
+    // Only the originally positive days moved; each must still name a day.
+    if (byMonthDay.every((d, k) => d < 0 || (moved[k] >= 1 && moved[k] <= 31))) {
       rule.parts.BYMONTHDAY = moved;
       changed = true;
     }
+  }
+
+  const byMonth = rule.parts.BYMONTH as number[] | undefined;
+  if (
+    rule.freq === "YEARLY" &&
+    byMonth?.includes(oldStart.month) &&
+    newStart.month !== oldStart.month &&
+    !byMonth.includes(newStart.month)
+  ) {
+    const delta = newStart.month - oldStart.month;
+    rule.parts.BYMONTH = byMonth.map((m) => ((((m - 1 + delta) % 12) + 12) % 12) + 1);
+    changed = true;
   }
 
   if (changed) rruleProp.setValue(rule);
